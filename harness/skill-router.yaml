@@ -14,6 +14,12 @@ routing:
     weight: 90
     note: "Always diagnose before attempting a fix. Removed 'error' — too generic, collides with TypeScript routing."
 
+  - id: "writing-skill"
+    condition: "write a skill, create a skill, new skill, skill template, audit skill, refactor skill"
+    skill_path: "skills/writing-skill.md"
+    weight: 88
+    note: "High weight — someone asking to write a skill should land here before tdd/grill."
+
   - id: "tdd"
     condition: "test-first, TDD, red-green-refactor, write tests, test-driven"
     skill_path: "skills/tdd.md"
