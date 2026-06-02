@@ -1,0 +1,63 @@
+# Skill Router — single source of truth for task→skill routing
+# Adopted from jtoemion/harness-engineering-skills
+# Agent reads THIS FILE to decide which skill to load.
+# First match on condition wins. Higher weight = higher priority on ties.
+
+version: "1.0"
+updated: "2026-06-02"
+
+# ROUTING TABLE — evaluated top-to-bottom, first match wins
+routing:
+  - id: "diagnose"
+    condition: "bug, broken, throwing, failing, regression, not working, debug, diagnose"
+    skill_path: "skills/diagnose.md"
+    weight: 90
+    note: "Always diagnose before attempting a fix. Removed 'error' — too generic, collides with TypeScript routing."
+
+  - id: "tdd"
+    condition: "test-first, TDD, red-green-refactor, write tests, test-driven"
+    skill_path: "skills/tdd.md"
+    weight: 85
+
+  - id: "grill"
+    condition: "stress-test plan, challenge design, grill, review approach, before implementing"
+    skill_path: "skills/grill.md"
+    weight: 80
+
+  - id: "nextjs-rules"
+    condition: "Next.js, nextjs, app router, page component, middleware, server component, redirect, layout, metadata"
+    skill_path: "skills/nextjs.md"
+    weight: 50
+    note: "Always loaded as context, but explicit match for Next.js-specific tasks"
+
+  - id: "typescript-rules"
+    condition: "TypeScript, type error, type safety, generics, strict mode"
+    skill_path: "skills/typescript.md"
+    weight: 50
+
+  - id: "implementer"
+    condition: "implement, add feature, build, create component, fix, refactor, change"
+    skill_path: "skills/implementer.md"
+    weight: 30
+    note: "General implementation — loaded when no more specific skill matches"
+
+# DISAMBIGUATION — handle commonly confused skills
+disambiguation:
+  - confused:
+      - diagnose
+      - tdd
+    rule: |
+      diagnose = Something is BROKEN — find root cause before fixing
+      tdd = You're BUILDING something new — write tests first
+
+  - confused:
+      - grill
+      - tdd
+    rule: |
+      grill = Challenge a PLAN before any code is written
+      tdd = Execute the plan using test-first development
+
+# ALWAYS-LOADED — these skills are injected as context for every task
+always_loaded:
+  - "skills/nextjs.md"
+  - "skills/typescript.md"
