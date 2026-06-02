@@ -1,15 +1,21 @@
 """
-measure.py — actual behavioral measurement for pipeline runs.
+measure.py — behavioral measurement stack for pipeline runs.
 
-Replaces hardcoded assumptions in conductor.py:
-  scope_creep=False → actually parsed from diff headers
-  diff_focused=True → actually measured from changed line count
-  intent → heuristic match between task keywords and files changed
+Three layers of intent reasoning:
 
-These are heuristics, not proofs. They catch the "wrong file changed"
-and "200 lines for a 5-word task" failure modes. They don't catch
-correct-looking diffs that implement the wrong logic — that requires
-a full spec-vs-diff LLM check (see gate_intent_llm, future work).
+  L1 Syntactic  (this file)  keyword overlap, file count, line count
+                              → fast, free, always runs
+
+  L2 Structural (diff_parser) parse what the diff ACTUALLY DOES:
+                              exports, functions, imports, component names
+                              → fast, free, deterministic
+
+  L3 Semantic   (intent_reasoner) small LLM (Haiku) reasons on
+                              structured L2 output — NOT raw diff
+                              → cheap, accurate, catches logic mismatches
+
+The LLM never sees noise. It sees structured facts and reasons like a
+detective: what does the task require? what did the diff build? do they match?
 """
 
 from __future__ import annotations
@@ -201,16 +207,55 @@ def gate_intent(task: str, diff: str, threshold: float = 0.3) -> None:
         )
 
 
+# ─── Full layered intent check ───────────────────────────────────────────────
+
+def full_intent_check(task: str, diff: str, use_llm: bool = True) -> dict:
+    """
+    Run the full three-layer intent reasoning stack.
+
+    L1 → syntactic heuristic (keyword overlap)
+    L2 → structural parse (what the diff actually built)
+    L3 → semantic reasoning (small LLM on structured summary)
+
+    Returns a unified dict with all layer results for the eval report.
+    """
+    from diff_parser import parse_diff
+    from intent_reasoner import reason_about_intent, verdict_to_gate
+
+    # L1: syntactic
+    l1 = measure_intent(task, diff)
+
+    # L2+L3: structural → semantic
+    diff_summary = parse_diff(diff)
+    verdict = reason_about_intent(task, diff_summary, use_llm=use_llm)
+
+    return {
+        "verdict": verdict.verdict,
+        "confidence": verdict.confidence,
+        "reason": verdict.reason,
+        "deductions": verdict.deductions,
+        "layer": verdict.layer,
+        "l1_score": l1["score"],
+        "l1_warning": l1["warning"],
+        "diff_summary": diff_summary,
+        "warning": (
+            f"[{verdict.layer}] {verdict.verdict} ({verdict.confidence:.0%}): {verdict.reason}"
+        ),
+    }
+
+
 # ─── Convenience: run all measurements ──────────────────────────────────────
 
-def run_measurements(task: str, diff: str) -> dict:
+def run_measurements(task: str, diff: str, use_llm: bool = True) -> dict:
     """
     Run all measurements on a task+diff pair.
     Returns a dict ready to merge into conductor eval_metrics.
     """
     focused, focus_reason = measure_diff_focus(diff, task)
     crept, creep_reason = measure_scope_creep(task, diff)
-    intent = measure_intent(task, diff)
+
+    # Full layered intent check (L1 → L2 → L3)
+    intent = full_intent_check(task, diff, use_llm=use_llm)
 
     return {
         "diff_focused": focused,
@@ -218,4 +263,7 @@ def run_measurements(task: str, diff: str) -> dict:
         "_focus_reason": focus_reason,
         "_creep_reason": creep_reason,
         "_intent": intent,
+        # backward compat — old callers expect "score" and "warning"
+        "_intent_score": intent["l1_score"],
+        "_intent_warning": intent["warning"],
     }

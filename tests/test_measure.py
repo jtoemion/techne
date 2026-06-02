@@ -291,10 +291,12 @@ def test_run_measurements():
         fail("scope_creep should be bool", str(type(m["scope_creep"])))
 
     intent = m["_intent"]
-    if 0.0 <= intent["score"] <= 1.0:
-        ok(f"intent score in range: {intent['score']}")
+    # _intent now returns full layered result — use l1_score for heuristic score
+    score = intent.get("l1_score", intent.get("score", -1))
+    if 0.0 <= score <= 1.0:
+        ok(f"intent score in range: {score} (layer: {intent.get('layer', 'heuristic')})")
     else:
-        fail("intent score range", str(intent["score"]))
+        fail("intent score range", str(score))
 
 
 # ─── Key property: not hardcoded ─────────────────────────────────────────────
