@@ -19,6 +19,12 @@ routing:
     skill_path: "skills/tdd.md"
     weight: 85
 
+  - id: "persona-brainstorm"
+    condition: "persona brainstorm, grill session, client dev dialogue, discover improvement, Ezekiel, Jeremiah, brainstorm session"
+    skill_path: "skills/persona-brainstorm.md"
+    weight: 85
+    note: "Multi-persona discovery loop. Outputs ADRs from real friction."
+
   - id: "grill"
     condition: "stress-test plan, challenge design, grill, review approach, before implementing"
     skill_path: "skills/grill.md"
@@ -56,6 +62,14 @@ disambiguation:
     rule: |
       grill = Challenge a PLAN before any code is written
       tdd = Execute the plan using test-first development
+
+  - confused:
+      - grill
+      - persona-brainstorm
+    rule: |
+      grill              = SOLO. Single agent challenges a known plan against the codebase.
+      persona-brainstorm = MULTI-PERSONA. Ezekiel/Jeremiah dialogue to DISCOVER improvements
+                           from real friction. No plan yet — discovery first.
 
 # ALWAYS-LOADED — these skills are injected as context for every task
 always_loaded:
