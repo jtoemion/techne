@@ -260,30 +260,46 @@ def reason_about_intent(
     return _structural_verdict(task, diff_summary)
 
 
-def verdict_to_gate(verdict: IntentVerdict, task: str) -> None:
+def verdict_to_gate(verdict: "IntentVerdict | dict", task: str) -> None:
     """
     Raise GateViolation if verdict is MISMATCH with high confidence.
     PARTIAL → warning only (logged, not halted).
+
+    Accepts both IntentVerdict dataclass and plain dict (from full_intent_check).
     """
     from gates import GateViolation
 
-    if verdict.verdict == "MISMATCH" and verdict.confidence >= 0.7:
+    # Accept dict (from full_intent_check) or IntentVerdict dataclass
+    if isinstance(verdict, dict):
+        v_verdict     = verdict.get("verdict", "PARTIAL")
+        v_confidence  = verdict.get("confidence", 0.5)
+        v_reason      = verdict.get("reason", "")
+        v_layer       = verdict.get("layer", "unknown")
+        v_deductions  = verdict.get("deductions", [])
+    else:
+        v_verdict    = verdict.verdict
+        v_confidence = verdict.confidence
+        v_reason     = verdict.reason
+        v_layer      = verdict.layer
+        v_deductions = verdict.deductions
+
+    if v_verdict == "MISMATCH" and v_confidence >= 0.7:
         raise GateViolation(
-            f"INTENT GATE [{verdict.layer}]: MISMATCH (confidence {verdict.confidence:.0%})\n"
+            f"INTENT GATE [{v_layer}]: MISMATCH (confidence {v_confidence:.0%})\n"
             f"Task: {task}\n"
-            f"Reason: {verdict.reason}\n"
+            f"Reason: {v_reason}\n"
             f"Deductions:\n" +
-            "\n".join(f"  - {d}" for d in verdict.deductions[:4])
+            "\n".join(f"  - {d}" for d in v_deductions[:4])
         )
 
-    if verdict.verdict == "PARTIAL":
+    if v_verdict == "PARTIAL":
         print(
-            f"[INTENT] PARTIAL ({verdict.layer}, confidence {verdict.confidence:.0%}): "
-            f"{verdict.reason}"
+            f"[INTENT] PARTIAL ({v_layer}, confidence {v_confidence:.0%}): "
+            f"{v_reason}"
         )
 
-    if verdict.verdict == "MATCH":
+    if v_verdict == "MATCH":
         print(
-            f"[INTENT] MATCH ({verdict.layer}, confidence {verdict.confidence:.0%}): "
-            f"{verdict.reason}"
+            f"[INTENT] MATCH ({v_layer}, confidence {v_confidence:.0%}): "
+            f"{v_reason}"
         )

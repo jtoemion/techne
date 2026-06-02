@@ -44,7 +44,8 @@ from checkpoint import (
 )
 from router import route, get_always_loaded
 from session import new_session
-from measure import run_measurements, gate_intent
+from measure import run_measurements, full_intent_check
+from intent_reasoner import verdict_to_gate
 from apply_retro import has_pending_proposals
 
 HARNESS_DIR = Path(__file__).parent        # techne/harness/
@@ -306,25 +307,32 @@ def run_pipeline(task: str):
         diff = phase_implement(task)
         results["implement"] = "PASS"
 
-        # ── Real measurements now that we have the diff ──────────────────
+        # ── Fix 1+2: real measurements, L2/L3 intent gate ────────────────
         measurements = run_measurements(task, diff)
         eval_metrics["diff_focused"] = measurements["diff_focused"]
         eval_metrics["scope_creep"] = measurements["scope_creep"]
 
         intent = measurements["_intent"]
-        if intent["score"] < 0.5:
-            print(f"[CONDUCTOR] ⚠ Intent check: {intent['warning']}")
-        else:
-            print(f"[CONDUCTOR] Intent check: {intent['warning']}")
+        # Fix 1: use l1_score, not "score" (was crashing with KeyError)
+        l1_score = intent.get("l1_score", 0.0)
+        print(f"[CONDUCTOR] Intent check: {intent['warning']}"
+              + (" ⚠" if l1_score < 0.5 else ""))
 
-        # Run the intent gate (lenient threshold — calibrate over time)
+        # Fix 2: wire the L2/L3 reasoner — verdict_to_gate acts on the
+        # structured verdict, not just keyword overlap
         try:
-            gate_intent(task, diff, threshold=0.25)
+            verdict_to_gate(intent, task)  # MISMATCH ≥70% → GateViolation
         except GateViolation as eg:
-            print(f"[CONDUCTOR] ⚠ Intent gate warning: {eg}")
-            # Intent gate is advisory for now — log but don't halt
-            # Change to: raise eg  — when calibration is complete
+            print(f"[CONDUCTOR] ⚠ Intent gate: {eg}")
             eval_metrics["diff_focused"] = False
+            log_mistake(
+                phase="IMPLEMENT",
+                error=f"Intent gate: {intent.get('verdict', 'MISMATCH')}",
+                cause=intent.get("reason", ""),
+                lesson="diff did not implement the stated task",
+                gate="intent",
+            )
+            raise  # halt — this is a real mismatch, not advisory
 
         sha = phase_verify(diff)
         results["verify"] = f"PASS (sha: {sha[:16]}...)"
@@ -336,20 +344,53 @@ def run_pipeline(task: str):
         review_outcome = "PASS" if "HARD_FAIL" not in findings else "SOFT_FAIL"
         results["review"] = review_outcome
         eval_metrics["review_result"] = review_outcome
-        eval_metrics["shadow_gate_clean"] = "SHADOW GATE CHECK: clean" in findings or "shadow" not in findings.lower()
-        eval_metrics["drift_markers"] = findings.lower().count("todo") + findings.lower().count("fixme") + findings.lower().count("console.log")
+        eval_metrics["shadow_gate_clean"] = (
+            "SHADOW GATE CHECK: clean" in findings
+            or "shadow" not in findings.lower()
+        )
+        # Fix 4: count drift markers in the DIFF, not the reviewer's report
+        # (reviewer.md template itself contains these words — wrong artifact)
+        diff_lower = diff.lower()
+        eval_metrics["drift_markers"] = (
+            diff_lower.count("+  todo")
+            + diff_lower.count("+ // todo")
+            + diff_lower.count("+  fixme")
+            + diff_lower.count("+ // fixme")
+            + diff_lower.count("+ console.log")
+            + diff_lower.count("+console.log")
+        )
 
+    # Fix 5: catch unexpected errors — degrade gracefully, don't crash
     except (GateViolation, RuntimeError) as e:
         results.setdefault("implement", "FAIL")
         results.setdefault("verify", "FAIL")
         results.setdefault("review", "FAIL")
         eval_metrics["pipeline_halted"] = True
-        print(f"\n[CONDUCTOR] Pipeline halted: {e}")
+        print(f"\n[CONDUCTOR] Pipeline halted (expected): {e}")
+
+    except Exception as e:
+        results.setdefault("implement", "ERROR")
+        results.setdefault("verify", "ERROR")
+        results.setdefault("review", "ERROR")
+        eval_metrics["pipeline_halted"] = True
+        print(f"\n[CONDUCTOR] Pipeline crashed (unexpected {type(e).__name__}): {e}")
+        log_mistake(
+            phase="CONDUCTOR",
+            error=f"{type(e).__name__}: {e}",
+            cause="unexpected exception — check the seam between phases",
+            lesson=f"add a test that exercises this code path without API key",
+            gate="none",
+        )
 
     finally:
-        phase_retro()
-        eval_metrics["retro_ran"] = True
-        eval_metrics["retro_questions"] = 7  # retro agent always attempts all 7
+        # Retro runs regardless — but must not propagate its own failures
+        try:
+            phase_retro()
+            eval_metrics["retro_ran"] = True
+            eval_metrics["retro_questions"] = 7
+        except Exception as retro_err:
+            print(f"[CONDUCTOR] Retro failed ({type(retro_err).__name__}): {retro_err}")
+            eval_metrics["retro_ran"] = False
 
     # Checkpoint enforcement
     verified = check_verification()

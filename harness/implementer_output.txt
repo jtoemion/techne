@@ -1,0 +1,13 @@
+diff --git a/components/product/SaleBadge.tsx b/components/product/SaleBadge.tsx
+new file mode 100644
+--- /dev/null
++++ b/components/product/SaleBadge.tsx
+@@ -0,0 +1,6 @@
++export function SaleBadge() {
++  return <span className="badge-sale">Sale</span>
++}
++++ b/app/products/[slug]/page.tsx
+--- a/app/products/[slug]/page.tsx
+@@ -3,4 +3,5 @@
++import { SaleBadge } from '@/components/product/SaleBadge'
++  {product.onSale && <SaleBadge />}
