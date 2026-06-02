@@ -21,6 +21,7 @@ Requires:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import textwrap
@@ -42,6 +43,7 @@ from checkpoint import (
     get_summary,
 )
 from router import route, get_always_loaded
+from session import new_session
 
 HARNESS_DIR = Path(__file__).parent        # techne/harness/
 ROOT = HARNESS_DIR.parent                  # techne/
@@ -339,6 +341,44 @@ def run_pipeline(task: str):
         **eval_metrics,
     )
     print(eval_report.format_report())
+
+    # ─── SESSION LOG ──────────────────────────────────────────────────
+    session = new_session(agent_tool="claude-code")
+    session.set_task(task)
+    session.set_pipeline_result(
+        pipeline_number=run_number,
+        implement=results.get("implement", "PENDING"),
+        verify=results.get("verify", "PENDING"),
+        review=results.get("review", "PENDING"),
+        sha=eval_metrics.get("sha_passed") and
+            (MEMORY_DIR / "run_log.json").exists() and
+            str(json.loads((MEMORY_DIR / "run_log.json").read_text())[-1].get("test_output_hash", "")[:16] + "...")
+            or "none",
+    )
+    session.set_eval(
+        score=eval_report.total,
+        grade=eval_report.grade,
+        summary=eval_report.behavior_actual,
+    )
+
+    # Surface active mistakes as handoff notes
+    relevant = check_relevant(task)
+    for m in relevant[:3]:
+        session.add_mistake(m.get("gate", "unknown"), m.get("lesson", ""))
+
+    # Recommendations become open questions if score < 75
+    if eval_report.total < 75:
+        for rec in eval_report.recommendations:
+            session.add_question(rec)
+
+    # Handoff note
+    if verified:
+        session.add_handoff(f"Pipeline #{run_number} complete and verified. Ready for next task.")
+    else:
+        session.add_handoff(f"Pipeline #{run_number} did not complete verification. Do not claim done.")
+
+    session_path = session.save()
+    print(f"\n[CONDUCTOR] Session log saved → {session_path}")
 
 
 if __name__ == "__main__":

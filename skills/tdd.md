@@ -66,6 +66,8 @@ test('checkout calls paymentService.process', async () => {
 
 ## Next Steps
 
-- Unsure what interface to test against? → `skills/grill.md` first
+- Unsure what interface to test against? → `skills/tdd/interface.md`
+- Need to mock a dependency? → `skills/tdd/mocking.md`
 - Bug found during TDD? → pause, go to `skills/diagnose.md`
+- Design unclear before writing tests? → `skills/grill.md`
 - Tests passing, ready to ship? → conductor runs verification automatically

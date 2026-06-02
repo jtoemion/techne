@@ -7,17 +7,17 @@ description: Disciplined debugging. Build a feedback loop first — everything e
 
 ## Phase 1 — Feedback Loop (do this first, always)
 
-Build the fastest pass/fail signal you can. Try in order:
+Build the fastest pass/fail signal you can.
 
 ```
-1. Failing test at the seam that reaches the bug
-2. curl/HTTP script against dev server
-3. CLI invocation + diff stdout vs known-good snapshot
-4. Headless browser (Playwright)
-5. Replay captured trace / request log
-6. Throwaway harness — minimal subset, one function call
-7. Fuzz loop — 1000 random inputs, find the failure mode
+Quick options:
+  1. Failing test at the seam that reaches the bug
+  2. curl/HTTP script against dev server
+  3. CLI invocation + diff stdout vs known-good snapshot
+  4. Throwaway harness — minimal subset, one function call
 ```
+
+Struggling to build the loop? → `skills/diagnose/feedback-loop.md` (10 strategies + non-deterministic bugs)
 
 **Stop and report** if you cannot build a loop. Do not guess.
 

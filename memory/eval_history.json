@@ -145,5 +145,152 @@
       "Add missing gates for any ungated skill rules",
       "Check if skills are being loaded into agent context"
     ]
+  },
+  {
+    "task": "Add sale badge to product page",
+    "pipeline_number": 1,
+    "timestamp": "2026-06-02T10:06:16.891181+00:00",
+    "scores": {
+      "Gate Compliance": {
+        "score": 20,
+        "reason": "zero gate violations"
+      },
+      "Verification Integrity": {
+        "score": 20,
+        "reason": "SHA passed, unique hash, pass indicators present"
+      },
+      "Process Discipline": {
+        "score": 20,
+        "reason": "full discipline followed"
+      },
+      "Review Quality": {
+        "score": 20,
+        "reason": "review PASS, shadow gate clean, no drift markers"
+      },
+      "Retro Value": {
+        "score": 20,
+        "reason": "retro complete, clean run \u2014 no proposals needed"
+      }
+    },
+    "total": 100,
+    "grade": "EXCELLENT",
+    "behavior": {
+      "actual": "Agent followed all skill rules, produced focused diff, passed all gates on first try.",
+      "ideal": "Exactly this \u2014 maintain current discipline.",
+      "gap": "No significant gap."
+    },
+    "recommendations": []
+  },
+  {
+    "task": "Fix redirect in login flow",
+    "pipeline_number": 2,
+    "timestamp": "2026-06-02T10:06:16.893423+00:00",
+    "scores": {
+      "Gate Compliance": {
+        "score": 15,
+        "reason": "1 violation, corrected on retry 1"
+      },
+      "Verification Integrity": {
+        "score": 20,
+        "reason": "SHA passed, unique hash, pass indicators present"
+      },
+      "Process Discipline": {
+        "score": 20,
+        "reason": "full discipline followed"
+      },
+      "Review Quality": {
+        "score": 20,
+        "reason": "review PASS, shadow gate clean, no drift markers"
+      },
+      "Retro Value": {
+        "score": 20,
+        "reason": "retro complete with actionable proposals"
+      }
+    },
+    "total": 95,
+    "grade": "EXCELLENT",
+    "behavior": {
+      "actual": "Agent followed all skill rules, produced focused diff, passed all gates on first try.",
+      "ideal": "Exactly this \u2014 maintain current discipline.",
+      "gap": "No significant gap."
+    },
+    "recommendations": []
+  },
+  {
+    "task": "Refactor product components",
+    "pipeline_number": 3,
+    "timestamp": "2026-06-02T10:06:16.894699+00:00",
+    "scores": {
+      "Gate Compliance": {
+        "score": 10,
+        "reason": "3 violations, 2 retries used"
+      },
+      "Verification Integrity": {
+        "score": 15,
+        "reason": "SHA passed but identical hash \u2014 possible cached output"
+      },
+      "Process Discipline": {
+        "score": 5,
+        "reason": "mistakes.md not consulted; diff not minimal; scope creep detected"
+      },
+      "Review Quality": {
+        "score": 15,
+        "reason": "review SOFT_FAIL \u2014 warnings only"
+      },
+      "Retro Value": {
+        "score": 20,
+        "reason": "retro complete, clean run \u2014 no proposals needed"
+      }
+    },
+    "total": 65,
+    "grade": "FAIR",
+    "behavior": {
+      "actual": "Agent had issues in 2 area(s): Gate Compliance, Process Discipline.",
+      "ideal": "Each dimension should score 12+ for acceptable pipeline quality.",
+      "gap": "Multiple dimensions below threshold \u2014 tighten skill enforcement."
+    },
+    "recommendations": [
+      "Fix Gate Compliance (10/20): 3 violations, 2 retries used",
+      "Fix Process Discipline (5/20): mistakes.md not consulted; diff not minimal; scope creep detected"
+    ]
+  },
+  {
+    "task": "Add getServerSideProps handler",
+    "pipeline_number": 4,
+    "timestamp": "2026-06-02T10:06:16.899630+00:00",
+    "scores": {
+      "Gate Compliance": {
+        "score": 0,
+        "reason": "pipeline halted \u2014 violations not correctable"
+      },
+      "Verification Integrity": {
+        "score": 0,
+        "reason": "test output missing or faked"
+      },
+      "Process Discipline": {
+        "score": 20,
+        "reason": "full discipline followed"
+      },
+      "Review Quality": {
+        "score": 0,
+        "reason": "review skipped"
+      },
+      "Retro Value": {
+        "score": 20,
+        "reason": "retro complete, clean run \u2014 no proposals needed"
+      }
+    },
+    "total": 40,
+    "grade": "POOR",
+    "behavior": {
+      "actual": "Significant process failures \u2014 agent drifted from skill rules.",
+      "ideal": "Agent must read skills before acting and follow gate feedback on retry.",
+      "gap": "Fundamental discipline gap \u2014 review agent prompts and gate coverage."
+    },
+    "recommendations": [
+      "Review all agent .md files for clarity of constraints",
+      "Add missing gates for any ungated skill rules",
+      "Check if skills are being loaded into agent context"
+    ]
   }
 ]
