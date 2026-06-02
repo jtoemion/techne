@@ -44,6 +44,8 @@ from checkpoint import (
 )
 from router import route, get_always_loaded
 from session import new_session
+from measure import run_measurements, gate_intent
+from apply_retro import has_pending_proposals
 
 HARNESS_DIR = Path(__file__).parent        # techne/harness/
 ROOT = HARNESS_DIR.parent                  # techne/
@@ -273,7 +275,13 @@ def run_pipeline(task: str):
 
     results: dict[str, str] = {}
 
-    # Eval metrics — tracked as pipeline runs
+    # Warn if unapplied retro proposals exist — the loop doesn't close otherwise
+    pending_proposals = has_pending_proposals()
+    if pending_proposals:
+        print(f"[CONDUCTOR] ⚠ {pending_proposals} unapplied retro proposal(s) in memory/retro_proposals.md")
+        print(f"[CONDUCTOR]   Run: python harness/apply_retro.py")
+
+    # Eval metrics — start with known defaults, update with real measurements after diff
     eval_metrics = {
         "gate_violations": 0,
         "retries_used": 0,
@@ -282,10 +290,10 @@ def run_pipeline(task: str):
         "hash_unique": True,
         "output_existed": False,
         "had_pass_indicators": False,
-        "skills_loaded": matched_skill is not None or True,  # always-loaded
+        "skills_loaded": True,  # always-loaded files guarantee this
         "mistakes_consulted": active_mistakes > 0,
-        "diff_focused": True,
-        "scope_creep": False,
+        "diff_focused": True,    # measured below after diff is produced
+        "scope_creep": False,    # measured below after diff is produced
         "review_result": "SKIPPED",
         "shadow_gate_clean": True,
         "drift_markers": 0,
@@ -297,6 +305,26 @@ def run_pipeline(task: str):
     try:
         diff = phase_implement(task)
         results["implement"] = "PASS"
+
+        # ── Real measurements now that we have the diff ──────────────────
+        measurements = run_measurements(task, diff)
+        eval_metrics["diff_focused"] = measurements["diff_focused"]
+        eval_metrics["scope_creep"] = measurements["scope_creep"]
+
+        intent = measurements["_intent"]
+        if intent["score"] < 0.5:
+            print(f"[CONDUCTOR] ⚠ Intent check: {intent['warning']}")
+        else:
+            print(f"[CONDUCTOR] Intent check: {intent['warning']}")
+
+        # Run the intent gate (lenient threshold — calibrate over time)
+        try:
+            gate_intent(task, diff, threshold=0.25)
+        except GateViolation as eg:
+            print(f"[CONDUCTOR] ⚠ Intent gate warning: {eg}")
+            # Intent gate is advisory for now — log but don't halt
+            # Change to: raise eg  — when calibration is complete
+            eval_metrics["diff_focused"] = False
 
         sha = phase_verify(diff)
         results["verify"] = f"PASS (sha: {sha[:16]}...)"
@@ -355,10 +383,11 @@ def run_pipeline(task: str):
             str(json.loads((MEMORY_DIR / "run_log.json").read_text())[-1].get("test_output_hash", "")[:16] + "...")
             or "none",
     )
+    intent_summary = measurements.get("_intent", {}).get("warning", "") if "measurements" in dir() else ""
     session.set_eval(
         score=eval_report.total,
         grade=eval_report.grade,
-        summary=eval_report.behavior_actual,
+        summary=f"{eval_report.behavior_actual} {intent_summary}".strip(),
     )
 
     # Surface active mistakes as handoff notes
