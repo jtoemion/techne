@@ -73,4 +73,5 @@ You have:
 
 - Design locked? → `skills/implementer.md`
 - Need testable interface? → `skills/tdd/interface.md`
+- Question is empirical (needs to be felt, not argued)? → `skills/prototype.md`
 - Already in grill and hit a bug? → `skills/diagnose.md` (don't grill a bug)

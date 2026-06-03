@@ -52,4 +52,7 @@ grep '@ts-ignore' diff   # must be zero results
 - Gate rejected your diff? → read the exact error, fix only that violation
 - Task involves a bug? → `skills/diagnose.md` first
 - Unsure about the design? → `skills/grill.md` first
+- Design unproven — want to try it cheaply first? → `skills/prototype.md`
+- Recurring structural friction, not a one-off? → `skills/improve-architecture.md`
+- Change done, opening a PR? → `skills/check-pr.md`
 - After implementing → conductor runs `skills/evaluation.md` automatically
