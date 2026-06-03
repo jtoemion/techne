@@ -36,6 +36,30 @@ routing:
     skill_path: "skills/grill.md"
     weight: 80
 
+  - id: "improve-architecture"
+    condition: "improve architecture, refactoring opportunities, deepen module, more testable, consolidate coupling, architecture review"
+    skill_path: "skills/improve-architecture.md"
+    weight: 78
+    note: "Find deepening opportunities — shallow modules into deep ones. Adopted from mattpocock."
+
+  - id: "prototype"
+    condition: "prototype, throwaway, mock up, try designs, sanity-check state model, play with it"
+    skill_path: "skills/prototype.md"
+    weight: 75
+    note: "Throwaway code that answers ONE design question. Adopted from mattpocock."
+
+  - id: "check-pr"
+    condition: "check pull request, review comments, address review feedback, prepare to merge, pull request status"
+    skill_path: "skills/check-pr.md"
+    weight: 74
+    note: "One-pass PR triage. On a tie with greploop, prefer this (lighter action). Adopted from greptile (MIT)."
+
+  - id: "greploop"
+    condition: "greploop, optimize pull request, iterate pull request, greptile review, perfect review score"
+    skill_path: "skills/greploop.md"
+    weight: 72
+    note: "Iterate a PR until 5/5 + zero unresolved. Narrow PR-focused /goal. Adopted from greptile (MIT)."
+
   - id: "nextjs-rules"
     condition: "Next.js, nextjs, app router, page component, middleware, server component, redirect, layout, metadata"
     skill_path: "skills/nextjs.md"
@@ -76,6 +100,27 @@ disambiguation:
       grill              = SOLO. Single agent challenges a known plan against the codebase.
       persona-brainstorm = MULTI-PERSONA. Ezekiel/Jeremiah dialogue to DISCOVER improvements
                            from real friction. No plan yet — discovery first.
+
+  - confused:
+      - check-pr
+      - greploop
+    rule: |
+      check-pr = ONE pass. Read the PR, categorize issues, report, optionally fix once.
+      greploop = LOOP. Iterate the PR until 5/5 + zero unresolved (max 5 iterations).
+
+  - confused:
+      - prototype
+      - grill
+    rule: |
+      prototype = Build throwaway code to ANSWER a design question empirically.
+      grill     = Stress-test an already-formed plan against the codebase, by questioning.
+
+  - confused:
+      - improve-architecture
+      - grill
+    rule: |
+      improve-architecture = FIND deepening opportunities (shallow → deep modules), then grill one.
+      grill                = Stress-test a plan you ALREADY have.
 
 # ALWAYS-LOADED — these skills are injected as context for every task
 always_loaded:

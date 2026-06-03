@@ -38,6 +38,10 @@ the agent's instructions, not your code.
 | **grill** | Stress-test a plan against the codebase, one question at a time | Reads `CONTEXT.md`, `docs/adr/` | **`CONTEXT.md`**, **`docs/adr/`** | Med — writes shared docs |
 | **persona-brainstorm** | Multi-persona discovery dialogue → surfaces one improvement as ADRs | — | **`CONTEXT.md`**, **`docs/adr/`**, `SESSION.md` | Low name / Med file writes |
 | **writing-skill** | How to author a new Techne-style skill (inverted-pyramid, Next Steps chain) | — | — | Low — meta |
+| **prototype** | Throwaway code that answers ONE design question (logic vs UI branch) | — | optional `docs/adr/` | Low — generic name |
+| **improve-architecture** | Find deepening opportunities (shallow → deep modules); explore → grill → ADR | Reads `CONTEXT.md`, `docs/adr/` | **`CONTEXT.md`**, **`docs/adr/`** | Low name / Med file writes |
+| **check-pr** | One-pass PR triage: checks, comments, description → report → optional fix | `gh` (or `glab`/`p4`) authenticated | PR threads (on fix) | Med — needs a VCS CLI |
+| **greploop** | Iterate a PR until 5/5 + zero unresolved (max 5 iters) | `gh` + **Greptile** on the repo | PR (push/comments) | Med — vendor + CLI dep |
 | **evaluation** | Post-run scoring of a pipeline (5 dimensions, 0–100) | The harness eval machinery | `memory/eval_history.json`, `memory/latest_eval.txt` | Low |
 | **nextjs** ⚠ | **Always-loaded.** Next.js App Router hard rules — backs 4 gates | Project **is** Next.js App Router | — | **High off-stack** |
 | **typescript** ⚠ | **Always-loaded.** TS suppression rules — backs the `@ts-ignore` gate | Project **is** TypeScript | — | **High off-stack** |
@@ -149,6 +153,10 @@ keywords**. If your host has its own router or skills, these overlap:
 | tdd | test-first, TDD, red-green-refactor, write tests | a "testing-strategy" skill |
 | persona-brainstorm | persona brainstorm, grill session, Ezekiel, Jeremiah | unlikely |
 | grill | stress-test plan, challenge design, before implementing | a "design-review" skill |
+| improve-architecture | architecture review, refactoring opportunities, deepen module | a "refactor" skill |
+| prototype | prototype, throwaway, mock up, sanity-check state model | a "spike" skill |
+| check-pr | check pull request, review comments, prepare to merge | a host PR skill |
+| greploop | greploop, optimize/iterate pull request, greptile review | a host PR skill |
 | nextjs-rules | Next.js, app router, middleware, redirect, server component | framework skills |
 | typescript-rules | TypeScript, type error, generics, strict mode | language skills |
 | implementer | implement, add feature, build, create component, fix, refactor | a generic "code" skill (very broad) |

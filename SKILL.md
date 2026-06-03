@@ -13,6 +13,12 @@ description: Harness engineering entry point. Routes to the right sub-skill base
 | Something is broken | `skills/diagnose.md` |
 | Writing tests first | `skills/tdd.md` |
 | Stress-testing a plan | `skills/grill.md` |
+| Discovering what to build | `skills/persona-brainstorm.md` |
+| Prototyping a design question | `skills/prototype.md` |
+| Finding refactor/architecture wins | `skills/improve-architecture.md` |
+| Checking a pull request (one pass) | `skills/check-pr.md` |
+| Iterating a PR to a perfect review | `skills/greploop.md` |
+| Writing a new skill | `skills/writing-skill.md` |
 | Reviewing agent output | `skills/evaluation.md` |
 | Next.js specific rules | `skills/nextjs.md` |
 | TypeScript type errors | `skills/typescript.md` |

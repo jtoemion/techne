@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-06-03T03:18:23.338043+00:00",
+  "timestamp": "2026-06-03T07:01:33.849873+00:00",
   "suites": [
     {
       "suite": "Router",
-      "passed": 20,
+      "passed": 28,
       "failed": 0,
-      "total": 20,
+      "total": 28,
       "failures": []
     },
     {
@@ -28,10 +28,11 @@
       "failed": 0,
       "total": 0,
       "skipped": true,
+      "skip_reason": "host-judged",
       "failures": []
     }
   ],
-  "total_passed": 65,
+  "total_passed": 73,
   "total_failed": 0,
-  "total_cases": 65
+  "total_cases": 73
 }

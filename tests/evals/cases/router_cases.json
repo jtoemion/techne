@@ -18,5 +18,13 @@
   { "id": "r17", "input": "debug the regression - the product listing is broken and failing", "expected_skill": "diagnose", "note": "'regression' + 'broken' + 'failing' — diagnose keywords" },
   { "id": "r18", "input": "build the new WhatsApp button and implement the feature", "expected_skill": "implementer", "note": "'build' + 'implement' — implementer keywords" },
   { "id": "r19", "input": "app router layout for the admin panel", "expected_skill": "nextjs-rules", "note": "'app router' + 'layout'" },
-  { "id": "r20", "input": "discover the most important improvement to make this sprint", "expected_skill": "persona-brainstorm", "note": "'discover improvement' keyword" }
+  { "id": "r20", "input": "discover the most important improvement to make this sprint", "expected_skill": "persona-brainstorm", "note": "'discover improvement' keyword" },
+  { "id": "r21", "input": "check the pull request for failing checks and review comments", "expected_skill": "check-pr", "note": "check + pull + request + review + comments — check-pr (one 'failing' alone is below diagnose threshold)" },
+  { "id": "r22", "input": "address the review feedback before we merge", "expected_skill": "check-pr", "note": "review + feedback + address + merge — check-pr beats grill's single 'review' match" },
+  { "id": "r23", "input": "optimize the pull request until greptile gives a perfect score", "expected_skill": "greploop", "note": "optimize + pull + request + greptile + perfect + score — greploop" },
+  { "id": "r24", "input": "iterate the pull request review with greploop", "expected_skill": "greploop", "note": "greploop + iterate + pull + request — distinctive greploop keywords" },
+  { "id": "r25", "input": "prototype this state machine so I can play with it", "expected_skill": "prototype", "note": "prototype + state + play — prototype branch" },
+  { "id": "r26", "input": "mock up a few different designs for the dashboard", "expected_skill": "prototype", "note": "mock + designs — prototype UI branch" },
+  { "id": "r27", "input": "find refactoring opportunities to deepen these modules", "expected_skill": "improve-architecture", "note": "refactoring + opportunities + deepen + module(s) — beats implementer's single 'refactor'" },
+  { "id": "r28", "input": "do an architecture review to consolidate the coupling", "expected_skill": "improve-architecture", "note": "architecture + review + consolidate + coupling" }
 ]
