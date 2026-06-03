@@ -6,9 +6,10 @@ The conductor calls this after VERIFY phase passes. It enforces that
 no pipeline can claim "done" without real verification evidence.
 """
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
+
+from store import read_json, write_json
 
 HARNESS_DIR = Path(__file__).parent
 ROOT = HARNESS_DIR.parent
@@ -16,14 +17,11 @@ STATE_FILE = ROOT / "memory" / "harness-state.json"
 
 
 def read_state() -> dict:
-    if not STATE_FILE.exists():
-        return {}
-    return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    return read_json(STATE_FILE, default={})
 
 
 def write_state(state: dict) -> None:
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    write_json(STATE_FILE, state)
 
 
 def init_state() -> dict:

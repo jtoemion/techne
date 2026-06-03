@@ -10,9 +10,10 @@ Scores are persisted to memory/eval_history.json for trend analysis.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
+
+from store import read_json, write_json
 
 HARNESS_DIR = Path(__file__).parent
 ROOT = HARNESS_DIR.parent
@@ -262,22 +263,17 @@ class EvalReport:
 # ─── Persistence ──────────────────────────────────────────────────────────────
 
 def load_eval_history() -> list[dict]:
-    if not EVAL_HISTORY.exists():
-        return []
-    try:
-        return json.loads(EVAL_HISTORY.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, ValueError):
-        return []
+    return read_json(EVAL_HISTORY, default=[])
 
 
 def save_eval(report: EvalReport) -> None:
     """Append report to eval history and write the text report to memory/."""
     history = load_eval_history()
     history.append(report.to_dict())
-    MEMORY_DIR.mkdir(parents=True, exist_ok=True)
-    EVAL_HISTORY.write_text(json.dumps(history, indent=2), encoding="utf-8")
+    write_json(EVAL_HISTORY, history)
 
-    # Also write the latest report as readable text
+    # Also write the latest report as readable text (domain artifact, not JSON)
+    MEMORY_DIR.mkdir(parents=True, exist_ok=True)
     report_path = MEMORY_DIR / "latest_eval.txt"
     report_path.write_text(report.format_report(), encoding="utf-8")
 
