@@ -84,7 +84,7 @@ def _print_summary(results: list[dict], baseline: dict | None):
         else:
             icon = FAIL
             pct = 100 * r["passed"] // max(r["total"], 1)
-            line = f"  {icon} {r['suite']:20} {r['passed']}/{r['total']} ({pct}%) — {r['failed']} failed"
+            line = f"  {icon} {r['suite']:20} {r['passed']}/{r['total']} ({pct}%) - {r['failed']} failed"
 
         print(line)
 

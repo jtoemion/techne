@@ -31,7 +31,7 @@ def _map_verdict_to_quality(verdict: str) -> str:
 
 def run(verbose: bool = False) -> dict:
     if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("  [suite 4] SKIPPED — ANTHROPIC_API_KEY not set")
+        print("  [suite 4] SKIPPED - ANTHROPIC_API_KEY not set")
         return {
             "suite": "Pipeline E2E",
             "passed": 0,
