@@ -17,7 +17,12 @@ ROOT = TESTS_DIR.parent
 sys.path.insert(0, str(ROOT / "harness"))
 
 from diff_parser import parse_diff, FileSummary, DiffSummary
-from intent_reasoner import reason_about_intent, _structural_verdict, _parse_llm_response
+from intent_reasoner import (
+    reason_about_intent,
+    _structural_verdict,
+    parse_semantic_response,
+    build_semantic_prompt,
+)
 from measure import full_intent_check, run_measurements
 from gates import GateViolation
 
@@ -286,10 +291,10 @@ def test_reason_no_llm():
     task = "add WhatsApp button to product page"
     s = parse_diff(WHATSAPP_DIFF)
 
-    verdict = reason_about_intent(task, s, use_llm=False)
+    verdict = reason_about_intent(task, s)
 
     if verdict.layer == "structural":
-        ok("use_llm=False uses structural layer")
+        ok("no semantic verdict -> structural layer (L2)")
     else:
         fail("should use structural layer", verdict.layer)
 
@@ -301,8 +306,8 @@ def test_reason_no_llm():
 
 # ─── LLM response parser ────────────────────────────────────────────────────
 
-def test_parse_llm_response():
-    print("\n[_parse_llm_response — structured output parsing]")
+def test_parse_semantic_response():
+    print("\n[parse_semantic_response — host L3 reply parsing]")
 
     good_response = textwrap.dedent("""\
         VERDICT: MATCH
@@ -315,49 +320,77 @@ def test_parse_llm_response():
         - WhatsApp URL construction is present in the component
     """)
 
-    parsed = _parse_llm_response(good_response)
+    parsed = parse_semantic_response(good_response)
 
-    if parsed["verdict"] == "MATCH":
+    if parsed.verdict == "MATCH":
         ok("parses VERDICT: MATCH")
     else:
-        fail("VERDICT parsing", str(parsed["verdict"]))
+        fail("VERDICT parsing", str(parsed.verdict))
 
-    if abs(parsed["confidence"] - 0.92) < 0.01:
-        ok(f"parses CONFIDENCE: {parsed['confidence']}")
+    if abs(parsed.confidence - 0.92) < 0.01:
+        ok(f"parses CONFIDENCE: {parsed.confidence}")
     else:
-        fail("CONFIDENCE parsing", str(parsed["confidence"]))
+        fail("CONFIDENCE parsing", str(parsed.confidence))
 
-    if "WhatsAppButton" in parsed["reason"]:
+    if "WhatsAppButton" in parsed.reason:
         ok("parses REASON with content")
     else:
-        fail("REASON parsing", parsed["reason"])
+        fail("REASON parsing", parsed.reason)
 
-    if len(parsed["deductions"]) == 4:
+    if len(parsed.deductions) == 4:
         ok(f"parses 4 DEDUCTIONS")
     else:
-        fail("DEDUCTIONS count", str(len(parsed["deductions"])))
+        fail("DEDUCTIONS count", str(len(parsed.deductions)))
+
+    if parsed.layer == "semantic":
+        ok("parsed verdict tagged layer=semantic")
+    else:
+        fail("layer should be semantic", parsed.layer)
 
     # Malformed response
     bad = "Something went wrong"
-    parsed_bad = _parse_llm_response(bad)
-    if parsed_bad["verdict"] == "PARTIAL":
+    parsed_bad = parse_semantic_response(bad)
+    if parsed_bad.verdict == "PARTIAL":
         ok("malformed response defaults to PARTIAL")
     else:
-        fail("malformed default", parsed_bad["verdict"])
+        fail("malformed default", parsed_bad.verdict)
 
-    if 0.0 <= parsed_bad["confidence"] <= 1.0:
+    if 0.0 <= parsed_bad.confidence <= 1.0:
         ok("malformed confidence is still in range")
     else:
-        fail("malformed confidence range", str(parsed_bad["confidence"]))
+        fail("malformed confidence range", str(parsed_bad.confidence))
+
+
+def test_semantic_hook_roundtrip():
+    print("\n[build_semantic_prompt + host verdict injection — L3 hook]")
+
+    from diff_parser import parse_diff
+    task = "add WhatsApp button to product page"
+    s = parse_diff(WHATSAPP_DIFF)
+
+    prompt = build_semantic_prompt(task, s)
+    if prompt["system"] and task in prompt["user"]:
+        ok("build_semantic_prompt returns system + user with the task")
+    else:
+        fail("semantic prompt shape", str(prompt)[:120])
+
+    # Host runs the prompt, returns this reply; we parse and inject it.
+    host_reply = "VERDICT: MISMATCH\nCONFIDENCE: 0.88\nREASON: wrong thing\nDEDUCTIONS:\n- x"
+    host_verdict = parse_semantic_response(host_reply)
+    injected = reason_about_intent(task, s, semantic_verdict=host_verdict)
+    if injected.verdict == "MISMATCH" and injected.layer == "semantic":
+        ok("host semantic verdict overrides L2 structural")
+    else:
+        fail("host verdict not used", f"{injected.verdict}/{injected.layer}")
 
 
 # ─── full_intent_check (integrated, no LLM) ─────────────────────────────────
 
 def test_full_intent_check():
-    print("\n[full_intent_check — integrated, use_llm=False]")
+    print("\n[full_intent_check — integrated, L2 structural]")
 
     task = "add WhatsApp button to product page"
-    result = full_intent_check(task, WHATSAPP_DIFF, use_llm=False)
+    result = full_intent_check(task, WHATSAPP_DIFF)
 
     required_keys = ["verdict", "confidence", "reason", "deductions",
                      "layer", "l1_score", "l1_warning", "diff_summary", "warning"]
@@ -389,7 +422,7 @@ def test_run_measurements_with_layers():
     print("\n[run_measurements — uses layered intent]")
 
     task = "add WhatsApp button to product page"
-    m = run_measurements(task, WHATSAPP_DIFF, use_llm=False)
+    m = run_measurements(task, WHATSAPP_DIFF)
 
     if "_intent" in m and "_intent_warning" in m:
         ok("run_measurements returns _intent and _intent_warning")
@@ -403,7 +436,7 @@ def test_run_measurements_with_layers():
         fail("_intent missing verdict")
 
     # Confirm the anti-hardcoding property still holds
-    m2 = run_measurements(task, WRONG_FILE_DIFF, use_llm=False)
+    m2 = run_measurements(task, WRONG_FILE_DIFF)
     if m["_intent"]["verdict"] != m2["_intent"]["verdict"] or \
        m["_intent"]["confidence"] != m2["_intent"]["confidence"]:
         ok("layered intent differs for different diffs (not hardcoded)")
@@ -426,7 +459,8 @@ if __name__ == "__main__":
     test_structural_mismatch()
     test_structural_empty()
     test_reason_no_llm()
-    test_parse_llm_response()
+    test_parse_semantic_response()
+    test_semantic_hook_roundtrip()
     test_full_intent_check()
     test_run_measurements_with_layers()
 

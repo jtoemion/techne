@@ -76,7 +76,8 @@ def _print_summary(results: list[dict], baseline: dict | None):
     for r in results:
         if r.get("skipped"):
             icon = SKIP
-            line = f"  {icon} {r['suite']:20} SKIPPED (no API key)"
+            reason = r.get("skip_reason", "skipped")
+            line = f"  {icon} {r['suite']:20} SKIPPED ({reason})"
         elif r["failed"] == 0:
             icon = PASS
             pct = 100 * r["passed"] // max(r["total"], 1)
@@ -115,7 +116,7 @@ def _print_summary(results: list[dict], baseline: dict | None):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--verbose", "-v", action="store_true")
-    parser.add_argument("--l3", action="store_true", help="Run L3 LLM layer in intent suite")
+    parser.add_argument("--l3", action="store_true", help="No-op: L3 is host-judged (run via host, not CI)")
     parser.add_argument("--save-baseline", action="store_true")
     parser.add_argument("--suite", choices=["router", "gates", "intent", "pipeline"])
     args = parser.parse_args()

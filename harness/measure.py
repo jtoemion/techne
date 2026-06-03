@@ -209,25 +209,26 @@ def gate_intent(task: str, diff: str, threshold: float = 0.3) -> None:
 
 # ─── Full layered intent check ───────────────────────────────────────────────
 
-def full_intent_check(task: str, diff: str, use_llm: bool = True) -> dict:
+def full_intent_check(task: str, diff: str, semantic_verdict=None) -> dict:
     """
-    Run the full three-layer intent reasoning stack.
+    Run the intent reasoning stack.
 
-    L1 → syntactic heuristic (keyword overlap)
-    L2 → structural parse (what the diff actually built)
-    L3 → semantic reasoning (small LLM on structured summary)
+    L1 → syntactic heuristic (keyword overlap)        — deterministic
+    L2 → structural parse (what the diff actually built) — deterministic
+    L3 → semantic verdict, supplied by the host (optional). When the host
+         passes semantic_verdict, it overrides L2; otherwise L2 is used.
 
     Returns a unified dict with all layer results for the eval report.
     """
     from diff_parser import parse_diff
-    from intent_reasoner import reason_about_intent, verdict_to_gate
+    from intent_reasoner import reason_about_intent
 
     # L1: syntactic
     l1 = measure_intent(task, diff)
 
-    # L2+L3: structural → semantic
+    # L2 structural (or host-supplied L3 semantic verdict)
     diff_summary = parse_diff(diff)
-    verdict = reason_about_intent(task, diff_summary, use_llm=use_llm)
+    verdict = reason_about_intent(task, diff_summary, semantic_verdict=semantic_verdict)
 
     return {
         "verdict": verdict.verdict,
@@ -246,16 +247,17 @@ def full_intent_check(task: str, diff: str, use_llm: bool = True) -> dict:
 
 # ─── Convenience: run all measurements ──────────────────────────────────────
 
-def run_measurements(task: str, diff: str, use_llm: bool = True) -> dict:
+def run_measurements(task: str, diff: str, semantic_verdict=None) -> dict:
     """
     Run all measurements on a task+diff pair.
     Returns a dict ready to merge into conductor eval_metrics.
+    `semantic_verdict` (optional) is a host-supplied L3 verdict.
     """
     focused, focus_reason = measure_diff_focus(diff, task)
     crept, creep_reason = measure_scope_creep(task, diff)
 
-    # Full layered intent check (L1 → L2 → L3)
-    intent = full_intent_check(task, diff, use_llm=use_llm)
+    # Layered intent check (L1 + L2, optional host L3)
+    intent = full_intent_check(task, diff, semantic_verdict=semantic_verdict)
 
     return {
         "diff_focused": focused,

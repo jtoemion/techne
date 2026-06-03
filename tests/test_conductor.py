@@ -1,19 +1,19 @@
 """
-test_conductor.py — end-to-end conductor integration tests.
+test_conductor.py — end-to-end Pipeline integration tests (host-driven).
 
-No API key required. Agents are replaced with deterministic fakes
-that return controlled outputs. This is the test that would have
-caught all five seam failures before they shipped.
+No API key, no network. Techne never calls a model: these tests act as the
+HOST, injecting the artifact each phase would produce (diff, test output,
+review findings, retro). This is the test that would have caught the seam
+failures before they shipped.
 
 Tests:
-- Full pipeline pass (implement → verify → review → retro → eval)
-- Gate violation → retry → pass
-- Intent mismatch → halt
-- Verifier fakes output → SHA gate blocks
-- Unexpected exception → graceful degradation, not crash
-- Session log written after every run
-- Eval report generated after every run
-- Checkpoint verification flag set correctly
+- Full pipeline pass (implement -> verify -> review -> retro -> eval)
+- Gate violation -> retry -> pass
+- No KeyError on the intent dict
+- SHA gate blocks empty/faked test output
+- Intent mismatch (empty diff) -> halt, still finalizes
+- Host-injected semantic verdict (L3 hook) -> halt
+- Session log + eval report written after every run
 
 Run from tests/:
     python test_conductor.py
@@ -23,16 +23,12 @@ from __future__ import annotations
 
 import json
 import sys
-import tempfile
 import textwrap
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 TESTS_DIR = Path(__file__).parent
 ROOT = TESTS_DIR.parent
 sys.path.insert(0, str(ROOT / "harness"))
-
-from gates import GateViolation
 
 PASS = "\033[92mPASS\033[0m"
 FAIL = "\033[91mFAIL\033[0m"
@@ -73,8 +69,6 @@ VIOLATING_DIFF = textwrap.dedent("""\
     +  redirect('/dashboard')
 """)
 
-FIXED_DIFF = CLEAN_DIFF  # same as clean — gate passes
-
 PASSING_TEST_OUTPUT = textwrap.dedent("""\
     === BUILD ===
     Compiled successfully
@@ -84,12 +78,6 @@ PASSING_TEST_OUTPUT = textwrap.dedent("""\
 
     === LINT ===
     No ESLint warnings or errors
-""")
-
-FAILING_TEST_OUTPUT = textwrap.dedent("""\
-    === BUILD ===
-    npm ERR! code ELIFECYCLE
-    Failed to compile.
 """)
 
 REVIEW_PASS = textwrap.dedent("""\
@@ -105,49 +93,45 @@ REVIEW_PASS = textwrap.dedent("""\
 """)
 
 
-# ─── Conductor harness (patches agents, not gates) ───────────────────────────
+# ─── Host driver — steps the Pipeline as a host agent would ──────────────────
 
-def make_conductor_harness(
-    impl_diff: str | list[str],       # what implementer returns (list = multiple tries)
+def drive_pipeline(
+    task: str,
+    impl_diff,                                   # str or list[str] (retry tries)
     test_output: str = PASSING_TEST_OUTPUT,
     review_output: str = REVIEW_PASS,
     retro_output: str = "retro done",
-    tmp_dir: Path | None = None,
+    semantic_verdict=None,                       # optional host L3 verdict
 ):
     """
-    Context manager that patches _call_agent in conductor so no API call is made.
-    Writes test_output to the memory dir so SHA gate can find it.
+    Drive a full Pipeline run, injecting each phase's artifact. Always runs
+    retro + finalize (matching the original 'retro runs regardless' contract).
+    Returns (pipeline, eval_report).
     """
-    import conductor as _conductor
+    from conductor import Pipeline
 
-    if isinstance(impl_diff, str):
-        impl_responses = [impl_diff]
-    else:
-        impl_responses = list(impl_diff)
+    impl_responses = [impl_diff] if isinstance(impl_diff, str) else list(impl_diff)
+    p = Pipeline.start(task)
 
-    call_count = {"n": 0}
+    # IMPLEMENT — submit diffs, retrying while the gate says RETRY
+    idx = 0
+    res = p.submit_implementation(impl_responses[0], semantic_verdict=semantic_verdict)
+    while res.status == "RETRY":
+        idx += 1
+        res = p.submit_implementation(
+            impl_responses[min(idx, len(impl_responses) - 1)],
+            semantic_verdict=semantic_verdict,
+        )
 
-    def fake_call_agent(system_prompt: str, user_message: str) -> str:
-        """Route based on which agent system prompt we're calling."""
-        n = call_count["n"]
-        call_count["n"] += 1
+    if res.status == "PASS":
+        vres = p.submit_verification(test_output)
+        if vres.status == "PASS":
+            p.submit_review(review_output)
 
-        if "Implementer" in system_prompt or "implement" in system_prompt.lower():
-            idx = min(n, len(impl_responses) - 1)
-            return impl_responses[idx]
-        elif "Verifier" in system_prompt or "verif" in system_prompt.lower():
-            # Verifier must write test_output.txt to memory/
-            (_conductor.MEMORY_DIR / "test_output.txt").write_text(
-                test_output, encoding="utf-8"
-            )
-            return "Test output written."
-        elif "Reviewer" in system_prompt or "review" in system_prompt.lower():
-            return review_output
-        elif "Retro" in system_prompt or "retro" in system_prompt.lower():
-            return retro_output
-        return ""
-
-    return patch.object(_conductor, "_call_agent", side_effect=fake_call_agent)
+    # RETRO runs regardless of earlier halts
+    p.submit_retro(retro_output)
+    report = p.finalize()
+    return p, report
 
 
 # ─── Test 1: full pipeline pass ───────────────────────────────────────────────
@@ -155,29 +139,19 @@ def make_conductor_harness(
 def test_full_pipeline_pass():
     print("\n[full pipeline — clean diff, all phases pass]")
 
-    import conductor as _conductor
-    from checkpoint import init_state, STATE_FILE
-    from session import SESSION_FILE, SESSIONS_DIR
+    from checkpoint import init_state, check_verification
+    from session import SESSION_FILE
 
-    # Reset state
     init_state()
     if SESSION_FILE.exists():
         SESSION_FILE.unlink()
 
-    with make_conductor_harness(
-        impl_diff=CLEAN_DIFF,
-        test_output=PASSING_TEST_OUTPUT,
-        review_output=REVIEW_PASS,
-    ):
-        _conductor.run_pipeline("add sale badge to product page")
+    drive_pipeline("add sale badge to product page", CLEAN_DIFF)
 
-    # Pipeline completed — check artefacts
     eval_history_path = ROOT / "memory" / "eval_history.json"
     if eval_history_path.exists():
         history = json.loads(eval_history_path.read_text(encoding="utf-8"))
-        # Find the entry for this run
-        entry = next((h for h in reversed(history)
-                      if "sale badge" in h.get("task", "")), None)
+        entry = next((h for h in reversed(history) if "sale badge" in h.get("task", "")), None)
         if entry and entry["total"] > 0:
             ok(f"eval report generated (score: {entry['total']}/100, grade: {entry['grade']})")
         else:
@@ -185,101 +159,73 @@ def test_full_pipeline_pass():
     else:
         fail("eval_history.json exists")
 
-    # Session log written
-    if SESSION_FILE.exists():
-        content = SESSION_FILE.read_text(encoding="utf-8")
-        if "sale badge" in content:
-            ok("SESSION.md written with task")
-        else:
-            fail("SESSION.md content", content[:100])
+    if SESSION_FILE.exists() and "sale badge" in SESSION_FILE.read_text(encoding="utf-8"):
+        ok("SESSION.md written with task")
     else:
         fail("SESSION.md written")
 
-    # Checkpoint verified
-    from checkpoint import check_verification
     if check_verification():
         ok("checkpoint verified flag set")
     else:
-        ok("checkpoint not verified (SHA gate needs real output — acceptable in mock)")
+        fail("checkpoint verified flag set", "expected True after passing SHA gate")
 
 
 # ─── Test 2: gate violation → retry → pass ────────────────────────────────────
 
 def test_gate_retry():
-    print("\n[gate violation → retry → pass]")
+    print("\n[gate violation -> retry -> pass]")
 
-    import conductor as _conductor
     from checkpoint import init_state
-
     init_state()
 
-    with make_conductor_harness(
-        # First call returns a violating diff, second returns clean
-        impl_diff=[VIOLATING_DIFF, CLEAN_DIFF],
-        test_output=PASSING_TEST_OUTPUT,
-    ):
-        _conductor.run_pipeline("add sale badge to product page")
+    p, _ = drive_pipeline("add sale badge to product page", [VIOLATING_DIFF, CLEAN_DIFF])
 
-    # Mistakes should be logged
+    if p.retries_used >= 1:
+        ok(f"gate violation triggered retry (retries_used={p.retries_used})")
+    else:
+        fail("retry not triggered", f"retries_used={p.retries_used}")
+
     mistakes_path = ROOT / "memory" / "mistakes.md"
     if mistakes_path.exists():
         content = mistakes_path.read_text(encoding="utf-8")
         if "IMPLEMENT" in content or "nextjs/redirect" in content:
             ok("gate violation logged to mistakes.md")
         else:
-            # May not have fired if state was reset — check content exists
             ok(f"mistakes.md has content ({len(content)} chars)")
     else:
         fail("mistakes.md should exist")
 
 
-# ─── Test 3: KeyError is gone (was crash on intent["score"]) ─────────────────
+# ─── Test 3: no KeyError on the intent dict ──────────────────────────────────
 
 def test_no_keyerror_on_intent():
-    """
-    This is the test that would have caught the crash before it shipped.
-    If conductor.py still uses intent["score"], this raises KeyError
-    which is NOT caught by the except clause → test fails visibly.
-    """
-    print("\n[no KeyError on intent dict — was the crash bug]")
+    print("\n[no KeyError on intent dict]")
 
-    import conductor as _conductor
     from checkpoint import init_state
-
     init_state()
 
     crashed = False
     try:
-        with make_conductor_harness(
-            impl_diff=CLEAN_DIFF,
-            test_output=PASSING_TEST_OUTPUT,
-        ):
-            _conductor.run_pipeline("add sale badge to product page")
+        drive_pipeline("add sale badge to product page", CLEAN_DIFF)
     except KeyError as e:
         crashed = True
-        fail(f"KeyError crash: intent[{e}] — fix not applied", str(e))
+        fail(f"KeyError crash: intent[{e}]", str(e))
     except Exception:
-        pass  # other errors are fine for this test
+        pass
 
     if not crashed:
         ok("no KeyError — intent dict access is correct")
 
 
-# ─── Test 4: SHA gate blocks faked output ─────────────────────────────────────
+# ─── Test 4: SHA gate blocks empty test output ────────────────────────────────
 
 def test_sha_gate_blocks_fake():
     print("\n[SHA gate blocks empty test output]")
 
-    import conductor as _conductor
     from checkpoint import init_state, check_verification
-
     init_state()
 
-    with make_conductor_harness(
-        impl_diff=CLEAN_DIFF,
-        test_output="",  # verifier writes empty file
-    ):
-        _conductor.run_pipeline("add sale badge to product page")
+    drive_pipeline("add sale badge to product page", CLEAN_DIFF, test_output="")
 
     if not check_verification():
         ok("verification NOT set when test output is empty")
@@ -287,139 +233,103 @@ def test_sha_gate_blocks_fake():
         fail("verification should not be set for empty test output")
 
 
-# ─── Test 5: unexpected exception — graceful, not crash ──────────────────────
+# ─── Test 5: intent mismatch (empty diff) → halt, still finalizes ────────────
 
-def test_unexpected_exception_graceful():
-    """
-    Inject a TypeError mid-pipeline. Before Fix 5, this propagated uncaught.
-    After Fix 5, it's caught by except Exception and logged to mistakes.md.
-    """
-    print("\n[unexpected exception — graceful degradation]")
+def test_intent_mismatch_halts():
+    print("\n[intent mismatch (empty diff) -> halt, still finalizes]")
 
-    import conductor as _conductor
     from checkpoint import init_state
-
+    from conductor import Pipeline
     init_state()
 
-    def boom(*args, **kwargs):
-        raise TypeError("injected fault — simulating seam bug")
+    p = Pipeline.start("add sale badge to product page")
+    res = p.submit_implementation("")          # empty diff -> L2 MISMATCH @0.9 -> halt
 
-    test_passed = True
-    try:
-        with patch.object(_conductor, "_call_agent", side_effect=boom):
-            _conductor.run_pipeline("any task")
-    except TypeError:
-        test_passed = False
-        fail("TypeError propagated uncaught — Fix 5 not applied")
-    except Exception as e:
-        test_passed = False
-        fail(f"different uncaught exception: {type(e).__name__}: {e}")
-
-    if test_passed:
-        ok("unexpected TypeError caught and degraded gracefully")
-
-    # mistakes.md should have a CONDUCTOR entry
-    mistakes_path = ROOT / "memory" / "mistakes.md"
-    if mistakes_path.exists():
-        content = mistakes_path.read_text(encoding="utf-8")
-        if "CONDUCTOR" in content or "TypeError" in content:
-            ok("unexpected error logged to mistakes.md")
-        else:
-            ok("mistakes.md exists (may not have CONDUCTOR entry if state fresh)")
-
-
-# ─── Test 6: drift markers counted from diff, not review report ──────────────
-
-def test_drift_markers_from_diff():
-    """
-    Fix 4: drift_markers must count from the diff, not findings.
-    The reviewer's report template contains 'console.log' as a format word —
-    counting from findings would produce phantom drift on clean reviews.
-    """
-    print("\n[drift markers measured from diff, not reviewer report]")
-
-    import conductor as _conductor
-    from checkpoint import init_state
-    from evaluator import load_eval_history
-
-    init_state()
-
-    # Clean diff with no drift markers
-    with make_conductor_harness(
-        impl_diff=CLEAN_DIFF,
-        test_output=PASSING_TEST_OUTPUT,
-        review_output=REVIEW_PASS,  # template contains 'console.log' text
-    ):
-        _conductor.run_pipeline("add sale badge to product page")
-
-    history = load_eval_history()
-    entry = next((h for h in reversed(history)
-                  if "sale badge" in h.get("task", "")), None)
-
-    if entry is not None:
-        drift = entry.get("scores", {}).get("Review Quality", {}).get("score", -1)
-        # We can't check drift_markers directly from eval_history, but we can
-        # verify the pipeline didn't phantom-count drift from the review template
-        ok(f"eval entry found — review quality score: {drift}/20")
-
-        # Check the run didn't log drift from the review template
-        # by checking eval_metrics in the history
-        raw_metrics = entry  # eval_history stores the result, not raw metrics
-        ok("drift measurement artifact is the diff (not reviewer report text)")
+    if res.status == "HALT":
+        ok("empty diff halts on intent gate")
     else:
-        fail("eval entry not found in history")
+        fail("empty diff should halt", f"got status={res.status}")
+
+    p.submit_retro("retro done")
+    report = p.finalize()
+
+    if p.eval_metrics["pipeline_halted"]:
+        ok("pipeline marked halted")
+    else:
+        fail("pipeline_halted not set")
+
+    if report.total >= 0:
+        ok(f"eval report still produced after halt (score {report.total}/100)")
+    else:
+        fail("eval report after halt")
 
 
-# ─── Test 7: session log after every run (pass or fail) ─────────────────────
+# ─── Test 6: host-injected semantic verdict (L3 hook) → halt ─────────────────
+
+def test_host_semantic_verdict_halts():
+    print("\n[host-injected L3 semantic verdict -> halt]")
+
+    from checkpoint import init_state
+    from conductor import Pipeline
+    init_state()
+
+    # Clean diff (L2 would say MATCH), but the host's semantic check says MISMATCH.
+    host_verdict = {
+        "verdict": "MISMATCH",
+        "confidence": 0.9,
+        "reason": "host judged the diff implements the wrong thing",
+        "deductions": ["host reasoning"],
+        "layer": "semantic",
+    }
+
+    p = Pipeline.start("add sale badge to product page")
+    res = p.submit_implementation(CLEAN_DIFF, semantic_verdict=host_verdict)
+
+    if res.status == "HALT":
+        ok("host semantic MISMATCH verdict halts the pipeline")
+    else:
+        fail("host verdict should halt", f"got status={res.status}")
+
+
+# ─── Test 7: session log after every run (pass or halt) ──────────────────────
 
 def test_session_log_always_written():
-    print("\n[session log written after every run, pass or fail]")
+    print("\n[session log written after every run]")
 
-    import conductor as _conductor
     from checkpoint import init_state
     from session import SESSION_FILE
-
     init_state()
     if SESSION_FILE.exists():
         SESSION_FILE.unlink()
 
-    # Inject a failure on the first call (implement), let retro through
-    call_n = {"n": 0}
+    # Empty diff halts at implement, but retro + finalize still run.
+    from conductor import Pipeline
+    p = Pipeline.start("failing task for session test")
+    p.submit_implementation("")
+    p.submit_retro("retro done")
+    p.finalize()
 
-    def bomb_then_pass(*args, **kwargs):
-        call_n["n"] += 1
-        if call_n["n"] == 1:
-            raise RuntimeError("deliberate pipeline failure")
-        return "retro done"  # retro phase succeeds
-
-    with patch.object(_conductor, "_call_agent", side_effect=bomb_then_pass):
-        _conductor.run_pipeline("failing task for session test")
-
-    if SESSION_FILE.exists():
-        content = SESSION_FILE.read_text(encoding="utf-8")
-        if "failing task" in content:
-            ok("SESSION.md written even after failed pipeline")
-        else:
-            fail("SESSION.md content doesn't match task", content[:100])
+    if SESSION_FILE.exists() and "failing task" in SESSION_FILE.read_text(encoding="utf-8"):
+        ok("SESSION.md written even after halted pipeline")
     else:
-        fail("SESSION.md should be written even on failure")
+        fail("SESSION.md should be written even on halt")
 
 
 # ─── Run all ─────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     print("=" * 64)
-    print("CONDUCTOR END-TO-END — INTEGRATION TEST")
+    print("PIPELINE END-TO-END — INTEGRATION TEST (host-driven)")
     print("=" * 64)
-    print("No API key required — agents are mocked with deterministic fakes")
+    print("No API key, no network — the test acts as the host agent.")
 
-    test_no_keyerror_on_intent()       # Fix 1 first — the crash
-    test_unexpected_exception_graceful()  # Fix 5 — broad except
-    test_full_pipeline_pass()          # baseline
-    test_gate_retry()                  # gate → retry path
-    test_sha_gate_blocks_fake()        # SHA gate enforcement
-    test_drift_markers_from_diff()     # Fix 4 — wrong artifact
-    test_session_log_always_written()  # session log robustness
+    test_no_keyerror_on_intent()
+    test_full_pipeline_pass()
+    test_gate_retry()
+    test_sha_gate_blocks_fake()
+    test_intent_mismatch_halts()
+    test_host_semantic_verdict_halts()
+    test_session_log_always_written()
 
     total = len(results)
     passed = sum(1 for _, ok_flag, _ in results if ok_flag)

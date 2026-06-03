@@ -1,8 +1,9 @@
 """
 intent_grader.py — eval suite 3: L1 + L2 intent reasoning correctness.
 
-L1 (syntactic) and L2 (structural) are deterministic — no API key needed.
-L3 (semantic/LLM) runs only if ANTHROPIC_API_KEY is set and --l3 flag passed.
+L1 (syntactic) and L2 (structural) are deterministic — Techne makes no model
+call. L3 (semantic) is host-judged: there is no host in deterministic CI, so
+the --l3 flag is a no-op here (the host runs L3 via build_semantic_prompt).
 
 L1 verdict thresholds:
   score >= 0.7 → MATCH
@@ -10,7 +11,6 @@ L1 verdict thresholds:
   score <  0.4 → MISMATCH
 """
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -69,9 +69,9 @@ def run(verbose: bool = False, run_l3: bool = False) -> dict:
                 print(f"  FAIL {msg}")
             continue
 
-        # L2 check
+        # L2 check (deterministic structural — no semantic verdict supplied)
         diff_summary = parse_diff(diff)
-        l2_verdict_obj = reason_about_intent(task, diff_summary, use_llm=False)
+        l2_verdict_obj = reason_about_intent(task, diff_summary)
         actual_l2 = l2_verdict_obj.verdict
         expected_l2 = case.get("expected_l2_verdict")
 
@@ -88,19 +88,7 @@ def run(verbose: bool = False, run_l3: bool = False) -> dict:
                 print(f"  FAIL {msg}")
             continue
 
-        # L3 (optional, LLM)
-        if run_l3 and os.environ.get("ANTHROPIC_API_KEY"):
-            l3_verdict_obj = reason_about_intent(task, diff_summary, use_llm=True)
-            actual_l3 = l3_verdict_obj.verdict
-            expected_l3 = case.get("expected_l3_verdict", expected_l2)
-
-            if actual_l3 != expected_l3:
-                failed += 1
-                msg = f"[{case_id}] L3: expected={expected_l3} got={actual_l3} | {case.get('note', '')}"
-                failures.append(msg)
-                if verbose:
-                    print(f"  FAIL {msg}")
-                continue
+        # L3 is host-judged — no host in deterministic CI, so --l3 is a no-op here.
 
         passed += 1
         if verbose:

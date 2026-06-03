@@ -18,12 +18,35 @@ techne/
 
 ## Quick Start
 
-```bash
-cd harness/
-pip install -r requirements.txt
-export ANTHROPIC_API_KEY=...
-python conductor.py "your task description"
+Techne is **host-driven**: your agent harness (Claude Code, Hermes, OpenCode)
+is the model. Techne never calls a model and needs no API key — it supplies the
+deterministic spine (routing, gates, SHA, intent L1/L2, eval, session) and the
+host runs each phase as its own turn.
+
+```python
+import sys; sys.path.insert(0, "harness")
+from conductor import Pipeline
+
+p = Pipeline.start("add WhatsApp button to product page")
+
+# IMPLEMENT — host runs p.implement_prompt(), produces a diff
+res = p.submit_implementation(host_diff)
+while res.status == "RETRY":          # gate violation → host fixes, resubmits
+    res = p.submit_implementation(host_fixed_diff)
+
+# VERIFY → REVIEW → RETRO — host runs each *_prompt(), submits the artifact
+p.submit_verification(host_test_output)
+p.submit_review(host_findings)
+p.submit_retro(host_retro_output)
+
+report = p.finalize()                 # scored eval report + SESSION.md
+print(report.format_report())
 ```
+
+Each `*_prompt()` returns `{system, user}` for the host to execute; each
+`submit_*()` runs Techne's deterministic gates on what the host produced.
+Intent L3 (semantic) is an optional host hook via
+`intent_reasoner.build_semantic_prompt` — still no model call inside Techne.
 
 ## Run Tests
 

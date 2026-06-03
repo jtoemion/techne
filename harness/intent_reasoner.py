@@ -1,29 +1,28 @@
 """
-intent_reasoner.py — semantic reasoning layer for intent verification.
+intent_reasoner.py — intent verification layers (harness-native).
 
-Layer 3 of the intent reasoning system.
+L2 (structural) runs here deterministically — no model, no network.
 
-The LLM gets a structured summary of FACTS (from diff_parser.py),
-not raw diff text. Small context → cheap model → excellent deductions.
+L3 (semantic) is a HOST hook, not a model call. Techne never calls a model:
+  - build_semantic_prompt(task, summary) returns the prompt for the host to run
+  - the host executes it as its own turn
+  - parse_semantic_response(text) turns the host's reply into an IntentVerdict
+  - the host passes that verdict into reason_about_intent(..., semantic_verdict=v)
 
-The prompt forces chain-of-thought BEFORE the verdict:
+The semantic prompt forces chain-of-thought BEFORE the verdict:
   1. Parse the task into concrete requirements
   2. Read what the diff actually built
   3. Match requirements to evidence
   4. Reach a verdict
 
-This catches "passes all gates but implements the wrong thing" —
-the class of errors that syntactic and structural layers cannot see.
-
-Requires: ANTHROPIC_API_KEY
-Falls back to structural-only reasoning if no API key.
+This catches "passes all gates but implements the wrong thing" — the class of
+errors that syntactic and structural layers cannot see — without Techne ever
+needing an API key.
 """
 
 from __future__ import annotations
 
-import os
-import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from diff_parser import DiffSummary
 
@@ -168,14 +167,31 @@ def _structural_verdict(task: str, diff_summary: DiffSummary) -> IntentVerdict:
     )
 
 
-# ─── Semantic reasoning (LLM) ───────────────────────────────────────────────
+# ─── Semantic layer (L3) — host hook, no model call ─────────────────────────
 
-def _parse_llm_response(text: str) -> dict:
-    """Parse the structured LLM output."""
+def build_semantic_prompt(task: str, diff_summary: DiffSummary) -> dict:
+    """
+    Build the L3 semantic prompt for the HOST to run as its own turn.
+
+    Returns {"system": ..., "user": ...}. The host runs this, then feeds the
+    reply to parse_semantic_response() and passes the verdict into
+    reason_about_intent(..., semantic_verdict=...). Techne makes no call here.
+    """
+    return {
+        "system": SYSTEM_PROMPT,
+        "user": USER_TEMPLATE.format(
+            task=task,
+            diff_summary=diff_summary.to_structured_text(),
+        ),
+    }
+
+
+def parse_semantic_response(text: str) -> IntentVerdict:
+    """Parse a host's structured L3 reply into an IntentVerdict (layer=semantic)."""
     verdict = "PARTIAL"
     confidence = 0.5
     reason = ""
-    deductions = []
+    deductions: list[str] = []
 
     for line in text.splitlines():
         line = line.strip()
@@ -185,8 +201,7 @@ def _parse_llm_response(text: str) -> dict:
                 verdict = v
         elif line.startswith("CONFIDENCE:"):
             try:
-                confidence = float(line.split(":", 1)[1].strip())
-                confidence = max(0.0, min(1.0, confidence))
+                confidence = max(0.0, min(1.0, float(line.split(":", 1)[1].strip())))
             except ValueError:
                 pass
         elif line.startswith("REASON:"):
@@ -194,51 +209,26 @@ def _parse_llm_response(text: str) -> dict:
         elif line.startswith("- "):
             deductions.append(line[2:].strip())
 
-    return {
-        "verdict": verdict,
-        "confidence": confidence,
-        "reason": reason or "(no reason given)",
-        "deductions": deductions or ["(no deductions)"],
-    }
-
-
-def _semantic_verdict(task: str, diff_summary: DiffSummary) -> IntentVerdict:
-    """
-    Layer 3 — small LLM reasoning on structured diff summary.
-    Uses cheapest model (Haiku). Small context, high accuracy.
-    """
-    try:
-        import anthropic
-    except ImportError:
-        return _structural_verdict(task, diff_summary)
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        return _structural_verdict(task, diff_summary)
-
-    client = anthropic.Anthropic(api_key=api_key)
-
-    user_message = USER_TEMPLATE.format(
-        task=task,
-        diff_summary=diff_summary.to_structured_text(),
-    )
-
-    response = client.messages.create(
-        model="claude-haiku-4-5-20251001",  # cheapest — focused reasoning task
-        max_tokens=512,                       # tight budget, structured output only
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_message}],
-    )
-
-    raw = response.content[0].text
-    parsed = _parse_llm_response(raw)
-
     return IntentVerdict(
-        verdict=parsed["verdict"],
-        confidence=parsed["confidence"],
-        reason=parsed["reason"],
-        deductions=parsed["deductions"],
+        verdict=verdict,
+        confidence=confidence,
+        reason=reason or "(no reason given)",
+        deductions=deductions or ["(no deductions)"],
         layer="semantic",
+    )
+
+
+def _coerce_verdict(v: "IntentVerdict | dict") -> IntentVerdict:
+    """Accept a host-supplied verdict as an IntentVerdict or a plain dict."""
+    if isinstance(v, IntentVerdict):
+        return v
+    return IntentVerdict(
+        verdict=v.get("verdict", "PARTIAL"),
+        confidence=v.get("confidence", 0.5),
+        reason=v.get("reason", ""),
+        deductions=v.get("deductions", []),
+        layer=v.get("layer", "semantic"),
+        raw_score=v.get("raw_score", 0.0),
     )
 
 
@@ -247,16 +237,16 @@ def _semantic_verdict(task: str, diff_summary: DiffSummary) -> IntentVerdict:
 def reason_about_intent(
     task: str,
     diff_summary: DiffSummary,
-    use_llm: bool = True,
+    semantic_verdict: "IntentVerdict | dict | None" = None,
 ) -> IntentVerdict:
     """
     Entry point for intent reasoning.
 
-    use_llm=True  → tries semantic (L3), falls back to structural (L2)
-    use_llm=False → structural only (L2), no API call
+    semantic_verdict given → host ran the L3 semantic check; use it.
+    semantic_verdict None  → deterministic L2 structural verdict (no model).
     """
-    if use_llm and os.environ.get("ANTHROPIC_API_KEY"):
-        return _semantic_verdict(task, diff_summary)
+    if semantic_verdict is not None:
+        return _coerce_verdict(semantic_verdict)
     return _structural_verdict(task, diff_summary)
 
 

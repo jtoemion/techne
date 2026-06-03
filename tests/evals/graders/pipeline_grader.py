@@ -1,16 +1,19 @@
 """
-pipeline_grader.py — eval suite 4: LLM-as-judge quality assessment.
+pipeline_grader.py — eval suite 4: host-judged quality assessment.
 
-Uses full_intent_check (L1→L2→L3) as the judge.
-Requires ANTHROPIC_API_KEY. Skipped automatically if not set.
+Techne makes no model call. Suite 4 is HOST-JUDGED: a host supplies a judge
+callable `host_judge(task, diff) -> verdict` (an IntentVerdict or a dict with a
+"verdict" key of MATCH / PARTIAL / MISMATCH). The host runs the semantic check
+itself via intent_reasoner.build_semantic_prompt + parse_semantic_response.
+
+Without a host judge (e.g. deterministic CI via run_evals.py), the suite skips.
 
 Verdict mapping:
-  MATCH   → PASS
-  PARTIAL → PARTIAL
-  MISMATCH → FAIL
+  MATCH    -> PASS
+  PARTIAL  -> PARTIAL
+  MISMATCH -> FAIL
 """
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -29,15 +32,16 @@ def _map_verdict_to_quality(verdict: str) -> str:
     return "FAIL"
 
 
-def run(verbose: bool = False) -> dict:
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("  [suite 4] SKIPPED - ANTHROPIC_API_KEY not set")
+def run(verbose: bool = False, host_judge=None) -> dict:
+    if host_judge is None:
+        print("  [suite 4] SKIPPED - host-judged (no host judge wired)")
         return {
             "suite": "Pipeline E2E",
             "passed": 0,
             "failed": 0,
             "total": 0,
             "skipped": True,
+            "skip_reason": "host-judged",
             "failures": [],
         }
 
@@ -49,7 +53,8 @@ def run(verbose: bool = False) -> dict:
     failures = []
 
     for case in cases:
-        intent = full_intent_check(case["task"], case["diff"], use_llm=True)
+        verdict = host_judge(case["task"], case["diff"])
+        intent = full_intent_check(case["task"], case["diff"], semantic_verdict=verdict)
         actual_quality = _map_verdict_to_quality(intent["verdict"])
         expected_quality = case["expected_quality"]
 

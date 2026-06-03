@@ -1,39 +1,48 @@
 """
-conductor.py — the state machine that runs the full pipeline.
+conductor.py — the host-driven pipeline state machine.
 
-The conductor is the only thing that calls agents AND enforces gates.
-Agents cannot advance their own phase — only a passing gate does that.
+Techne is harness-native: a host agent (Claude Code, Hermes, OpenCode) IS the
+model. This module never calls a model. It assembles the prompt for each phase,
+the host runs its own turn and submits the artifact it produced, and Techne runs
+every deterministic check (gates, SHA, intent L1/L2, checkpoint, eval, session).
 
-Now integrates:
-- Structured mistake logging (from jtoemion/harness-engineering-skills)
-- Checkpoint enforcement (verification_logged flag)
-- Skill routing (loads relevant skills per task)
-- 7-question retro (from quick-retro format)
+Drive it turn by turn:
 
-Usage:
-    python harness/conductor.py "add WhatsApp button to product page"
+    from conductor import Pipeline
 
-Requires:
-    pip install anthropic
-    export ANTHROPIC_API_KEY=...
+    p = Pipeline.start("add WhatsApp button to product page")
+
+    # IMPLEMENT — host runs p.implement_prompt(), produces a diff
+    res = p.submit_implementation(host_diff)
+    while res.status == "RETRY":               # gate violation — host fixes and resubmits
+        res = p.submit_implementation(host_fixed_diff)
+    # res.status is PASS or HALT
+
+    # VERIFY — host runs the tests, captures stdout
+    p.submit_verification(host_test_output)
+
+    # REVIEW — host reviews the diff
+    p.submit_review(host_findings)
+
+    # RETRO — host answers the 7-question retro
+    p.submit_retro(host_retro_output)
+
+    report = p.finalize()                       # eval report + SESSION.md
+    print(report.format_report())
+
+No ANTHROPIC_API_KEY. No network. The host supplies every model turn.
 """
 
 from __future__ import annotations
 
-import argparse
-import json
-import os
-import sys
 import textwrap
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
 from pathlib import Path
-
-import anthropic
 
 from gates import GateViolation, run_all_gates
 from sha_gate import gate_test_output
 from mistakes import log_mistake, check_relevant, count_active
-from evaluator import evaluate_pipeline_run
+from evaluator import evaluate_pipeline_run, EvalReport
 from checkpoint import (
     increment_pipeline_run,
     log_gate_pass,
@@ -44,7 +53,7 @@ from checkpoint import (
 )
 from router import route, get_always_loaded
 from session import new_session
-from measure import run_measurements, full_intent_check
+from measure import run_measurements
 from intent_reasoner import verdict_to_gate
 from apply_retro import has_pending_proposals
 
@@ -56,10 +65,26 @@ MEMORY_DIR = ROOT / "memory"
 MEMORY_DIR.mkdir(exist_ok=True)
 
 MAX_RETRIES = 3
-MODEL = "claude-sonnet-4-6"
 
 
-# ─── Helpers ────────────────────────────────────────────────────────────────────
+# ─── Host interface dataclasses ──────────────────────────────────────────────
+
+@dataclass
+class AgentPrompt:
+    """A prompt for the host to execute as its own model turn."""
+    system: str   # agent .md body (implementer / verifier / reviewer / retro)
+    user: str     # assembled context (task + skills + mistakes + diff, etc.)
+
+
+@dataclass
+class PhaseResult:
+    """Outcome of a host submission, evaluated by Techne's deterministic gates."""
+    status: str                       # PASS | RETRY | HALT | DONE
+    feedback: str = ""                # gate-violation text when status == RETRY
+    detail: dict = field(default_factory=dict)
+
+
+# ─── Prompt-assembly helpers (no model calls) ────────────────────────────────
 
 def _read_skill_files(task: str = "") -> str:
     """Read skill files — always-loaded + task-relevant via router."""
@@ -104,18 +129,8 @@ def _surface_relevant_mistakes(task: str) -> str:
     return "\n".join(lines)
 
 
-def _call_agent(system_prompt: str, user_message: str) -> str:
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-    response = client.messages.create(
-        model=MODEL,
-        max_tokens=8192,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_message}],
-    )
-    return response.content[0].text
-
-
 def _read_agent_prompt(agent_name: str) -> str:
+    """Return the body of an agents/<name>.md file (frontmatter stripped)."""
     path = AGENTS_DIR / f"{agent_name}.md"
     text = path.read_text(encoding="utf-8")
     if text.startswith("---"):
@@ -125,339 +140,319 @@ def _read_agent_prompt(agent_name: str) -> str:
     return text.strip()
 
 
-# ─── Phase runners ───────────────────────────────────────────────────────────────
+# ─── The host-driven pipeline ────────────────────────────────────────────────
 
-def phase_implement(task: str, retries: int = 0) -> str:
-    print(f"\n[CONDUCTOR] === IMPLEMENT (attempt {retries+1}/{MAX_RETRIES}) ===")
+class Pipeline:
+    """
+    A pipeline run the host steps through turn by turn.
 
-    if retries >= MAX_RETRIES:
-        raise RuntimeError(f"IMPLEMENT failed after {MAX_RETRIES} attempts")
+    Each phase exposes a *_prompt() the host executes, and a submit_*() that
+    feeds the host's artifact back through Techne's deterministic gates.
+    """
 
-    skills = _read_skill_files(task)
+    def __init__(self, task: str, run_number: int):
+        self.task = task
+        self.run_number = run_number
+        self.matched_skill = route(task)
+        self.relevant_mistakes = _surface_relevant_mistakes(task)
 
-    # Surface relevant past mistakes
-    mistakes_context = _surface_relevant_mistakes(task)
-    if mistakes_context:
-        print(mistakes_context)
+        # Artifacts collected from the host as phases complete
+        self.diff: str = ""
+        self.sha: str = ""
+        self.findings: str = ""
 
-    system = _read_agent_prompt("implementer")
-    user_msg = textwrap.dedent(f"""
-        Task: {task}
+        self.retries_used = 0
+        self._last_feedback = ""
+        self.results: dict[str, str] = {}
 
-        Skill rules in effect:
-        {skills}
+        active_mistakes = count_active()
+        # Eval metrics — known defaults, updated as real artifacts arrive
+        self.eval_metrics: dict = {
+            "gate_violations": 0,
+            "retries_used": 0,
+            "pipeline_halted": False,
+            "sha_passed": False,
+            "hash_unique": True,
+            "output_existed": False,
+            "had_pass_indicators": False,
+            "skills_loaded": True,            # always-loaded files guarantee this
+            "mistakes_consulted": active_mistakes > 0,
+            "diff_focused": True,             # measured after diff is submitted
+            "scope_creep": False,             # measured after diff is submitted
+            "review_result": "SKIPPED",
+            "shadow_gate_clean": True,
+            "drift_markers": 0,
+            "retro_ran": False,
+            "retro_proposals": False,
+            "retro_questions": 0,
+        }
 
-        {f"Past mistakes relevant to this task:{chr(10)}{mistakes_context}" if mistakes_context else ""}
+    # ── lifecycle ────────────────────────────────────────────────────────────
 
-        Return the unified diff only.
-    """).strip()
+    @classmethod
+    def start(cls, task: str) -> "Pipeline":
+        """Begin a pipeline run: increment counter, route, surface mistakes."""
+        run_number = increment_pipeline_run()
+        p = cls(task, run_number)
+        print(f"\n[CONDUCTOR] Starting pipeline #{run_number}: {task}")
+        if p.matched_skill:
+            print(f"[CONDUCTOR] Skill routed: {p.matched_skill['id']} "
+                  f"({p.matched_skill.get('skill_path', '')})")
+        else:
+            print("[CONDUCTOR] No specific skill matched — loading all rules")
+        if p.relevant_mistakes:
+            print(p.relevant_mistakes)
 
-    diff = _call_agent(system, user_msg)
-    (MEMORY_DIR / "implementer_output.txt").write_text(diff, encoding="utf-8")
+        pending = has_pending_proposals()
+        if pending:
+            print(f"[CONDUCTOR] (!) {pending} unapplied retro proposal(s) in memory/retro_proposals.md")
+            print("[CONDUCTOR]     Run: python harness/apply_retro.py")
+        print("=" * 60)
+        return p
 
-    try:
-        run_all_gates(diff)
-        log_gate_pass("all_gates")
-        print("[CONDUCTOR] IMPLEMENT passed all gates")
-        return diff
-    except GateViolation as e:
-        gate_name = str(e).split("[")[1].split("]")[0] if "[" in str(e) else "unknown"
-        print(f"[CONDUCTOR] IMPLEMENT gate failed: {e}")
-        log_gate_fail(gate_name, str(e))
-        log_mistake(
-            phase="IMPLEMENT",
-            error=str(e)[:200],
-            cause="agent violated skill rule",
-            lesson="pending retro",
-            gate=gate_name,
-        )
+    # ── IMPLEMENT ────────────────────────────────────────────────────────────
 
-        feedback_msg = textwrap.dedent(f"""
-            Your previous diff was rejected by the gate:
+    def implement_prompt(self) -> AgentPrompt:
+        """Prompt for the host to produce a diff. Includes prior gate feedback on retry."""
+        if self._last_feedback:
+            user = textwrap.dedent(f"""
+                Your previous diff was rejected by the gate:
 
-            {e}
+                {self._last_feedback}
 
-            Fix only the specific violation above. Return the corrected unified diff.
-        """).strip()
-        corrected = _call_agent(system, feedback_msg)
-        (HARNESS_DIR / "implementer_output.txt").write_text(corrected, encoding="utf-8")
-
-        try:
-            run_all_gates(corrected)
-            log_gate_pass("all_gates_retry")
-            print("[CONDUCTOR] IMPLEMENT passed gates after retry")
-            return corrected
-        except GateViolation as e2:
-            log_gate_fail(gate_name, str(e2))
-            log_mistake(
-                phase="IMPLEMENT",
-                error=str(e2)[:200],
-                cause="agent failed same rule on retry",
-                lesson="pending retro",
-                gate=gate_name,
+                Fix only the specific violation above. Return the corrected unified diff.
+            """).strip()
+        else:
+            skills = _read_skill_files(self.task)
+            mistakes_block = (
+                f"Past mistakes relevant to this task:\n{self.relevant_mistakes}\n"
+                if self.relevant_mistakes else ""
             )
-            return phase_implement(task, retries + 1)
+            user = textwrap.dedent(f"""
+                Task: {self.task}
 
+                Skill rules in effect:
+                {skills}
 
-def phase_verify(diff: str) -> str:
-    print(f"\n[CONDUCTOR] === VERIFY ===")
+                {mistakes_block}
+                Return the unified diff only.
+            """).strip()
+        return AgentPrompt(system=_read_agent_prompt("implementer"), user=user)
 
-    system = _read_agent_prompt("verifier")
-    user_msg = textwrap.dedent(f"""
-        The following diff was produced by the implementer and passed code gates.
-        Run the test suite now. Write full stdout to test_output.txt.
+    def submit_implementation(self, diff: str, semantic_verdict=None) -> PhaseResult:
+        """
+        Run gates on the host's diff. On violation: RETRY (host fixes, resubmits)
+        until MAX_RETRIES, then HALT. On pass: measure focus/scope + intent L1/L2
+        (optional host semantic_verdict), enforce the intent gate.
+        """
+        (MEMORY_DIR / "implementer_output.txt").write_text(diff, encoding="utf-8")
+        try:
+            run_all_gates(diff)
+            log_gate_pass("all_gates" if self.retries_used == 0 else "all_gates_retry")
+            print("[CONDUCTOR] IMPLEMENT passed all gates")
+        except GateViolation as e:
+            gate_name = str(e).split("[")[1].split("]")[0] if "[" in str(e) else "unknown"
+            log_gate_fail(gate_name, str(e))
+            log_mistake(
+                phase="IMPLEMENT", error=str(e)[:200],
+                cause="agent violated skill rule", lesson="pending retro", gate=gate_name,
+            )
+            self.retries_used += 1
+            self.eval_metrics["gate_violations"] += 1
+            self.eval_metrics["retries_used"] = self.retries_used
+            self._last_feedback = str(e)
+            if self.retries_used >= MAX_RETRIES:
+                self.eval_metrics["pipeline_halted"] = True
+                self.results["implement"] = "FAIL"
+                print(f"[CONDUCTOR] IMPLEMENT halted after {MAX_RETRIES} attempts")
+                return PhaseResult("HALT", feedback=str(e))
+            print(f"[CONDUCTOR] IMPLEMENT gate failed (attempt {self.retries_used}): {e}")
+            return PhaseResult("RETRY", feedback=str(e))
 
-        Diff (for context only — do not re-apply it):
-        {diff[:2000]}
-    """).strip()
+        # Gates passed — record diff and run measurements
+        self._last_feedback = ""
+        self.diff = diff
+        self.results["implement"] = "PASS"
 
-    _call_agent(system, user_msg)
-
-    sha = gate_test_output(
-        test_output_path=str(MEMORY_DIR / "test_output.txt"),
-        run_log_path=str(MEMORY_DIR / "run_log.json"),
-    )
-    log_gate_pass("sha_gate")
-    mark_verified(sha)
-    print(f"[CONDUCTOR] VERIFY passed — SHA: {sha[:16]}...")
-    return sha
-
-
-def phase_review(diff: str, sha: str) -> str:
-    print(f"\n[CONDUCTOR] === REVIEW ===")
-
-    system = _read_agent_prompt("reviewer")
-    user_msg = textwrap.dedent(f"""
-        Review the following diff. Tests passed (SHA: {sha[:16]}...).
-
-        Diff:
-        {diff}
-    """).strip()
-
-    findings = _call_agent(system, user_msg)
-    print(f"[CONDUCTOR] Review result:\n{findings[:400]}")
-
-    if "HARD_FAIL" in findings:
-        log_gate_fail("review", "HARD_FAIL in review findings")
-        raise GateViolation(f"REVIEW hard fail:\n{findings}")
-
-    log_gate_pass("review")
-    return findings
-
-
-def phase_retro():
-    print(f"\n[CONDUCTOR] === RETRO ===")
-
-    system = _read_agent_prompt("retro")
-    mistakes = (MEMORY_DIR / "mistakes.md").read_text(encoding="utf-8") if (MEMORY_DIR / "mistakes.md").exists() else "(none)"
-
-    user_msg = f"Run the 7-question retro and skill file analysis.\n\nmistakes.md content:\n{mistakes}"
-    _call_agent(system, user_msg)
-    print("[CONDUCTOR] RETRO complete — see harness/memory/retro_proposals.md")
-
-
-# ─── Main pipeline ───────────────────────────────────────────────────────────────
-
-def run_pipeline(task: str):
-    run_number = increment_pipeline_run()
-    active_mistakes = count_active()
-
-    print(f"\n[CONDUCTOR] Starting pipeline #{run_number}: {task}")
-    print(f"[CONDUCTOR] Active mistakes: {active_mistakes}")
-
-    # Route the task
-    matched_skill = route(task)
-    if matched_skill:
-        print(f"[CONDUCTOR] Skill routed: {matched_skill['id']} ({matched_skill.get('skill_path', '')})")
-    else:
-        print(f"[CONDUCTOR] No specific skill matched — loading all rules")
-
-    print("=" * 60)
-
-    results: dict[str, str] = {}
-
-    # Warn if unapplied retro proposals exist — the loop doesn't close otherwise
-    pending_proposals = has_pending_proposals()
-    if pending_proposals:
-        print(f"[CONDUCTOR] ⚠ {pending_proposals} unapplied retro proposal(s) in memory/retro_proposals.md")
-        print(f"[CONDUCTOR]   Run: python harness/apply_retro.py")
-
-    # Eval metrics — start with known defaults, update with real measurements after diff
-    eval_metrics = {
-        "gate_violations": 0,
-        "retries_used": 0,
-        "pipeline_halted": False,
-        "sha_passed": False,
-        "hash_unique": True,
-        "output_existed": False,
-        "had_pass_indicators": False,
-        "skills_loaded": True,  # always-loaded files guarantee this
-        "mistakes_consulted": active_mistakes > 0,
-        "diff_focused": True,    # measured below after diff is produced
-        "scope_creep": False,    # measured below after diff is produced
-        "review_result": "SKIPPED",
-        "shadow_gate_clean": True,
-        "drift_markers": 0,
-        "retro_ran": False,
-        "retro_proposals": False,
-        "retro_questions": 0,
-    }
-
-    try:
-        diff = phase_implement(task)
-        results["implement"] = "PASS"
-
-        # ── Fix 1+2: real measurements, L2/L3 intent gate ────────────────
-        measurements = run_measurements(task, diff)
-        eval_metrics["diff_focused"] = measurements["diff_focused"]
-        eval_metrics["scope_creep"] = measurements["scope_creep"]
+        measurements = run_measurements(self.task, diff, semantic_verdict=semantic_verdict)
+        self.eval_metrics["diff_focused"] = measurements["diff_focused"]
+        self.eval_metrics["scope_creep"] = measurements["scope_creep"]
 
         intent = measurements["_intent"]
-        # Fix 1: use l1_score, not "score" (was crashing with KeyError)
         l1_score = intent.get("l1_score", 0.0)
         print(f"[CONDUCTOR] Intent check: {intent['warning']}"
-              + (" ⚠" if l1_score < 0.5 else ""))
+              + (" (!)" if l1_score < 0.5 else ""))
 
-        # Fix 2: wire the L2/L3 reasoner — verdict_to_gate acts on the
-        # structured verdict, not just keyword overlap
         try:
-            verdict_to_gate(intent, task)  # MISMATCH ≥70% → GateViolation
+            verdict_to_gate(intent, self.task)   # MISMATCH >= 70% -> GateViolation
         except GateViolation as eg:
-            print(f"[CONDUCTOR] ⚠ Intent gate: {eg}")
-            eval_metrics["diff_focused"] = False
+            print(f"[CONDUCTOR] (!) Intent gate: {eg}")
+            self.eval_metrics["diff_focused"] = False
+            self.eval_metrics["pipeline_halted"] = True
+            self.results["implement"] = "FAIL"
             log_mistake(
-                phase="IMPLEMENT",
-                error=f"Intent gate: {intent.get('verdict', 'MISMATCH')}",
-                cause=intent.get("reason", ""),
-                lesson="diff did not implement the stated task",
+                phase="IMPLEMENT", error=f"Intent gate: {intent.get('verdict', 'MISMATCH')}",
+                cause=intent.get("reason", ""), lesson="diff did not implement the stated task",
                 gate="intent",
             )
-            raise  # halt — this is a real mismatch, not advisory
+            return PhaseResult("HALT", feedback=str(eg), detail={"intent": intent})
 
-        sha = phase_verify(diff)
-        results["verify"] = f"PASS (sha: {sha[:16]}...)"
-        eval_metrics["sha_passed"] = True
-        eval_metrics["output_existed"] = True
-        eval_metrics["had_pass_indicators"] = True
+        return PhaseResult("PASS", detail={"intent": intent})
 
-        findings = phase_review(diff, sha)
-        review_outcome = "PASS" if "HARD_FAIL" not in findings else "SOFT_FAIL"
-        results["review"] = review_outcome
-        eval_metrics["review_result"] = review_outcome
-        eval_metrics["shadow_gate_clean"] = (
-            "SHADOW GATE CHECK: clean" in findings
-            or "shadow" not in findings.lower()
-        )
-        # Fix 4: count drift markers in the DIFF, not the reviewer's report
-        # (reviewer.md template itself contains these words — wrong artifact)
-        diff_lower = diff.lower()
-        eval_metrics["drift_markers"] = (
-            diff_lower.count("+  todo")
-            + diff_lower.count("+ // todo")
-            + diff_lower.count("+  fixme")
-            + diff_lower.count("+ // fixme")
-            + diff_lower.count("+ console.log")
-            + diff_lower.count("+console.log")
-        )
+    # ── VERIFY ───────────────────────────────────────────────────────────────
 
-    # Fix 5: catch unexpected errors — degrade gracefully, don't crash
-    except (GateViolation, RuntimeError) as e:
-        results.setdefault("implement", "FAIL")
-        results.setdefault("verify", "FAIL")
-        results.setdefault("review", "FAIL")
-        eval_metrics["pipeline_halted"] = True
-        print(f"\n[CONDUCTOR] Pipeline halted (expected): {e}")
+    def verify_prompt(self) -> AgentPrompt:
+        """Prompt for the host to run the test suite and capture stdout."""
+        user = textwrap.dedent(f"""
+            The following diff was produced by the implementer and passed code gates.
+            Run the test suite now. Return full stdout (it will be hashed by the SHA gate).
 
-    except Exception as e:
-        results.setdefault("implement", "ERROR")
-        results.setdefault("verify", "ERROR")
-        results.setdefault("review", "ERROR")
-        eval_metrics["pipeline_halted"] = True
-        print(f"\n[CONDUCTOR] Pipeline crashed (unexpected {type(e).__name__}): {e}")
-        log_mistake(
-            phase="CONDUCTOR",
-            error=f"{type(e).__name__}: {e}",
-            cause="unexpected exception — check the seam between phases",
-            lesson=f"add a test that exercises this code path without API key",
-            gate="none",
-        )
+            Diff (for context only — do not re-apply it):
+            {self.diff[:2000]}
+        """).strip()
+        return AgentPrompt(system=_read_agent_prompt("verifier"), user=user)
 
-    finally:
-        # Retro runs regardless — but must not propagate its own failures
+    def submit_verification(self, test_output: str) -> PhaseResult:
+        """Persist host test output, run the SHA gate, mark verified."""
+        (MEMORY_DIR / "test_output.txt").write_text(test_output, encoding="utf-8")
         try:
-            phase_retro()
-            eval_metrics["retro_ran"] = True
-            eval_metrics["retro_questions"] = 7
-        except Exception as retro_err:
-            print(f"[CONDUCTOR] Retro failed ({type(retro_err).__name__}): {retro_err}")
-            eval_metrics["retro_ran"] = False
+            sha = gate_test_output(
+                test_output_path=str(MEMORY_DIR / "test_output.txt"),
+                run_log_path=str(MEMORY_DIR / "run_log.json"),
+            )
+        except Exception as e:
+            self.results["verify"] = "FAIL"
+            self.eval_metrics["pipeline_halted"] = True
+            print(f"[CONDUCTOR] VERIFY SHA gate failed: {e}")
+            return PhaseResult("HALT", feedback=str(e))
 
-    # Checkpoint enforcement
-    verified = check_verification()
+        log_gate_pass("sha_gate")
+        mark_verified(sha)
+        self.sha = sha
+        self.results["verify"] = f"PASS (sha: {sha[:16]}...)"
+        self.eval_metrics["sha_passed"] = True
+        self.eval_metrics["output_existed"] = True
+        self.eval_metrics["had_pass_indicators"] = True
+        print(f"[CONDUCTOR] VERIFY passed — SHA: {sha[:16]}...")
+        return PhaseResult("PASS", detail={"sha": sha})
 
-    print("\n" + "=" * 60)
-    print(f"PIPELINE #{run_number}: {task}")
-    for phase, status in results.items():
-        print(f"  {phase.upper():10}: {status}")
-    print(f"  {'VERIFIED':10}: {'YES' if verified else 'NO — do not claim completion'}")
-    print("=" * 60)
-    print(f"\n{get_summary()}")
+    # ── REVIEW ───────────────────────────────────────────────────────────────
 
-    # ─── EVALUATION REPORT ────────────────────────────────────────────
-    eval_report = evaluate_pipeline_run(
-        task=task,
-        pipeline_number=run_number,
-        **eval_metrics,
-    )
-    print(eval_report.format_report())
+    def review_prompt(self) -> AgentPrompt:
+        """Prompt for the host to review the diff."""
+        user = textwrap.dedent(f"""
+            Review the following diff. Tests passed (SHA: {self.sha[:16]}...).
 
-    # ─── SESSION LOG ──────────────────────────────────────────────────
-    session = new_session(agent_tool="claude-code")
-    session.set_task(task)
-    session.set_pipeline_result(
-        pipeline_number=run_number,
-        implement=results.get("implement", "PENDING"),
-        verify=results.get("verify", "PENDING"),
-        review=results.get("review", "PENDING"),
-        sha=eval_metrics.get("sha_passed") and
-            (MEMORY_DIR / "run_log.json").exists() and
-            str(json.loads((MEMORY_DIR / "run_log.json").read_text())[-1].get("test_output_hash", "")[:16] + "...")
-            or "none",
-    )
-    intent_summary = measurements.get("_intent", {}).get("warning", "") if "measurements" in dir() else ""
-    session.set_eval(
-        score=eval_report.total,
-        grade=eval_report.grade,
-        summary=f"{eval_report.behavior_actual} {intent_summary}".strip(),
-    )
+            Diff:
+            {self.diff}
+        """).strip()
+        return AgentPrompt(system=_read_agent_prompt("reviewer"), user=user)
 
-    # Surface active mistakes as handoff notes
-    relevant = check_relevant(task)
-    for m in relevant[:3]:
-        session.add_mistake(m.get("gate", "unknown"), m.get("lesson", ""))
+    def submit_review(self, findings: str) -> PhaseResult:
+        """Evaluate the host's review findings."""
+        self.findings = findings
+        if "HARD_FAIL" in findings:
+            log_gate_fail("review", "HARD_FAIL in review findings")
+            self.results["review"] = "SOFT_FAIL"
+            self.eval_metrics["review_result"] = "SOFT_FAIL"
+        else:
+            log_gate_pass("review")
+            self.results["review"] = "PASS"
+            self.eval_metrics["review_result"] = "PASS"
 
-    # Recommendations become open questions if score < 75
-    if eval_report.total < 75:
-        for rec in eval_report.recommendations:
-            session.add_question(rec)
+        self.eval_metrics["shadow_gate_clean"] = (
+            "SHADOW GATE CHECK: clean" in findings or "shadow" not in findings.lower()
+        )
+        # Count drift markers in the DIFF, not the reviewer's report
+        diff_lower = self.diff.lower()
+        self.eval_metrics["drift_markers"] = (
+            diff_lower.count("+  todo") + diff_lower.count("+ // todo")
+            + diff_lower.count("+  fixme") + diff_lower.count("+ // fixme")
+            + diff_lower.count("+ console.log") + diff_lower.count("+console.log")
+        )
+        print(f"[CONDUCTOR] Review result: {self.eval_metrics['review_result']}")
+        return PhaseResult("PASS", detail={"review": self.eval_metrics["review_result"]})
 
-    # Handoff note
-    if verified:
-        session.add_handoff(f"Pipeline #{run_number} complete and verified. Ready for next task.")
-    else:
-        session.add_handoff(f"Pipeline #{run_number} did not complete verification. Do not claim done.")
+    # ── RETRO ────────────────────────────────────────────────────────────────
 
-    session_path = session.save()
-    print(f"\n[CONDUCTOR] Session log saved → {session_path}")
+    def retro_prompt(self) -> AgentPrompt:
+        """Prompt for the host to run the 7-question retro."""
+        mistakes_path = MEMORY_DIR / "mistakes.md"
+        mistakes = mistakes_path.read_text(encoding="utf-8") if mistakes_path.exists() else "(none)"
+        user = f"Run the 7-question retro and skill file analysis.\n\nmistakes.md content:\n{mistakes}"
+        return AgentPrompt(system=_read_agent_prompt("retro"), user=user)
+
+    def submit_retro(self, output: str = "", questions_answered: int = 7,
+                     produced_proposals: bool = False) -> PhaseResult:
+        """Record retro completion."""
+        self.eval_metrics["retro_ran"] = True
+        self.eval_metrics["retro_questions"] = questions_answered
+        self.eval_metrics["retro_proposals"] = produced_proposals
+        print("[CONDUCTOR] RETRO complete")
+        return PhaseResult("DONE")
+
+    # ── FINALIZE ─────────────────────────────────────────────────────────────
+
+    def finalize(self) -> EvalReport:
+        """Produce the eval report and write the session log."""
+        verified = check_verification()
+
+        print("\n" + "=" * 60)
+        print(f"PIPELINE #{self.run_number}: {self.task}")
+        for phase, status in self.results.items():
+            print(f"  {phase.upper():10}: {status}")
+        print(f"  {'VERIFIED':10}: {'YES' if verified else 'NO — do not claim completion'}")
+        print("=" * 60)
+        print(f"\n{get_summary()}")
+
+        report = evaluate_pipeline_run(
+            task=self.task, pipeline_number=self.run_number, **self.eval_metrics,
+        )
+        print(report.format_report())
+
+        self._write_session(report, verified)
+        return report
+
+    def _write_session(self, report: EvalReport, verified: bool) -> Path:
+        session = new_session(agent_tool="host-driven")
+        session.set_task(self.task)
+        session.set_pipeline_result(
+            pipeline_number=self.run_number,
+            implement=self.results.get("implement", "PENDING"),
+            verify=self.results.get("verify", "PENDING"),
+            review=self.results.get("review", "PENDING"),
+            sha=(self.sha[:16] + "...") if self.sha else "none",
+        )
+        session.set_eval(
+            score=report.total, grade=report.grade, summary=report.behavior_actual,
+        )
+        for m in check_relevant(self.task)[:3]:
+            session.add_mistake(m.get("gate", "unknown"), m.get("lesson", ""))
+        if report.total < 75:
+            for rec in report.recommendations:
+                session.add_question(rec)
+        if verified:
+            session.add_handoff(f"Pipeline #{self.run_number} complete and verified. Ready for next task.")
+        else:
+            session.add_handoff(f"Pipeline #{self.run_number} did not complete verification. Do not claim done.")
+        path = session.save()
+        print(f"\n[CONDUCTOR] Session log saved -> {path}")
+        return path
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run the agent pipeline")
-    parser.add_argument("task", help="Task description for the implementer agent")
-    args = parser.parse_args()
+    print(textwrap.dedent("""
+        Techne is host-driven — it does not call a model.
 
-    if "ANTHROPIC_API_KEY" not in os.environ:
-        print("Error: ANTHROPIC_API_KEY environment variable not set")
-        sys.exit(1)
+        Drive the pipeline from your host agent (Claude Code / Hermes / OpenCode):
 
-    run_pipeline(args.task)
+            from conductor import Pipeline
+            p = Pipeline.start("your task")
+            p.submit_implementation(host_diff)      # retry while status == RETRY
+            p.submit_verification(host_test_output)
+            p.submit_review(host_findings)
+            p.submit_retro(host_retro_output)
+            report = p.finalize()
+
+        See README.md for the full host-driven walkthrough.
+    """).strip())

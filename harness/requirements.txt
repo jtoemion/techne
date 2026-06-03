@@ -1,1 +1,7 @@
-anthropic>=0.40.0
+# Techne is host-driven — it never calls a model, so there is no SDK dependency.
+# No hard runtime requirements (Python 3.10+ stdlib only).
+#
+# Optional:
+#   PyYAML   — nicer skill-router.yaml parsing; router.py has a stdlib fallback
+#              parser, so this is not required.
+# PyYAML
