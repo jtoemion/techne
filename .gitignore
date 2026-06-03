@@ -7,3 +7,5 @@ memory/test_output.txt
 memory/implementer_output.txt
 memory/latest_eval.txt
 memory/retro_proposals.md
+tests/evals/results/*.json
+!tests/evals/results/baseline.json

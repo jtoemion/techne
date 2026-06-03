@@ -1,0 +1,37 @@
+{
+  "timestamp": "2026-06-02T18:02:24.126967+00:00",
+  "suites": [
+    {
+      "suite": "Router",
+      "passed": 20,
+      "failed": 0,
+      "total": 20,
+      "failures": []
+    },
+    {
+      "suite": "Gates",
+      "passed": 24,
+      "failed": 0,
+      "total": 24,
+      "failures": []
+    },
+    {
+      "suite": "Intent",
+      "passed": 18,
+      "failed": 0,
+      "total": 18,
+      "failures": []
+    },
+    {
+      "suite": "Pipeline E2E",
+      "passed": 0,
+      "failed": 0,
+      "total": 0,
+      "skipped": true,
+      "failures": []
+    }
+  ],
+  "total_passed": 62,
+  "total_failed": 0,
+  "total_cases": 62
+}

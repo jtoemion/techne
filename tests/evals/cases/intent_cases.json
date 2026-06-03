@@ -1,0 +1,90 @@
+[
+  { "id": "i01", "task": "add sale badge to ProductCard component",
+    "diff": "--- a/components/ProductCard.tsx\n+++ b/components/ProductCard.tsx\n@@ -1,8 +1,14 @@\n+import { SaleBadge } from './SaleBadge'\n \n export default function ProductCard({ product, isSale }) {\n+  return (\n+    <div>\n+      {isSale && <SaleBadge label=\"Sale\" />}\n+      <h2>{product.name}</h2>\n+    </div>\n+  )\n }",
+    "expected_l1_verdict": "MATCH", "expected_l1_score_min": 0.5, "expected_l2_verdict": "MISMATCH",
+    "note": "L1 matches (keywords present), L2 structural scores 0.6 — no named export matches task" },
+
+  { "id": "i02", "task": "add sale badge to ProductCard component",
+    "diff": "--- a/components/Header.tsx\n+++ b/components/Header.tsx\n@@ -1,4 +1,6 @@\n+const navItems = ['Home', 'Shop', 'Cart']\n+\n export const Header = () => <nav>{navItems.map(n => <a key={n}>{n}</a>)}</nav>",
+    "expected_l1_verdict": "MISMATCH", "expected_l1_score_min": 0.0, "expected_l1_score_max": 0.3, "expected_l2_verdict": "MISMATCH",
+    "note": "diff touches Header, not ProductCard — zero keyword overlap" },
+
+  { "id": "i03", "task": "fix redirect in middleware for unauthenticated users",
+    "diff": "--- a/middleware.ts\n+++ b/middleware.ts\n@@ -1,6 +1,10 @@\n import { NextResponse } from 'next/server'\n+import { redirect } from 'next/navigation'\n \n export function middleware(request: Request) {\n+  const token = request.cookies.get('auth')\n+  if (!token) redirect('/login')\n   return NextResponse.next()\n }",
+    "expected_l1_verdict": "PARTIAL", "expected_l1_score_min": 0.3, "expected_l2_verdict": "MISMATCH",
+    "note": "L1 PARTIAL (0.50) — L2 structural finds no matching exports" },
+
+  { "id": "i04", "task": "fix redirect in middleware for unauthenticated users",
+    "diff": "--- a/components/LoginButton.tsx\n+++ b/components/LoginButton.tsx\n@@ -1,4 +1,6 @@\n+export const LoginButton = ({ onClick }) => (\n+  <button onClick={onClick}>Log In</button>\n+)",
+    "expected_l1_verdict": "MISMATCH", "expected_l1_score_max": 0.2, "expected_l2_verdict": "MISMATCH",
+    "note": "L1 MISMATCH (0.00) — no task keywords in diff; L2 structural mismatch" },
+
+  { "id": "i05", "task": "create checkout page with order summary",
+    "diff": "--- /dev/null\n+++ b/app/checkout/page.tsx\nnew file mode 100644\n@@ -0,0 +1,18 @@\n+import type { OrderItem } from '@/types'\n+\n+interface Props { items: OrderItem[] }\n+\n+export default async function CheckoutPage() {\n+  const items = await getOrderItems()\n+  return (\n+    <main>\n+      <h1>Order Summary</h1>\n+      <ul>{items.map(i => <li key={i.id}>{i.name}</li>)}</ul>\n+    </main>\n+  )\n+}",
+    "expected_l1_verdict": "MATCH", "expected_l1_score_min": 0.6, "expected_l2_verdict": "MATCH",
+    "note": "new page.tsx under app/checkout, exports CheckoutPage, has 'order summary'" },
+
+  { "id": "i06", "task": "add TypeScript types to the auth hook",
+    "diff": "--- a/hooks/useAuth.ts\n+++ b/hooks/useAuth.ts\n@@ -1,5 +1,9 @@\n+interface AuthState {\n+  user: User | null\n+  isLoading: boolean\n+}\n+\n export const useAuth = (): AuthState => {",
+    "expected_l1_verdict": "PARTIAL", "expected_l1_score_min": 0.3, "expected_l2_verdict": "MISMATCH",
+    "note": "L1 PARTIAL (0.50) — L2 structural scores 0.6, no matching export names" },
+
+  { "id": "i07", "task": "add TypeScript types to the auth hook",
+    "diff": "--- a/hooks/useAuth.ts\n+++ b/hooks/useAuth.ts\n@@ -1,5 +1,7 @@\n+// TODO: add types later\n export const useAuth = () => {",
+    "expected_l1_verdict": "MATCH", "expected_l1_score_min": 0.5, "expected_l2_verdict": "MISMATCH",
+    "note": "L1 MATCH (0.75) — TODO comment has 'types' keyword; L2 structural finds no types" },
+
+  { "id": "i08", "task": "refactor cart state to use useReducer",
+    "diff": "--- a/hooks/useCart.ts\n+++ b/hooks/useCart.ts\n@@ -1,8 +1,16 @@\n+import { useReducer } from 'react'\n+\n+type CartAction = { type: 'ADD'; item: CartItem } | { type: 'REMOVE'; id: string }\n+\n+function cartReducer(state: CartItem[], action: CartAction): CartItem[] {\n+  switch (action.type) {\n+    case 'ADD': return [...state, action.item]\n+    case 'REMOVE': return state.filter(i => i.id !== action.id)\n+    default: return state\n+  }\n+}\n+\n+export const useCart = () => useReducer(cartReducer, [])",
+    "expected_l1_verdict": "MATCH", "expected_l1_score_min": 0.6, "expected_l2_verdict": "MATCH",
+    "note": "correct file, imports useReducer, exports useCart using reducer" },
+
+  { "id": "i09", "task": "refactor cart state to use useReducer",
+    "diff": "--- a/components/CartDisplay.tsx\n+++ b/components/CartDisplay.tsx\n@@ -1,4 +1,6 @@\n+export const CartDisplay = ({ items }) => (\n+  <ul>{items.map(i => <li key={i.id}>{i.name}</li>)}</ul>\n+)",
+    "expected_l1_verdict": "MISMATCH", "expected_l1_score_max": 0.4, "expected_l2_verdict": "MATCH",
+    "note": "L1 MISMATCH (0.25) — no task keywords; L2 structural MATCH (component added)" },
+
+  { "id": "i10", "task": "add WhatsApp share button to the product detail page",
+    "diff": "--- a/app/product/[id]/page.tsx\n+++ b/app/product/[id]/page.tsx\n@@ -5,6 +5,12 @@\n+import { WhatsAppButton } from '@/components/WhatsAppButton'\n \n export default async function ProductDetailPage({ params }) {\n   const product = await getProduct(params.id)\n+  return (\n+    <main>\n+      <h1>{product.name}</h1>\n+      <WhatsAppButton productId={product.id} />\n+    </main>\n+  )\n }",
+    "expected_l1_verdict": "MATCH", "expected_l1_score_min": 0.5, "expected_l2_verdict": "MISMATCH",
+    "note": "L1 MATCH (0.83), L2 MISMATCH (0.60) — structural doesn't match exports to task" },
+
+  { "id": "i11", "task": "add WhatsApp share button to the product detail page",
+    "diff": "--- /dev/null\n+++ b/components/WhatsAppButton.tsx\nnew file mode 100644\n@@ -0,0 +1,8 @@\n+interface Props { productId: string }\n+\n+export const WhatsAppButton = ({ productId }: Props) => (\n+  <a href={`https://wa.me/?text=${productId}`}>Share on WhatsApp</a>\n+)",
+    "expected_l1_verdict": "PARTIAL", "expected_l2_verdict": "MATCH",
+    "note": "L1 PARTIAL (0.67), L2 MATCH (0.70) — creates component with matching export" },
+
+  { "id": "i12", "task": "add WhatsApp share button to the product detail page",
+    "diff": "--- a/components/Header.tsx\n+++ b/components/Header.tsx\n@@ -1,4 +1,5 @@\n+import { Share2 } from 'lucide-react'\n export const Header = () => <nav><Share2 /></nav>",
+    "expected_l1_verdict": "MISMATCH", "expected_l1_score_max": 0.3, "expected_l2_verdict": "MISMATCH",
+    "note": "wrong file, wrong component, no WhatsApp" },
+
+  { "id": "i13", "task": "empty diff scenario", "diff": "",
+    "expected_l1_verdict": "MISMATCH", "expected_l2_verdict": "MISMATCH",
+    "note": "empty diff — nothing implemented" },
+
+  { "id": "i14", "task": "add loading skeleton to the product listing page",
+    "diff": "--- a/app/products/page.tsx\n+++ b/app/products/page.tsx\n@@ -1,6 +1,12 @@\n+import { Skeleton } from '@/components/ui/skeleton'\n \n export default async function ProductsPage() {\n+  return (\n+    <div>\n+      {Array.from({ length: 6 }).map((_, i) => (\n+        <Skeleton key={i} className=\"h-40 w-full\" />\n+      ))}\n+    </div>\n+  )\n }",
+    "expected_l1_verdict": "PARTIAL", "expected_l1_score_min": 0.4, "expected_l2_verdict": "MISMATCH",
+    "note": "L1 PARTIAL (0.60), L2 MISMATCH (0.60) — structural score below 0.7 threshold" },
+
+  { "id": "i15", "task": "remove all console.log statements from production code",
+    "diff": "--- a/components/Form.tsx\n+++ b/components/Form.tsx\n@@ -3,7 +3,5 @@\n-console.log('form submitted', data)\n export const Form = () => {",
+    "expected_l1_verdict": "MISMATCH", "expected_l1_score_max": 0.4, "expected_l2_verdict": "MISMATCH",
+    "note": "L1 MISMATCH (0.25) — deletion diff, task keywords not found in added lines" },
+
+  { "id": "i16", "task": "add dark mode toggle to the settings page",
+    "diff": "--- a/app/settings/page.tsx\n+++ b/app/settings/page.tsx\n@@ -1,6 +1,14 @@\n+import { DarkModeToggle } from '@/components/DarkModeToggle'\n \n export default function SettingsPage() {\n+  return (\n+    <section>\n+      <h2>Appearance</h2>\n+      <DarkModeToggle />\n+    </section>\n+  )\n }",
+    "expected_l1_verdict": "MATCH", "expected_l1_score_min": 0.5, "expected_l2_verdict": "MISMATCH",
+    "note": "L1 MATCH (1.00), L2 MISMATCH (0.60) — structural score below 0.7" },
+
+  { "id": "i17", "task": "write a new TypeScript utility function for date formatting",
+    "diff": "--- /dev/null\n+++ b/lib/dateUtils.ts\nnew file mode 100644\n@@ -0,0 +1,10 @@\n+export function formatDate(date: Date, locale = 'en-US'): string {\n+  return new Intl.DateTimeFormat(locale, {\n+    year: 'numeric',\n+    month: 'long',\n+    day: 'numeric'\n+  }).format(date)\n+}",
+    "expected_l1_verdict": "MISMATCH", "expected_l1_score_max": 0.5, "expected_l2_verdict": "MATCH",
+    "note": "L1 MISMATCH (0.33) — 'typescript' is in stopwords, 'format' is in stopwords; L2 MATCH (formatDate export)" },
+
+  { "id": "i18", "task": "write a new TypeScript utility function for date formatting",
+    "diff": "--- a/components/ProductCard.tsx\n+++ b/components/ProductCard.tsx\n@@ -1,4 +1,6 @@\n+export const ProductCard = ({ product }) => (\n+  <div>{product.name}</div>\n+)",
+    "expected_l1_verdict": "MISMATCH", "expected_l1_score_max": 0.2, "expected_l2_verdict": "MISMATCH",
+    "note": "completely wrong — adds a component, not a date utility" }
+]

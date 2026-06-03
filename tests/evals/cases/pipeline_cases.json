@@ -1,0 +1,43 @@
+[
+  { "id": "p01",
+    "task": "add a sale badge to the ProductCard component",
+    "diff_description": "Adds SaleBadge component + integrates into ProductCard",
+    "diff": "--- /dev/null\n+++ b/components/SaleBadge.tsx\nnew file mode 100644\n@@ -0,0 +1,8 @@\n+interface Props { label: string }\n+export const SaleBadge = ({ label }: Props) => (\n+  <span className=\"badge-sale\">{label}</span>\n+)\n+export default SaleBadge\n--- a/components/ProductCard.tsx\n+++ b/components/ProductCard.tsx\n@@ -1,6 +1,10 @@\n+import SaleBadge from './SaleBadge'\n+interface ProductCardProps { product: Product; isSale?: boolean }\n export default function ProductCard({ product, isSale }: ProductCardProps) {\n+  return <div>{isSale && <SaleBadge label=\"Sale\" />}<h2>{product.name}</h2></div>\n }",
+    "expected_quality": "PASS",
+    "note": "complete implementation — creates badge + integrates" },
+
+  { "id": "p02",
+    "task": "add a sale badge to the ProductCard component",
+    "diff_description": "Only creates SaleBadge but does not integrate into ProductCard",
+    "diff": "--- /dev/null\n+++ b/components/SaleBadge.tsx\nnew file mode 100644\n@@ -0,0 +1,4 @@\n+export const SaleBadge = ({ label }) => <span>{label}</span>",
+    "expected_quality": "PARTIAL",
+    "note": "creates badge but never adds it to ProductCard — incomplete" },
+
+  { "id": "p03",
+    "task": "fix the login redirect — users are sent to / instead of /dashboard after auth",
+    "diff_description": "Fixes middleware redirect target from / to /dashboard",
+    "diff": "--- a/middleware.ts\n+++ b/middleware.ts\n@@ -5,7 +5,7 @@\n export function middleware(request: Request) {\n   const token = request.cookies.get('auth')\n-  if (token) redirect('/')\n+  if (token) redirect('/dashboard')\n   return NextResponse.next()\n }",
+    "expected_quality": "PASS",
+    "note": "single-line fix in the right file — complete" },
+
+  { "id": "p04",
+    "task": "fix the login redirect — users are sent to / instead of /dashboard after auth",
+    "diff_description": "Adds a new LoginButton component — misses the redirect entirely",
+    "diff": "--- /dev/null\n+++ b/components/LoginButton.tsx\nnew file mode 100644\n@@ -0,0 +1,4 @@\n+export const LoginButton = () => <button>Log In</button>",
+    "expected_quality": "FAIL",
+    "note": "wrong file, wrong fix — FAIL" },
+
+  { "id": "p05",
+    "task": "implement a product search API route that filters by name",
+    "diff_description": "Adds app/api/products/route.ts with GET handler filtering by name query param",
+    "diff": "--- /dev/null\n+++ b/app/api/products/route.ts\nnew file mode 100644\n@@ -0,0 +1,14 @@\n+import { NextResponse } from 'next/server'\n+import { getProducts } from '@/lib/db'\n+\n+export async function GET(request: Request) {\n+  const { searchParams } = new URL(request.url)\n+  const name = searchParams.get('name') ?? ''\n+  const products = await getProducts()\n+  const filtered = products.filter(p =>\n+    p.name.toLowerCase().includes(name.toLowerCase())\n+  )\n+  return NextResponse.json({ products: filtered })\n+}",
+    "expected_quality": "PASS",
+    "note": "correct route, correct filter logic, NextResponse" },
+
+  { "id": "p06",
+    "task": "implement a product search API route that filters by name",
+    "diff_description": "Adds a frontend search input component instead of the API route",
+    "diff": "--- /dev/null\n+++ b/components/SearchInput.tsx\nnew file mode 100644\n@@ -0,0 +1,8 @@\n+import { useState } from 'react'\n+export const SearchInput = ({ onSearch }) => {\n+  const [q, setQ] = useState('')\n+  return <input value={q} onChange={e => { setQ(e.target.value); onSearch(e.target.value) }} />\n+}",
+    "expected_quality": "FAIL",
+    "note": "frontend component, not API route — wrong layer entirely" }
+]

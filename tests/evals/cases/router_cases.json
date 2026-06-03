@@ -1,0 +1,22 @@
+[
+  { "id": "r01", "input": "diagnose and fix the bug causing login failures", "expected_skill": "diagnose", "note": "has 'bug' + 'fix' — diagnose weight 90 beats implementer" },
+  { "id": "r02", "input": "the payment component is broken and throwing errors in prod", "expected_skill": "diagnose", "note": "'broken' + 'throwing' are diagnose keywords" },
+  { "id": "r03", "input": "write a skill for the deploy checklist", "expected_skill": "writing-skill", "note": "exact phrase 'write a skill'" },
+  { "id": "r04", "input": "create a skill template for the retro process", "expected_skill": "writing-skill", "note": "'create a skill' triggers writing-skill" },
+  { "id": "r05", "input": "TDD the AuthService — red green refactor", "expected_skill": "tdd", "note": "all three TDD keywords" },
+  { "id": "r06", "input": "write tests first then implement the checkout flow", "expected_skill": "tdd", "note": "'test-first' pattern" },
+  { "id": "r07", "input": "run a persona brainstorm with Ezekiel and Jeremiah", "expected_skill": "persona-brainstorm", "note": "exact persona names" },
+  { "id": "r08", "input": "grill this design approach before we implement", "expected_skill": "grill", "note": "'grill' + 'before implementing' keywords" },
+  { "id": "r09", "input": "stress-test this design before we implement it", "expected_skill": "grill", "note": "'stress-test plan' condition" },
+  { "id": "r10", "input": "add a redirect in middleware for unauthenticated users", "expected_skill": "nextjs-rules", "note": "'redirect' + 'middleware' — both nextjs keywords" },
+  { "id": "r11", "input": "implement the server component for the dashboard page", "expected_skill": "nextjs-rules", "note": "'server component' weight 50 > implementer weight 30" },
+  { "id": "r12", "input": "debug the broken auth hook that is failing", "expected_skill": "diagnose", "note": "'broken' + 'failing' — diagnose keywords, weight 90" },
+  { "id": "r13", "input": "add TypeScript generics with strict mode to the repository", "expected_skill": "typescript-rules", "note": "'TypeScript' + 'generics' + 'strict mode' keywords" },
+  { "id": "r14", "input": "implement the sale badge feature for the product card", "expected_skill": "implementer", "note": "'implement' + 'add feature' — implementer keywords" },
+  { "id": "r15", "input": "refactor the checkout logic and fix the change handler", "expected_skill": "implementer", "note": "'refactor' + 'fix' + 'change' — implementer keywords" },
+  { "id": "r16", "input": "challenge this design approach before implementing", "expected_skill": "grill", "note": "'review approach' + 'before implementing'" },
+  { "id": "r17", "input": "debug the regression - the product listing is broken and failing", "expected_skill": "diagnose", "note": "'regression' + 'broken' + 'failing' — diagnose keywords" },
+  { "id": "r18", "input": "build the new WhatsApp button and implement the feature", "expected_skill": "implementer", "note": "'build' + 'implement' — implementer keywords" },
+  { "id": "r19", "input": "app router layout for the admin panel", "expected_skill": "nextjs-rules", "note": "'app router' + 'layout'" },
+  { "id": "r20", "input": "discover the most important improvement to make this sprint", "expected_skill": "persona-brainstorm", "note": "'discover improvement' keyword" }
+]
