@@ -13,6 +13,22 @@ class GateViolation(Exception):
     pass
 
 
+# ─── Diff-line helpers ─────────────────────────────────────────────────────────
+
+def _strip_diff_marker(line: str) -> str:
+    """Remove a leading +/- diff marker (and surrounding whitespace),
+    returning the underlying code content."""
+    if line[:1] in ("+", "-"):
+        line = line[1:]
+    return line.strip()
+
+
+def _is_comment(code: str) -> bool:
+    """True if a stripped code line is a JS/TS or shell comment.
+    `code` must already have its diff marker removed (see _strip_diff_marker)."""
+    return code.startswith(("//", "#", "/*", "*"))
+
+
 # ─── Next.js gates ─────────────────────────────────────────────────────────────
 
 def gate_no_redirect_outside_middleware(diff: str):
@@ -25,7 +41,10 @@ def gate_no_redirect_outside_middleware(diff: str):
             continue
         if line.startswith("--- ") or line.startswith("+++ ") or line.startswith("diff ") or line.startswith("@@"):
             continue
-        if "redirect(" not in line:
+        code = _strip_diff_marker(line)
+        if _is_comment(code):
+            continue
+        if "redirect(" not in code:
             continue
         if "middleware.ts" not in current_file:
             raise GateViolation(
@@ -38,9 +57,10 @@ def gate_no_redirect_outside_middleware(diff: str):
 def gate_no_router_import(diff: str):
     """Rule: import from next/navigation, never next/router"""
     for i, line in enumerate(diff.splitlines()):
-        if line.lstrip().startswith("//") or line.lstrip().startswith("#"):
+        code = _strip_diff_marker(line)
+        if _is_comment(code):
             continue
-        if re.search(r"from\s+['\"]next/router['\"]", line):
+        if re.search(r"from\s+['\"]next/router['\"]", code):
             raise GateViolation(
                 f"GATE FAIL [nextjs/router-import]: found 'next/router' import on line {i+1}. "
                 f"Use 'next/navigation' in App Router.\n"
@@ -51,7 +71,12 @@ def gate_no_router_import(diff: str):
 def gate_no_gSSP(diff: str):
     """Rule: getServerSideProps removed in App Router"""
     for i, line in enumerate(diff.splitlines()):
-        if "getServerSideProps" in line and not line.strip().startswith("#"):
+        if line.startswith(("+++", "---", "@@", "diff ")):
+            continue
+        code = _strip_diff_marker(line)
+        if _is_comment(code):
+            continue
+        if "getServerSideProps" in code:
             raise GateViolation(
                 f"GATE FAIL [nextjs/gSSP]: getServerSideProps on line {i+1}. "
                 f"Use async server components instead.\n"
@@ -76,10 +101,14 @@ def gate_no_ts_ignore(diff: str):
 
 def gate_no_console_log(diff: str):
     """Rule: no console.log in production code paths"""
-    skip_patterns = re.compile(r"(\.test\.|\.spec\.|\.stories\.|__tests__)")
     for i, line in enumerate(diff.splitlines()):
-        if "console.log" in line and line.strip().startswith("+"):
-            # allow in test/story files (checked via context — limited heuristic)
+        # added lines only; skip the +++ file header
+        if not line.startswith("+") or line.startswith("+++"):
+            continue
+        code = _strip_diff_marker(line)
+        if _is_comment(code):
+            continue
+        if "console.log" in code:
             raise GateViolation(
                 f"GATE FAIL [general/console-log]: console.log added on line {i+1}. "
                 f"Remove before merge.\n"

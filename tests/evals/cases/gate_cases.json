@@ -34,9 +34,9 @@
   { "id": "g11", "gate": "gate_no_gSSP", "should_fire": true,
     "diff": "--- a/pages/index.tsx\n+++ b/pages/index.tsx\n+export const getServerSideProps = async (context) => {\n+  return { props: { data: null } }\n+}",
     "note": "const getServerSideProps = — should fire" },
-  { "id": "g12", "gate": "gate_no_gSSP", "should_fire": true,
+  { "id": "g12", "gate": "gate_no_gSSP", "should_fire": false,
     "diff": "--- a/lib/data.ts\n+++ b/lib/data.ts\n+// Previously used getServerSideProps, now using fetch\n+export const getProductData = async () => fetch('/api/products')",
-    "note": "comment mentions gSSP — gate fires on // comments too (only # is excluded)" },
+    "note": "comment mentions gSSP but code does not use it — gate must stay silent" },
 
   { "id": "g13", "gate": "gate_no_ts_ignore", "should_fire": true,
     "diff": "--- a/components/Form.tsx\n+++ b/components/Form.tsx\n+// @ts-ignore\n+const value = event.target.value as any",
@@ -75,5 +75,15 @@
     "note": "all four violations in one diff — run_all_gates should fire on first hit" },
   { "id": "g24", "gate": "run_all_gates", "should_fire": false,
     "diff": "--- a/app/checkout/page.tsx\n+++ b/app/checkout/page.tsx\n@@ -1,6 +1,12 @@\n import { useRouter } from 'next/navigation'\n import type { CheckoutItem } from '@/types'\n \n export default async function CheckoutPage() {\n+  const items: CheckoutItem[] = await getItems()\n+  return <div>{items.map(i => <span key={i.id}>{i.name}</span>)}</div>\n }",
-    "note": "clean checkout page with correct imports — all gates pass" }
+    "note": "clean checkout page with correct imports — all gates pass" },
+
+  { "id": "g25", "gate": "gate_no_redirect_outside_middleware", "should_fire": false,
+    "diff": "--- a/app/login/page.tsx\n+++ b/app/login/page.tsx\n@@ -1,4 +1,5 @@\n+// redirect('/dashboard') was here before — now handled in middleware\n export default function LoginPage() {",
+    "note": "redirect() only inside a comment — gate must stay silent (audit fix)" },
+  { "id": "g26", "gate": "gate_no_console_log", "should_fire": false,
+    "diff": "--- a/components/Product.tsx\n+++ b/components/Product.tsx\n+// console.log('debug') removed — keeping note for context\n+return <div>product</div>",
+    "note": "console.log only inside a comment — gate must stay silent (audit fix)" },
+  { "id": "g27", "gate": "gate_no_gSSP", "should_fire": false,
+    "diff": "--- a/lib/data.ts\n+++ b/lib/data.ts\n+/* uses getServerSideProps in the legacy path, migrated away */\n+export const getData = async () => fetch('/api/data')",
+    "note": "block comment mentions gSSP but code does not use it — gate must stay silent (audit fix)" }
 ]

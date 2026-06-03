@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-06-02T18:02:24.126967+00:00",
+  "timestamp": "2026-06-03T03:18:23.338043+00:00",
   "suites": [
     {
       "suite": "Router",
@@ -10,9 +10,9 @@
     },
     {
       "suite": "Gates",
-      "passed": 24,
+      "passed": 27,
       "failed": 0,
-      "total": 24,
+      "total": 27,
       "failures": []
     },
     {
@@ -31,7 +31,7 @@
       "failures": []
     }
   ],
-  "total_passed": 62,
+  "total_passed": 65,
   "total_failed": 0,
-  "total_cases": 62
+  "total_cases": 65
 }
