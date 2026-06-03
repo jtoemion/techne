@@ -4,6 +4,10 @@
 
 A harness engineering environment for disciplined AI agent pipelines. Compact, chainable skills. Hard gates. Structured memory. Scored evaluations.
 
+> **Plugging Techne into a host agent (Claude Code / Hermes / OpenCode)?**
+> Start with **[INSTALL.md](INSTALL.md)** (plug-and-play setup, no API key) and
+> **[COMPONENTS.md](COMPONENTS.md)** (every skill/gate/element + conflict check).
+
 ## Structure
 
 ```
