@@ -42,7 +42,7 @@ from pathlib import Path
 from gates import GateViolation, run_all_gates
 from sha_gate import gate_test_output
 from mistakes import log_mistake, check_relevant, count_active
-from evaluator import evaluate_pipeline_run, EvalReport
+from evaluator import evaluate_pipeline_run, EvalReport, load_eval_history as _load_eval_history, _trend
 from checkpoint import (
     increment_pipeline_run,
     log_gate_pass,
@@ -390,6 +390,122 @@ class Pipeline:
         self.eval_metrics["retro_proposals"] = produced_proposals
         print("[CONDUCTOR] RETRO complete")
         return PhaseResult("DONE")
+
+    # ── STATUS (show after every phase) ─────────────────────────────────────────
+
+    def get_status(self) -> str:
+        """
+        Returns a structured status report after every phase.
+        Shows: phase results, checkpoint summary, live eval preview.
+        Call this after submit_implementation / submit_verification /
+        submit_review / submit_retro — display the output to the user.
+        """
+        verified = check_verification()
+        history = _load_eval_history()
+        trend = _trend(history, self._preview_score())
+
+        lines = [
+            "",
+            "=" * 60,
+            f"PIPELINE #{self.run_number} STATUS",
+            "=" * 60,
+            f"Task: {self.task}",
+            "",
+            "PHASE RESULTS:",
+        ]
+        for phase, status in self.results.items():
+            lines.append(f"  {phase.upper():10}: {status}")
+        lines.append(f"  {'VERIFIED':10}: {'YES' if verified else 'NO'}")
+        lines.extend(["", "CHECKPOINT:", f"  {get_summary()}"])
+        lines.extend(["", "EVAL PREVIEW (based on current metrics):"])
+        for dim, (score, reason) in self._preview_scores().items():
+            lines.append(f"  {dim:25}: {score}/20  {reason}")
+        total = self._preview_score()
+        lines.extend([
+            f"  {'─'*36}",
+            f"  {'TOTAL (preview)':25}: {total}/100  (trend: {trend})",
+            "=" * 60,
+        ])
+        return "\n".join(lines)
+
+    def _preview_scores(self) -> dict:
+        """Current eval_metrics scored as they would appear in final eval."""
+        m = self.eval_metrics
+        scores = {}
+
+        # Gate Compliance
+        v = m["gate_violations"]
+        r = m["retries_used"]
+        h = m["pipeline_halted"]
+        if h:
+            scores["Gate Compliance"] = (0, "pipeline halted")
+        elif v == 0:
+            scores["Gate Compliance"] = (20, "zero gate violations")
+        elif v == 1 and r <= 1:
+            scores["Gate Compliance"] = (15, f"1 violation, corrected on retry {r}")
+        elif v <= 3 and r < MAX_RETRIES:
+            scores["Gate Compliance"] = (10, f"{v} violations, {r} retries used")
+        else:
+            scores["Gate Compliance"] = (5, f"required max retries ({MAX_RETRIES})")
+
+        # Verification Integrity
+        if not m["output_existed"]:
+            scores["Verification Integrity"] = (0, "test output missing or faked")
+        elif not m["sha_passed"]:
+            scores["Verification Integrity"] = (5, "SHA gate not yet run")
+        elif m["sha_passed"] and m["hash_unique"] and m["had_pass_indicators"]:
+            scores["Verification Integrity"] = (20, "SHA passed, unique hash, pass indicators present")
+        elif m["sha_passed"] and not m["hash_unique"]:
+            scores["Verification Integrity"] = (15, "SHA passed but identical hash")
+        else:
+            scores["Verification Integrity"] = (10, "SHA passed with caveats")
+
+        # Process Discipline
+        s, reasons = 20, []
+        if not m["skills_loaded"]: s -= 10; reasons.append("skills not loaded")
+        if not m["mistakes_consulted"]: s -= 5; reasons.append("mistakes not consulted")
+        if not m["diff_focused"]: s -= 5; reasons.append("diff not focused")
+        if m["scope_creep"]: s -= 5; reasons.append("scope creep detected")
+        scores["Process Discipline"] = (max(0, s), "; ".join(reasons) if reasons else "full discipline")
+
+        # Review Quality
+        rr = m["review_result"]
+        sg = m["shadow_gate_clean"]
+        dm = m["drift_markers"]
+        if rr == "PASS" and sg and dm == 0:
+            scores["Review Quality"] = (20, "review PASS, shadow gate clean, no drift")
+        elif rr == "PASS" and dm > 0:
+            scores["Review Quality"] = (15, f"review PASS but {dm} drift marker(s)")
+        elif rr == "SOFT_FAIL":
+            scores["Review Quality"] = (15, "review SOFT_FAIL")
+        elif not sg:
+            scores["Review Quality"] = (10, "shadow gate found issue gate missed")
+        elif rr == "HARD_FAIL":
+            scores["Review Quality"] = (5, "review HARD_FAIL")
+        elif rr == "SKIPPED":
+            scores["Review Quality"] = (0, "review not yet run")
+        else:
+            scores["Review Quality"] = (10, f"review: {rr}")
+
+        # Retro Value
+        ran = m["retro_ran"]
+        pq = m["retro_questions"]
+        pp = m["retro_proposals"]
+        if not ran:
+            scores["Retro Value"] = (0, "retro not yet run")
+        elif pq >= 7 and pp:
+            scores["Retro Value"] = (20, "retro complete with proposals")
+        elif pq >= 7:
+            scores["Retro Value"] = (20, "retro complete, clean run")
+        elif ran and pq < 7:
+            scores["Retro Value"] = (10, f"retro ran, only {pq}/7 questions")
+        else:
+            scores["Retro Value"] = (10, "retro ran")
+
+        return scores
+
+    def _preview_score(self) -> int:
+        return sum(s for s, _ in self._preview_scores().values())
 
     # ── FINALIZE ─────────────────────────────────────────────────────────────
 

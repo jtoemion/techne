@@ -55,4 +55,4 @@ grep '@ts-ignore' diff   # must be zero results
 - Design unproven — want to try it cheaply first? → `skills/prototype.md`
 - Recurring structural friction, not a one-off? → `skills/improve-architecture.md`
 - Change done, opening a PR? → `skills/check-pr.md`
-- After implementing → conductor runs `skills/evaluation.md` automatically
+- After implementing → `p.submit_implementation(diff)` → call `print(p.get_status())` → conductor runs `skills/evaluation.md` automatically

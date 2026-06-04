@@ -39,6 +39,9 @@ IMPLEMENT → VERIFY → REVIEW → RETRO → EVALUATE
 Each phase is a separate agent. Only the conductor advances phases.
 Gates run in Python — agents cannot self-report a pass.
 
+**After every phase: call `p.get_status()` — display the output.**
+Shows phase results, checkpoint summary, and live eval preview (scores per dimension + total + trend). This is mandatory every time the pipeline is used.
+
 ## Next Steps
 
 - Building something? → `skills/implementer.md`
