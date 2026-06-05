@@ -71,6 +71,12 @@ routing:
     skill_path: "skills/typescript.md"
     weight: 50
 
+  - id: "telegram-rulebook"
+    condition: "telegram behavior, megumi rule, thread routing, telegram session"
+    skill_path: "telegram/telegram-rulebook/SKILL.md"
+    weight: 95
+    note: "Always loaded in Telegram sessions. Thread-to-project routing + tone rules."
+
   - id: "implementer"
     condition: "implement, add feature, build, create component, fix, refactor, change"
     skill_path: "skills/implementer.md"
