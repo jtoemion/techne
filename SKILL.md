@@ -19,6 +19,10 @@ description: Harness engineering entry point. Routes to the right sub-skill base
 | Checking a pull request (one pass) | `skills/check-pr.md` |
 | Iterating a PR to a perfect review | `skills/greploop.md` |
 | Writing a new skill | `skills/writing-skill.md` |
+| UI design decisions | `skills/ui-grill.md` |
+| Prompting LLM for UI | `skills/ui-craft.md` |
+| UI specificity standard | `skills/ui-physics.md` |
+| Design-to-dev handoff | `skills/ui-handoff.md` |
 | Reviewing agent output | `skills/evaluation.md` |
 | Next.js specific rules | `skills/nextjs.md` |
 | TypeScript type errors | `skills/typescript.md` |
@@ -27,8 +31,10 @@ description: Harness engineering entry point. Routes to the right sub-skill base
 
 These are injected for every task — do not skip:
 
-- `skills/nextjs.md` — hard gates that will reject your diff
+- `skills/nextjs.md` — hard gates that will reject your diff (Next.js projects only)
 - `skills/typescript.md` — hard gates that will reject your diff
+
+**Scope note:** Techne's gates (`gate_no_redirect_outside_middleware`, `gate_no_router_import`, etc.) and its pipeline phases (IMPLEMENT → VERIFY → REVIEW → RETRO → EVALUATE) are designed for **Next.js full-stack projects**. For React 19 + Vite projects (e.g., pastpapr), the routing and middleware conventions don't apply. Load the skill for its sub-skill routing and ESLint/TypeScript pitfall references, but skip the Next.js-specific gate logic.
 
 ## Pipeline Phases
 
@@ -47,3 +53,6 @@ Shows phase results, checkpoint summary, and live eval preview (scores per dimen
 - Building something? → `skills/implementer.md`
 - Debugging? → `skills/diagnose.md`
 - Not sure what to do first? → `skills/grill.md`
+- Post-build bug analysis? → `references/bug-analysis-soaperfume.md` (live case study — 13 bugs, H-1 through L-4, with fix patterns)
+- SvelteKit deployment issues? → `references/bug-analysis-soaperfume.md` (adapter-hosting mismatch, idempotent migrations, auth guards)
+- Bug triage quick-ref? → `references/bug-analysis-soaperfume.md` (symptom → cause table for common SvelteKit/SQLite patterns)
