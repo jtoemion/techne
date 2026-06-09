@@ -123,6 +123,18 @@ pnpm add -D d3 @types/d3
 
 Static `import` fails at build bundling; dynamic `import()` fails at Vite's transform plugin — both require the package to be present.
 
+#### `patch` tool — use `write_file` for non-trivial edits
+
+When replacing multi-line blocks where the indentation or line count changes, the `patch` tool can mangle whitespace silently. Symptoms:
+- Indentation drifts (extra/different leading spaces)
+- Entire lines or expressions get dropped from the replacement
+- LSP then reports "variable implicitly has 'any' type" on the dropped expression
+
+For edits that change more than ~3 lines or involve indentation restructuring, prefer `write_file` with the full corrected file content. Use `patch` only for:
+- Single-line fixes
+- Exact line-for-line replacements with identical indentation
+- Well-contained blocks where you control the exact old_string match
+
 ## Always Loaded
 
 These are injected for every task — do not skip:
@@ -154,6 +166,7 @@ Shows phase results, checkpoint summary, and live eval preview (scores per dimen
 - Bug triage quick-ref? → `references/bug-analysis-soaperfume.md` (symptom → cause table for common SvelteKit/SQLite patterns)
 - Replicating an existing UI (vanilla HTML prototype → framework code)? → `references/ui-replication-from-reference.md` (audit-then-extract workflow, atom layer first, token-exact matching)
 - Hook-gate bridge (Hermes pre_tool_call → Techne gates.py)? → `references/hook-gate-bridge.md` (plan + architecture for inline gate enforcement via plugin hook)
+- LMS-hermes bridge (student-portal → Hermes custom provider + MCP tools)? → `references/lms-hermes-bridge.md` (Phase 1 ✅, Phase 2 LMS side ✅ — commit `6d9d467` reviewed/fixed. Hermes side: see `HERMES_SIDE_PHASE2.md` — token extraction, auto-inject, scope enforcement, 3 open questions for Hermes team)
 - Writing a new skill? → `superpowers/writing-skills/SKILL.md` (TDD for documentation — RED-GREEN-REFACTOR applied to process docs)
 - UI design decisions? → `superpowers/frontend-avant-garde/SKILL.md` (Senior Frontend Architect — opinionated, output-first)
 - Svelte project work? → `skills/svelte.md` (gap-at-bottom fix, $state patterns, dev-only route guard)
