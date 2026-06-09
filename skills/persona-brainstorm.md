@@ -19,15 +19,16 @@ Not feature voting. Not aspiration. Friction.
 ## The Four-Persona Loop
 
 ```
-Ezekiel  (Developer)    → reads code/docs, asks targeted questions
-Jeremiah (Client)       → answers from full project context
-Megumi   (Scribe)       → documents inline to CONTEXT.md + ADRs
-Judah    (Human)        → observes silently. Intervenes only when called.
+Ezekiel  (Developer)    → reads code/docs, asks targeted questions from contradictions found
+Jeremiah (Client)       → answers from his KB (product friction, user pain, workflow gaps)
+Megumi   (Scribe)       → documents inline to CONTEXT.md + ADRs, enforces format
+Judah    (Human)        → observes silently. Called ONLY when Jeremiah explicitly says "I don't know, ask the client"
 ```
 
-Auto-loop is the default. Do NOT ask Judah for permission to continue.
+**Megumi runs the loop autonomously. Judah is never asked for permission to continue. Judah is never asked product/UX questions. If Megumi doesn't know what Jeremiah would say, she reads Jeremiah's KB first.**
 
 → Full roles + rules: `skills/persona-brainstorm/personas.md`
+→ Jeremiah's KB: `skills/persona-brainstorm/jeremiah-kb.md`
 
 ## How It Runs
 

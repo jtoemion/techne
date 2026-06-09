@@ -77,6 +77,12 @@ routing:
     weight: 95
     note: "Always loaded in Telegram sessions. Thread-to-project routing + tone rules."
 
+  - id: "ezra-assistant"
+    condition: "Ezra schedule, Ezra attendance, Ezra student package, BnB LMS tutoring, Ezra reminder"
+    skill_path: "productivity/ezra-assistant/SKILL.md"
+    weight: 82
+    note: "Ezra Theodores' tutoring schedule + attendance workflow. Overlaps with tutor-assistant but Ezra-specific."
+
   - id: "implementer"
     condition: "implement, add feature, build, create component, fix, refactor, change"
     skill_path: "skills/implementer.md"
@@ -113,6 +119,14 @@ disambiguation:
     rule: |
       check-pr = ONE pass. Read the PR, categorize issues, report, optionally fix once.
       greploop = LOOP. Iterate the PR until 5/5 + zero unresolved (max 5 iterations).
+
+  - confused:
+      - ezra-assistant
+      - tutor-assistant
+    rule: |
+      ezra-assistant    = Ezra THEODORES specifically. Use admin UID 5VjkeLYp6HNUnc2HR4J7g0qkg3q1.
+                          Has Ezra's fixed routine, HTML report format, and 8-session package rules.
+      tutor-assistant   = Generic tutor. Not Ezra. Use when no specific tutor name is given.
 
   - confused:
       - prototype

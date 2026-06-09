@@ -16,7 +16,9 @@ CLOSED  → natural close OR 3 ADRs reached OR Ezekiel out of contradictions
 ## Loop Continues When
 
 ```
-- Jeremiah surfaces a concrete pain statement → Ezekiel escalates toward ADR
+- Megumi reads Jeremiah's KB (or draws from memory) to answer product questions
+- Ezekiel surfaces a contradiction from code → asks Jeremiah one pointed question
+- Jeremiah answers from KB → Ezekiel digs or pivots
 - Jeremiah's answer is vague → Ezekiel pushes: "Specific example?"
 - Question closes → Megumi marks Closed / ADR-N in CONTEXT.md
 - New thread opens → Ezekiel pivots cleanly to it
@@ -67,13 +69,15 @@ Megumi does NOT call Judah for:
 
 ```
 Phase 1 — Orientation
-  Ezekiel states what he knows from temp-KB
+  Megumi reads Jeremiah's KB for relevant domain context
+  Ezekiel states what he knows from temp-KB + code
   Ezekiel asks ONE pointed question about the most acute contradiction
 
 Phase 2 — Discovery (loop)
-  Round 1: Ezekiel asks. Jeremiah answers.
-  Round 2: Ezekiel digs on most-real thread. Pushes until concrete pain stated.
-  Round 3: Ezekiel pivots to second theme or synthesizes.
+  Megumi answers from Jeremiah's KB (product friction, user pain)
+  Ezekiel digs on most-real thread — pushes until concrete pain stated
+  If Jeremiah's KB has no answer: Megumi infers from memory, flags "KB gap"
+  If KB gap blocks resolution: Megumi calls Judah (not Ezekiel asking Judah)
 
 Phase 3 — ADR Writing (inside the loop, not separate)
   Real improvement crystallizes → Ezekiel drafts ADR in real time
