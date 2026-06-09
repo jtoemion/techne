@@ -40,6 +40,27 @@ counts flag as RECURRING:
 - Propose RESOLVE for mistake entries whose root cause is now gated.
 - Target path is relative to repo root (e.g. `skills/nextjs.md`, `skills/tdd/mocking.md`).
 
+# Record to the Ledger (method memory — distinct from skill edits)
+
+Your answers to Q5–Q7 (better / how / patterns) are method-level knowledge that is
+otherwise lost. Append them as durable entries to `memory/ledger.md` (below its
+insert marker) so future tasks are surfaced them. Record only what generalizes —
+not run-specific trivia. Use these kinds:
+- **DECISION**   — a choice about HOW to work + why (alternatives rejected)
+- **LESSON**     — something learned about the process, with evidence
+- **DISCIPLINE** — a method that worked and should be repeated
+
+```
+## [<ISO date>] LESSON | retro
+**What**   : <one line that generalizes>
+**Why**    : <evidence — what happened that taught this>
+**Skill**  : <skill in play, or none>
+**Status** : ACTIVE
+```
+
+This is NOT a skill edit (that's a proposal) and NOT a code-architecture decision
+(that's `docs/adr/`). It is how the work was done. Skip if nothing generalizes.
+
 # Output Format
 
 Write to `harness/memory/retro_proposals.md`:

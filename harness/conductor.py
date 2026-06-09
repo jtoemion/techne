@@ -42,6 +42,7 @@ from pathlib import Path
 from gates import GateViolation, run_all_gates, run_all_gates_report, format_gate_report
 from sha_gate import gate_test_output
 from mistakes import log_mistake, check_relevant, count_active, count_by_skill
+from ledger import check_relevant as ledger_check_relevant, count_by_kind as ledger_by_kind, validate as ledger_validate
 from evaluator import evaluate_pipeline_run, EvalReport, load_eval_history as _load_eval_history, _trend
 from checkpoint import (
     increment_pipeline_run,
@@ -129,6 +130,18 @@ def _surface_relevant_mistakes(task: str) -> str:
     return "\n".join(lines)
 
 
+def _surface_relevant_ledger(task: str) -> str:
+    """Surface prior decisions/lessons relevant to this task (the positive side
+    of mistakes — so earned method-knowledge informs the work, not re-derived)."""
+    relevant = ledger_check_relevant(task)
+    if not relevant:
+        return ""
+    lines = [f"[CONDUCTOR] {len(relevant)} relevant ledger entr(ies) (decisions/lessons):"]
+    for e in relevant[:3]:
+        lines.append(f"  - {e['kind']}: {e['what'][:80]}")
+    return "\n".join(lines)
+
+
 def _read_agent_prompt(agent_name: str) -> str:
     """Return the body of an agents/<name>.md file (frontmatter stripped)."""
     path = AGENTS_DIR / f"{agent_name}.md"
@@ -155,6 +168,7 @@ class Pipeline:
         self.run_number = run_number
         self.matched_skill = route(task)
         self.relevant_mistakes = _surface_relevant_mistakes(task)
+        self.relevant_ledger = _surface_relevant_ledger(task)
 
         # Artifacts collected from the host as phases complete
         self.diff: str = ""
@@ -206,6 +220,15 @@ class Pipeline:
             print("[CONDUCTOR] No specific skill matched — loading all rules")
         if p.relevant_mistakes:
             print(p.relevant_mistakes)
+        if p.relevant_ledger:
+            print(p.relevant_ledger)
+
+        ledger_problems = ledger_validate()
+        if ledger_problems:
+            print(f"[CONDUCTOR] (!) ledger.md has {len(ledger_problems)} malformed entry(ies) — "
+                  f"agent-written drift, fix the format:")
+            for pb in ledger_problems[:3]:
+                print(f"[CONDUCTOR]     {pb}")
 
         pending = has_pending_proposals()
         if pending:
@@ -476,6 +499,12 @@ class Pipeline:
         if regressions:
             lines.append("")
             lines.append(format_regressions(regressions))
+
+        # Ledger — accumulated decisions/lessons/disciplines (method-level memory)
+        ledger = ledger_by_kind()
+        if ledger:
+            summary = ", ".join(f"{k.lower()}s {n}" for k, n in sorted(ledger.items()))
+            lines.extend(["", f"LEDGER (method memory): {summary}"])
 
         lines.extend(["", "CHECKPOINT:", f"  {get_summary()}"])
         lines.extend(["", "EVAL PREVIEW (per dimension, based on current metrics):"])

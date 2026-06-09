@@ -60,6 +60,7 @@ Reader stops at any line → most important thing already seen. Depth → sub-sk
 
 ```
 Entry card  ≤ 100 lines       Sub-skill ≤ 150 lines
+Exempt      scaffold/reference files (template.md) + vendored capability bundles
 Frontmatter required: name + description; optional: triggers (router)
 Sections    short, code-heavy, no prose paragraphs
 Next Steps  mandatory last section in every file
