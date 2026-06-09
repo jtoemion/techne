@@ -4,7 +4,7 @@
 # First match on condition wins. Higher weight = higher priority on ties.
 
 version: "1.0"
-updated: "2026-06-02"
+updated: "2026-06-09"
 
 # ROUTING TABLE — evaluated top-to-bottom, first match wins
 routing:
@@ -60,6 +60,36 @@ routing:
     weight: 72
     note: "Iterate a PR until 5/5 + zero unresolved. Narrow PR-focused /goal. Adopted from greptile (MIT)."
 
+  - id: "evaluation"
+    condition: "evaluate agent output, review agent output, score the output, grade the response, eval the result"
+    skill_path: "skills/evaluation.md"
+    weight: 70
+    note: "Scoring/critiquing an agent's OUTPUT quality. Not PR review (that's check-pr)."
+
+  - id: "ui-grill"
+    condition: "ui-grill, grill the ui, ui design decision, design system, visual direction, component design, ui review"
+    skill_path: "skills/ui-grill.md"
+    weight: 60
+    note: "Stress-test UNDECIDED UI design (force exact hex/spacing/motion). Locks a design before code."
+
+  - id: "ui-craft"
+    condition: "ui-craft, prompt an llm for ui, get better ui from llm, generate ui code, high fidelity ui"
+    skill_path: "skills/ui-craft.md"
+    weight: 58
+    note: "Prompt a model to BUILD UI from an already-locked design. 60-30-10, section-by-section."
+
+  - id: "ui-physics"
+    condition: "ui-physics, define the math, define the physics, too vague, generic ai output, design tokens, exact values"
+    skill_path: "skills/ui-physics.md"
+    weight: 57
+    note: "The specificity STANDARD (exact hex/ms/px/easing). Prerequisite for ui-craft and ui-grill."
+
+  - id: "ui-handoff"
+    condition: "ui-handoff, handoff spec, design spec, developer handoff, spec sheet"
+    skill_path: "skills/ui-handoff.md"
+    weight: 56
+    note: "Generate a developer-ready spec from a LOCKED design."
+
   - id: "nextjs-rules"
     condition: "Next.js, nextjs, app router, page component, middleware, server component, redirect, layout, metadata"
     skill_path: "skills/nextjs.md"
@@ -69,6 +99,17 @@ routing:
   - id: "typescript-rules"
     condition: "TypeScript, type error, type safety, generics, strict mode"
     skill_path: "skills/typescript.md"
+    weight: 50
+
+  - id: "react-rules"
+    condition: "React, Vite, useEffect, React Query, exhaustive-deps, React hooks"
+    skill_path: "skills/react.md"
+    weight: 50
+    note: "React 19 + Vite pitfalls. NOT Next.js — routing/middleware conventions differ."
+
+  - id: "svelte-rules"
+    condition: "Svelte, SvelteKit, $state, runes, Dexie, +page.svelte"
+    skill_path: "skills/svelte.md"
     weight: 50
 
   - id: "telegram-rulebook"
@@ -141,6 +182,27 @@ disambiguation:
     rule: |
       improve-architecture = FIND deepening opportunities (shallow → deep modules), then grill one.
       grill                = Stress-test a plan you ALREADY have.
+
+  - confused:
+      - grill
+      - ui-grill
+    rule: |
+      grill    = stress-test a general PLAN/approach against the codebase (any domain).
+      ui-grill = stress-test UI DESIGN decisions — colors, spacing, motion — in exact values.
+
+  - confused:
+      - ui-grill
+      - ui-craft
+    rule: |
+      ui-grill = DECIDE/lock an undecided design (ask the human, force the math).
+      ui-craft = PROMPT a model to BUILD UI from an already-locked design.
+
+  - confused:
+      - ui-physics
+      - ui-craft
+    rule: |
+      ui-physics = the specificity STANDARD (exact hex/ms/px vocabulary) — the prerequisite.
+      ui-craft   = the prompting WORKFLOW that applies that standard to generate UI.
 
 # ALWAYS-LOADED — these skills are injected as context for every task
 always_loaded:

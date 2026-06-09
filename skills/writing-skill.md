@@ -1,6 +1,6 @@
 ---
 name: writing-skill
-description: How to write a new skill that obeys the Techne system. Newspaper inverted pyramid structure — most critical info at top, optional depth in sub-skills, Next Steps chain at the tail. Use when creating, auditing, or refactoring any skill file.
+description: How to write a skill that obeys the Techne harness AND actually works. A skill is a hypothesis, proven by watching an agent fail without it first. Rigid container always; content and proof branch on skill type — discipline skills harden against rationalization, technique skills reason and measure. Use when creating, auditing, or refactoring any skill file.
 triggers:
   - write a skill
   - create a skill
@@ -11,71 +11,84 @@ triggers:
 
 # Writing a Skill
 
-## The Newspaper Rule (inverted pyramid)
+## The Founding (read before writing a line)
 
 ```
-HEADLINE  → frontmatter: name, description, triggers
-LEAD      → the ONE most critical rule or quick-start (first section)
-BODY      → examples, patterns, soft rules (middle sections)
-TAIL      → ## Next Steps chain (always last, always present)
+A skill is a HYPOTHESIS, proven by TDD-for-docs: watch an agent FAIL the baseline
+first, then write the minimal skill that fixes exactly that failure. You don't know
+a skill works until you've seen what the model does without it.
+
+THREE LAYERS — not three opinions to average (they contradict; averaging = mush):
+  CONTAINER (always on) → rigid structure + line caps + gates; the harness enforces it
+  CONTENT  (by type)    → discipline hardens, technique reasons
+  PROOF    (by type)    → discipline: comply under pressure; technique: beat the baseline
 ```
 
-Reader stops at any line → most important thing already seen.
-Optional depth → goes in sub-skills, not inline.
+The lean: Techne is a discipline harness, so default to hardening. Relax to the
+reasoned/collaborative stance only when the skill has no adversary.
 
-## Structure Rules
-
-```
-Entry card      ≤ 100 lines
-Sub-skill       ≤ 150 lines
-Frontmatter     required: name + description
-                optional: triggers (for router)
-Sections        short, code-heavy, no prose paragraphs
-Next Steps      mandatory last section in every file
-```
-
-## What Goes Where
+## Pick the Type First (the knob that sets everything)
 
 ```
-ENTRY CARD (skills/<name>.md)
-  The what + the most critical rule + concrete quick-start
-  Routes to sub-skills for depth
+DISCIPLINE / RULE / GATE → a SMART model will rationalize past it under pressure
+  (gates, TDD, verification, the line caps themselves)
+  → skills/writing-skill/discipline.md — RED-first, rationalization table, red flags
 
-SUB-SKILLS (skills/<name>/<topic>.md)
-  One focused topic per file
-  Load only when that situation arises
-  Always chain back to entry or forward to next step
+TECHNIQUE / REFERENCE → the model is a willing collaborator, no adversary
+  (syntax refs, UI helpers, how-tos)
+  → skills/writing-skill/evaluation.md — with/without, explain the why, anti-overfit
 
-RULE FILES (nextjs.md, typescript.md)
-  Hard gates at the top (gate: yes marker)
-  Soft rules below
-  Quick patterns with code
-  weight: high|medium|low annotations required
+CAPABILITY / BUNDLE → a TOOL not advice: SKILL.md + scripts/ + reference/, run as black box
+  (webapp-testing, mcp-builder) — vendor VERBATIM, EXEMPT from line caps; glue lives outside
+  → skills/SOURCES.md — provenance + re-sync; never edit the engine
+```
+
+Wrong type = wrong everything. Choose before writing the first section.
+
+## The Newspaper Rule (the container's shape)
+
+```
+HEADLINE → frontmatter: name, description, triggers
+LEAD     → the ONE most critical rule or quick-start (first section)
+BODY     → examples, patterns, soft rules
+TAIL     → ## Next Steps chain (always last)
+```
+
+Reader stops at any line → most important thing already seen. Depth → sub-skills.
+
+## Structure Rules (the container's gates)
+
+```
+Entry card  ≤ 100 lines       Sub-skill ≤ 150 lines
+Frontmatter required: name + description; optional: triggers (router)
+Sections    short, code-heavy, no prose paragraphs
+Next Steps  mandatory last section in every file
+```
+
+## Description by Type (CSO)
+
+```
+DISCIPLINE w/ mandatory workflow → describe WHEN to use ONLY. Never summarize the
+  steps: a workflow summary becomes a shortcut the model follows INSTEAD of reading
+  the skill (a documented 2-step review silently collapsed to 1).
+TECHNIQUE / REFERENCE → what + when, keyword-rich, a little pushy to fight undertriggering.
 ```
 
 ## Ecosystem Integration (required before publishing)
 
 ```
 [ ] skill-router.yaml entry (id, condition, skill_path, weight)
-[ ] CONTEXT.md — does this skill write to it? (grill, persona-brainstorm do)
-[ ] docs/adr/ — does this skill create ADRs? (grill, persona-brainstorm do)
-[ ] SESSION.md — is this skill session-aware? (mention in output checklist)
-[ ] harness/gates.py — does this skill have enforceable rules? (add gate)
-[ ] tests/test_<name>.py — required before merging
+[ ] proof run — discipline.md (pressure) OR evaluation.md (with/without)
+[ ] CONTEXT.md / docs/adr/ — does this skill write to them?
+[ ] SESSION.md — is this skill session-aware?
+[ ] harness/gates.py — enforceable rule? add the gate (a gate beats a MUST)
+[ ] tests/test_<name>.py — structural tests, required before merging
 ```
-
-## The Compact Test
-
-Read the first 10 lines. Can you answer:
-- What does this skill do?
-- When should I use it?
-- What's the most critical rule?
-
-If no → the lead is buried. Rewrite from the top.
 
 ## Next Steps
 
-- Ready to write? → `skills/writing-skill/template.md` (copy-paste scaffold)
-- Finished writing, need to review? → `skills/writing-skill/checklist.md`
-- Adding gates for new rules? → `harness/gates.py` + `harness/skill-router.yaml`
-- Adding to router? → `harness/skill-router.yaml`
+- Discipline / rule / gate skill? → `skills/writing-skill/discipline.md`
+- Technique / reference skill? → `skills/writing-skill/evaluation.md`
+- Ready to scaffold? → `skills/writing-skill/template.md`
+- Review before commit? → `skills/writing-skill/checklist.md`
+- Vendoring an external capability skill? → `skills/SOURCES.md` (keep it pristine)

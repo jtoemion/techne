@@ -42,6 +42,8 @@ def test_file_structure():
         "skills/writing-skill.md":               "entry card",
         "skills/writing-skill/template.md":       "copy-paste scaffold",
         "skills/writing-skill/checklist.md":      "pre-publish review",
+        "skills/writing-skill/evaluation.md":     "technique branch — empirical loop",
+        "skills/writing-skill/discipline.md":     "discipline branch — rationalization hardening",
     }
 
     for rel, label in files.items():
@@ -110,6 +112,8 @@ def test_compact():
         "skills/writing-skill.md":               100,
         "skills/writing-skill/template.md":       200,  # template has embedded scaffolds
         "skills/writing-skill/checklist.md":      150,
+        "skills/writing-skill/evaluation.md":     150,
+        "skills/writing-skill/discipline.md":     150,
     }
 
     for rel, max_lines in limits.items():
@@ -133,6 +137,8 @@ def test_next_steps_chain():
         ROOT / "skills" / "writing-skill.md",
         ROOT / "skills" / "writing-skill" / "template.md",
         ROOT / "skills" / "writing-skill" / "checklist.md",
+        ROOT / "skills" / "writing-skill" / "evaluation.md",
+        ROOT / "skills" / "writing-skill" / "discipline.md",
     ]
 
     for f in files:
@@ -169,6 +175,32 @@ def test_chain_integrity():
         ok("entry → template + checklist")
     else:
         fail("entry → both sub-skills", "missing one or both")
+
+    # Entry chains to the empirical loop
+    if "evaluation.md" in entry:
+        ok("entry → evaluation (empirical loop)")
+    else:
+        fail("entry → evaluation", "founding belief 1 not wired in")
+
+    # Evaluation chains back into the system
+    evaluation = (ROOT / "skills" / "writing-skill" / "evaluation.md").read_text(encoding="utf-8")
+    if "checklist.md" in evaluation or "writing-skill.md" in evaluation:
+        ok("evaluation → checklist/entry (back chain)")
+    else:
+        fail("evaluation → checklist/entry")
+
+    # Entry chains to the discipline branch
+    if "discipline.md" in entry:
+        ok("entry → discipline (hardening branch)")
+    else:
+        fail("entry → discipline", "type axis not wired in")
+
+    # Discipline chains back into the system
+    discipline = (ROOT / "skills" / "writing-skill" / "discipline.md").read_text(encoding="utf-8")
+    if "checklist.md" in discipline or "writing-skill.md" in discipline:
+        ok("discipline → checklist/entry (back chain)")
+    else:
+        fail("discipline → checklist/entry")
 
 
 # ─── Ecosystem references ────────────────────────────────────────────────────
@@ -215,6 +247,70 @@ def test_newspaper_logic_present():
         fail("newspaper logic documented", f"only found: {found}")
 
 
+# ─── Empirical founding (assimilated from skill-creator) ─────────────────────
+
+def test_empirical_founding_present():
+    """The two founding beliefs must be documented, not just implied."""
+    print("\n[empirical founding — hypothesis + reasoned content]")
+
+    entry = (ROOT / "skills" / "writing-skill.md").read_text(encoding="utf-8")
+    evaluation = (ROOT / "skills" / "writing-skill" / "evaluation.md").read_text(encoding="utf-8")
+
+    # Belief 1: a skill is a hypothesis, measured with/without
+    if "hypothesis" in entry.lower() and "with-skill" in evaluation:
+        ok("belief 1 documented: skill = hypothesis, with/without baseline")
+    else:
+        fail("belief 1 documented", "hypothesis / with-skill language missing")
+
+    # Belief 2: reasoned content over heavy-handed MUSTs
+    if "why" in entry.lower() and ("overfit" in evaluation.lower() or "generalize" in evaluation.lower()):
+        ok("belief 2 documented: explain the why, generalize don't overfit")
+    else:
+        fail("belief 2 documented", "reasoned-content language missing")
+
+    # Triggering evals (near-miss against siblings) present
+    if "near-miss" in evaluation.lower() and "sibling" in evaluation.lower():
+        ok("triggering evals documented: near-miss against siblings")
+    else:
+        fail("triggering evals documented", "near-miss/sibling language missing")
+
+
+# ─── Type axis (the three-layer founding) ────────────────────────────────────
+
+def test_type_axis_founding():
+    """The skill-type knob and both branches must be documented, not collapsed."""
+    print("\n[type axis — discipline vs technique branches]")
+
+    entry = (ROOT / "skills" / "writing-skill.md").read_text(encoding="utf-8").lower()
+    discipline = (ROOT / "skills" / "writing-skill" / "discipline.md").read_text(encoding="utf-8").lower()
+
+    # Entry presents the type choice and both branches
+    if "discipline" in entry and "technique" in entry and "type" in entry:
+        ok("entry names the type knob + both branches")
+    else:
+        fail("entry names the type knob", "discipline/technique/type missing")
+
+    # Discipline branch carries the superpowers hardening kit
+    needles = ["rationalization", "red flag", "loophole", "letter"]
+    found = [n for n in needles if n in discipline]
+    if len(found) >= 3:
+        ok(f"discipline branch hardened ({len(found)}/{len(needles)} markers)")
+    else:
+        fail("discipline branch hardened", f"only: {found}")
+
+    # RED-first ordering present in the discipline branch
+    if "baseline" in discipline and ("red" in discipline or "fail" in discipline):
+        ok("discipline branch is RED-first (watch baseline fail)")
+    else:
+        fail("discipline branch RED-first", "baseline/RED language missing")
+
+    # CSO description-by-type rule present (the obra insight)
+    if "when-to-use" in entry or "when to use only" in entry or "workflow summary" in entry:
+        ok("CSO description-by-type rule documented")
+    else:
+        fail("CSO description-by-type rule", "when-to-use guidance missing from entry")
+
+
 # ─── Template covers all skill types ─────────────────────────────────────────
 
 def test_template_coverage():
@@ -228,6 +324,7 @@ def test_template_coverage():
         ("Rule File",     "Rule File"),
         ("Router Entry",  "Router Entry"),
         ("Test File",     "Test File"),
+        ("Discipline Skill", "Discipline Skill"),
     ]
 
     for label, marker in types:
@@ -274,6 +371,8 @@ if __name__ == "__main__":
     test_chain_integrity()
     test_ecosystem_references()
     test_newspaper_logic_present()
+    test_empirical_founding_present()
+    test_type_axis_founding()
     test_template_coverage()
     test_checklist_completeness()
 
