@@ -66,6 +66,18 @@ routing:
     weight: 70
     note: "Scoring/critiquing an agent's OUTPUT quality. Not PR review (that's check-pr)."
 
+  - id: "webapp-testing"
+    condition: "webapp testing, playwright, headless chromium, browser automation, screenshot rendered html, e2e in the browser, frontend behavior in a browser"
+    skill_path: "skills/webapp-testing/SKILL.md"
+    weight: 65
+    note: "Vendored capability skill (Anthropic). Specific keywords only — generic 'app/web/page/test' substring-matched unrelated tasks (whatsapp, app router). See skills/SOURCES.md — do not edit internals."
+
+  - id: "mcp-builder"
+    condition: "mcp, model context protocol, fastmcp, mcp server, mcp tool, mcp sdk"
+    skill_path: "skills/mcp-builder/SKILL.md"
+    weight: 64
+    note: "Vendored capability skill (Anthropic). 'mcp' is the dominant signal. See skills/SOURCES.md — do not edit internals."
+
   - id: "ui-grill"
     condition: "ui-grill, grill the ui, ui design decision, design system, visual direction, component design, ui review"
     skill_path: "skills/ui-grill.md"
@@ -203,6 +215,13 @@ disambiguation:
     rule: |
       ui-physics = the specificity STANDARD (exact hex/ms/px vocabulary) — the prerequisite.
       ui-craft   = the prompting WORKFLOW that applies that standard to generate UI.
+
+  - confused:
+      - tdd
+      - webapp-testing
+    rule: |
+      tdd            = write tests FIRST for code you are building (unit/integration).
+      webapp-testing = drive a RUNNING app in a real browser (Playwright) to verify UI behavior.
 
 # ALWAYS-LOADED — these skills are injected as context for every task
 always_loaded:

@@ -28,6 +28,12 @@ description: Harness engineering entry point. Routes to the right sub-skill base
 | TypeScript type errors | `skills/typescript.md` |
 | React 19 + Vite work | `skills/react.md` |
 | Svelte/SvelteKit work | `skills/svelte.md` |
+| Testing a web app in a browser | `skills/webapp-testing/SKILL.md` |
+| Building an MCP server | `skills/mcp-builder/SKILL.md` |
+
+> The last two are **vendored capability skills** (Anthropic) — folders with `scripts/`
+> the agent runs as black-box tools. Bundle format, not Techne house format; do not edit
+> their internals. Provenance + re-sync: `skills/SOURCES.md`.
 
 ## Always Loaded
 
