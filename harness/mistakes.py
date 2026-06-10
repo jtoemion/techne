@@ -155,5 +155,7 @@ def count_by_skill() -> dict[str, int]:
     for e in _parse_entries(content):
         if e["status"] != "ACTIVE":
             continue
+        if e["skill"] == "none":
+            continue   # no routed skill → no skill to improve (don't propose skills/none.md)
         counts[e["skill"]] = counts.get(e["skill"], 0) + 1
     return counts

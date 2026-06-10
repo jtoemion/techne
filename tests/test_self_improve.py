@@ -66,8 +66,8 @@ def test_skill_attribution():
     check("count_by_skill attributes recurrence", by_skill.get("typescript-rules") == 2)
     check("count_by_skill separates skills", by_skill.get("nextjs-rules") == 1)
 
+    check("count_by_skill excludes 'none' (no skills/none.md proposals)", "none" not in mistakes.count_by_skill())
     check("mark_resolved works on the OLD-format entry", mistakes.mark_resolved("2026-01-01T00:00:00Z") is True)
-    check("resolved entry drops out of active counts", "none" not in mistakes.count_by_skill())
 
     Path(tmp.name).unlink()
 

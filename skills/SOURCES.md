@@ -28,3 +28,18 @@ cp -r /tmp/_anthro_skills/skills/<name> skills/<name>   # overwrite, review the 
 
 Considered but NOT adopted: `remotion` (remotion-dev/skills) — only add if programmatic
 video becomes a real workflow; a large bundle that otherwise just taxes triggering.
+
+## Known upstream issues (flagged in review — NOT patched here)
+
+A code-review bot flagged real bugs in the vendored scripts. We deliberately do NOT
+patch vendored internals (it forks the engine and breaks `cp -r` re-sync). These are
+upstream's to fix; verify on the next sync, or report them to anthropics/skills.
+
+- `webapp-testing/scripts/with_server.py` — server spawned with `stdout/stderr=PIPE`
+  but pipes never read → deadlock if a server prints >64KB. Upstream fix: `DEVNULL`.
+- `mcp-builder/scripts/evaluation.py` — agent loop uses `next()` on tool_use, so it
+  drops parallel tool calls (API contract violation → 400). And `extract_xml_content`
+  lacks a `None` guard. Only runs if you use mcp-builder's eval harness.
+
+If one of these actually bites your usage, keep a THIN documented patch (it shows up in
+the re-sync diff) rather than a silent fork.
