@@ -98,23 +98,62 @@ def parse_proposals(content: str) -> list[dict]:
 
 # ─── Apply actions ───────────────────────────────────────────────────────────
 
+def _resolve_target(target: str) -> Path:
+    """Resolve a proposal target to a real path.
+
+    retro emits repo-root-relative targets ("skills/foo.md",
+    "skills/tdd/mocking.md"). Older/bare targets ("foo.md") resolve under skills/.
+    """
+    t = target.strip().replace("\\", "/")
+    if t.startswith("skills/"):
+        return ROOT / t
+    return SKILLS_DIR / t
+
+
+def _validate_edit(path: Path, old_text: str, new_text: str) -> tuple[bool, str]:
+    """Gap 3: self-improvement must obey the same structure gates as hand-written
+    skills. Only blocks edits that INTRODUCE/worsen a violation — pre-existing
+    issues don't cause false rejects. Capability bundles (SKILL.md) are exempt.
+    """
+    if path.name == "SKILL.md":
+        return True, "capability bundle — cap-exempt"
+    try:
+        rel = path.relative_to(ROOT).as_posix()
+    except ValueError:
+        rel = path.name
+    is_sub = rel.count("/") >= 2                 # skills/<name>/<topic>.md
+    cap = 150 if is_sub else 100
+    old_n, new_n = len(old_text.splitlines()), len(new_text.splitlines())
+
+    problems = []
+    if new_n > cap and new_n > old_n:
+        problems.append(f"edit grows file to {new_n} lines (> {cap}-line cap)")
+    if "## Next Steps" in old_text and "## Next Steps" not in new_text:
+        problems.append("edit removed the ## Next Steps chain")
+    return (False, "; ".join(problems)) if problems else (True, "ok")
+
+
 def apply_add(proposal: dict) -> tuple[bool, str]:
-    """Append text to target skill file."""
-    target_path = SKILLS_DIR / proposal["target"]
+    """Append text to target skill file — rejected if it breaks the structure gates."""
+    target_path = _resolve_target(proposal["target"])
 
     if not target_path.exists():
         return False, f"Target file not found: {target_path}"
 
     current = target_path.read_text(encoding="utf-8")
-    addition = "\n" + proposal["text"].strip() + "\n"
-    target_path.write_text(current + addition, encoding="utf-8")
+    new_content = current + "\n" + proposal["text"].strip() + "\n"
 
+    ok, reason = _validate_edit(target_path, current, new_content)
+    if not ok:
+        return False, f"REJECTED — edit would break {proposal['target']}: {reason}"
+
+    target_path.write_text(new_content, encoding="utf-8")
     return True, f"Appended {len(proposal['text'].splitlines())} lines to {proposal['target']}"
 
 
 def apply_delete(proposal: dict) -> tuple[bool, str]:
     """Remove the entry starting with entry_first_line from target skill file."""
-    target_path = SKILLS_DIR / proposal["target"]
+    target_path = _resolve_target(proposal["target"])
 
     if not target_path.exists():
         return False, f"Target file not found: {target_path}"
@@ -130,16 +169,20 @@ def apply_delete(proposal: dict) -> tuple[bool, str]:
         r"\n## " + re.escape(first_line) + r".*?(?=\n## |\Z)",
         re.DOTALL
     )
-    if not pattern.search(current):
-        # Try plain line match
+    if pattern.search(current):
+        new_content = pattern.sub("", current)
+        action = f"Removed entry starting with '{first_line}'"
+    else:
         lines = current.splitlines(keepends=True)
-        new_lines = [l for l in lines if first_line not in l]
-        target_path.write_text("".join(new_lines), encoding="utf-8")
-        return True, f"Removed line containing '{first_line}'"
+        new_content = "".join(l for l in lines if first_line not in l)
+        action = f"Removed line containing '{first_line}'"
 
-    new_content = pattern.sub("", current)
+    ok, reason = _validate_edit(target_path, current, new_content)
+    if not ok:
+        return False, f"REJECTED — edit would break {proposal['target']}: {reason}"
+
     target_path.write_text(new_content, encoding="utf-8")
-    return True, f"Removed entry starting with '{first_line}'"
+    return True, action
 
 
 def apply_resolve(proposal: dict) -> tuple[bool, str]:
@@ -151,15 +194,69 @@ def apply_resolve(proposal: dict) -> tuple[bool, str]:
     return False, f"No ACTIVE mistake found for date {proposal['mistake_date']}"
 
 
+def _latest_eval_total() -> int | None:
+    """Most recent pipeline eval score, or None if no history yet."""
+    try:
+        from evaluator import load_eval_history
+        hist = load_eval_history()
+        return hist[-1]["total"] if hist else None
+    except Exception:
+        return None
+
+
 def mark_applied(proposal: dict, reason: str) -> None:
-    """Mark a proposal as APPLIED in retro_proposals.md."""
+    """Mark a proposal as APPLIED, tagged with the eval score at apply time (Gap 4)."""
     if not PROPOSALS_FILE.exists():
         return
     content = PROPOSALS_FILE.read_text(encoding="utf-8")
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    applied_tag = f"\n<!-- APPLIED: {ts} — {reason} -->"
+    eval_at = _latest_eval_total()
+    eval_part = f" | eval@apply={eval_at}" if eval_at is not None else ""
+    applied_tag = f"\n<!-- APPLIED: {ts}{eval_part} — {reason} -->"
     new_content = content.replace(proposal["raw"], proposal["raw"] + applied_tag, 1)
     PROPOSALS_FILE.write_text(new_content, encoding="utf-8")
+
+
+def check_regressions() -> list[dict]:
+    """Gap 4: flag applied skill edits the eval trend has REGRESSED below.
+
+    For each applied proposal tagged with eval@apply, compare against the latest
+    eval score. If the score dropped, the edit may have hurt — flag for revert.
+    """
+    if not PROPOSALS_FILE.exists():
+        return []
+    eval_now = _latest_eval_total()
+    if eval_now is None:
+        return []
+    content = PROPOSALS_FILE.read_text(encoding="utf-8")
+    flags = []
+    for p in parse_proposals(content):
+        if not p["applied"]:
+            continue
+        m = re.search(r"eval@apply=(\d+)", p["raw"])
+        if not m:
+            continue
+        at = int(m.group(1))
+        if eval_now < at:
+            flags.append({
+                "target": p.get("target", p.get("type", "?")),
+                "eval_at_apply": at,
+                "eval_now": eval_now,
+                "delta": eval_now - at,
+            })
+    return flags
+
+
+def format_regressions(flags: list[dict]) -> str:
+    """ASCII-safe render of regression flags."""
+    if not flags:
+        return ""
+    lines = ["SELF-IMPROVEMENT REGRESSIONS (eval dropped since edit -> consider revert):"]
+    for f in flags:
+        lines.append(
+            f"  [REGRESSED] {f['target']}: {f['eval_at_apply']} -> {f['eval_now']} ({f['delta']:+d})"
+        )
+    return "\n".join(lines)
 
 
 # ─── Interactive review ──────────────────────────────────────────────────────
@@ -238,6 +335,10 @@ def review_and_apply(dry_run: bool = False, auto: bool = False) -> dict:
     print(f"\n{'=' * 60}")
     print(f"Applied: {applied}  Skipped: {skipped}  Total: {len(pending)}")
     print(f"{'=' * 60}")
+
+    flags = check_regressions()
+    if flags:
+        print("\n" + format_regressions(flags))
 
     return {"reviewed": len(pending), "applied": applied, "skipped": skipped}
 

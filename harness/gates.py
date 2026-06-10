@@ -132,3 +132,35 @@ def run_all_gates(diff: str) -> bool:
     for gate in ALL_GATES:
         gate(diff)
     return True
+
+
+# ─── Per-gate report (visibility — does not stop on first failure) ──────────────
+
+def run_all_gates_report(diff: str) -> list[dict]:
+    """Run EVERY gate and collect a per-gate pass/fail board (does not raise).
+
+    Use for showing the human the whole gate board; use run_all_gates() for
+    enforcement (which stops on the first failure).
+    """
+    results = []
+    for gate in ALL_GATES:
+        try:
+            gate(diff)
+            results.append({"gate": gate.__name__, "passed": True, "detail": ""})
+        except GateViolation as e:
+            first = str(e).splitlines()[0] if str(e) else ""
+            results.append({"gate": gate.__name__, "passed": False, "detail": first})
+    return results
+
+
+def format_gate_report(results: list[dict]) -> str:
+    """ASCII-safe rendering of the gate board (Windows-console friendly)."""
+    passed = sum(1 for r in results if r["passed"])
+    lines = [f"GATES ({passed}/{len(results)} passed):"]
+    for r in results:
+        mark = "PASS" if r["passed"] else "FAIL"
+        name = r["gate"].replace("gate_", "")
+        lines.append(f"  [{mark}] {name}")
+        if not r["passed"] and r["detail"]:
+            lines.append(f"         -> {r['detail']}")
+    return "\n".join(lines)

@@ -1,6 +1,6 @@
 ---
 name: ui-grill
-description: Stress-test UI design decisions. One question at a time. Forces math and physics on vague choices. Writes resolved terms to CONTEXT.md and offers ADRs for hard trade-offs. Use when designing, reviewing, or evaluating any UI component, page, or design system.
+description: Stress-test UI design decisions while the design is still undecided. One question at a time, forces math and physics on vague choices, writes resolved terms to CONTEXT.md, offers ADRs for hard trade-offs. Use to LOCK a design before any code exists. Once the design is locked and you're prompting a model to build it, use ui-craft instead.
 triggers:
   - ui-grill
   - grill the ui

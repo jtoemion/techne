@@ -39,9 +39,10 @@ import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from gates import GateViolation, run_all_gates
+from gates import GateViolation, run_all_gates, run_all_gates_report, format_gate_report
 from sha_gate import gate_test_output
-from mistakes import log_mistake, check_relevant, count_active
+from mistakes import log_mistake, check_relevant, count_active, count_by_skill
+from ledger import check_relevant as ledger_check_relevant, count_by_kind as ledger_by_kind, validate as ledger_validate
 from evaluator import evaluate_pipeline_run, EvalReport, load_eval_history as _load_eval_history, _trend
 from checkpoint import (
     increment_pipeline_run,
@@ -55,7 +56,7 @@ from router import route, get_always_loaded
 from session import new_session
 from measure import run_measurements
 from intent_reasoner import verdict_to_gate
-from apply_retro import has_pending_proposals
+from apply_retro import has_pending_proposals, check_regressions, format_regressions
 
 HARNESS_DIR = Path(__file__).parent        # techne/harness/
 ROOT = HARNESS_DIR.parent                  # techne/
@@ -129,6 +130,18 @@ def _surface_relevant_mistakes(task: str) -> str:
     return "\n".join(lines)
 
 
+def _surface_relevant_ledger(task: str) -> str:
+    """Surface prior decisions/lessons relevant to this task (the positive side
+    of mistakes — so earned method-knowledge informs the work, not re-derived)."""
+    relevant = ledger_check_relevant(task)
+    if not relevant:
+        return ""
+    lines = [f"[CONDUCTOR] {len(relevant)} relevant ledger entr(ies) (decisions/lessons):"]
+    for e in relevant[:3]:
+        lines.append(f"  - {e['kind']}: {e['what'][:80]}")
+    return "\n".join(lines)
+
+
 def _read_agent_prompt(agent_name: str) -> str:
     """Return the body of an agents/<name>.md file (frontmatter stripped)."""
     path = AGENTS_DIR / f"{agent_name}.md"
@@ -155,11 +168,16 @@ class Pipeline:
         self.run_number = run_number
         self.matched_skill = route(task)
         self.relevant_mistakes = _surface_relevant_mistakes(task)
+        self.relevant_ledger = _surface_relevant_ledger(task)
 
         # Artifacts collected from the host as phases complete
         self.diff: str = ""
         self.sha: str = ""
         self.findings: str = ""
+        self.gate_report: list[dict] = []   # per-gate board from the last diff
+
+        # Skill in play this run — attributes mistakes to a skill for recurrence
+        self.skill_id: str = self.matched_skill["id"] if self.matched_skill else "none"
 
         self.retries_used = 0
         self._last_feedback = ""
@@ -202,6 +220,15 @@ class Pipeline:
             print("[CONDUCTOR] No specific skill matched — loading all rules")
         if p.relevant_mistakes:
             print(p.relevant_mistakes)
+        if p.relevant_ledger:
+            print(p.relevant_ledger)
+
+        ledger_problems = ledger_validate()
+        if ledger_problems:
+            print(f"[CONDUCTOR] (!) ledger.md has {len(ledger_problems)} malformed entry(ies) — "
+                  f"agent-written drift, fix the format:")
+            for pb in ledger_problems[:3]:
+                print(f"[CONDUCTOR]     {pb}")
 
         pending = has_pending_proposals()
         if pending:
@@ -246,6 +273,9 @@ class Pipeline:
         (optional host semantic_verdict), enforce the intent gate.
         """
         (MEMORY_DIR / "implementer_output.txt").write_text(diff, encoding="utf-8")
+        # Full gate board for visibility (does not stop on first failure)
+        self.gate_report = run_all_gates_report(diff)
+        print(format_gate_report(self.gate_report))
         try:
             run_all_gates(diff)
             log_gate_pass("all_gates" if self.retries_used == 0 else "all_gates_retry")
@@ -256,6 +286,7 @@ class Pipeline:
             log_mistake(
                 phase="IMPLEMENT", error=str(e)[:200],
                 cause="agent violated skill rule", lesson="pending retro", gate=gate_name,
+                skill=self.skill_id,
             )
             self.retries_used += 1
             self.eval_metrics["gate_violations"] += 1
@@ -293,7 +324,7 @@ class Pipeline:
             log_mistake(
                 phase="IMPLEMENT", error=f"Intent gate: {intent.get('verdict', 'MISMATCH')}",
                 cause=intent.get("reason", ""), lesson="diff did not implement the stated task",
-                gate="intent",
+                gate="intent", skill=self.skill_id,
             )
             return PhaseResult("HALT", feedback=str(eg), detail={"intent": intent})
 
@@ -376,10 +407,42 @@ class Pipeline:
     # ── RETRO ────────────────────────────────────────────────────────────────
 
     def retro_prompt(self) -> AgentPrompt:
-        """Prompt for the host to run the 7-question retro."""
+        """Prompt for the host to run the 7-question retro.
+
+        Reflects on the skill that was ROUTED this run (not a fixed list) and the
+        per-skill recurrence counts — so any skill that gets used can self-improve.
+        """
         mistakes_path = MEMORY_DIR / "mistakes.md"
         mistakes = mistakes_path.read_text(encoding="utf-8") if mistakes_path.exists() else "(none)"
-        user = f"Run the 7-question retro and skill file analysis.\n\nmistakes.md content:\n{mistakes}"
+
+        by_skill = count_by_skill()
+        if by_skill:
+            by_skill_lines = "\n".join(
+                f"  {s}: {n} active"
+                + ("   <- RECURRING (>=2): propose an edit to this skill" if n >= 2 else "")
+                for s, n in sorted(by_skill.items(), key=lambda x: -x[1])
+            )
+        else:
+            by_skill_lines = "  (none)"
+
+        # Routed skill's current content, so retro proposes a precise edit to it
+        routed_block = ""
+        if self.matched_skill:
+            sp = ROOT / self.matched_skill.get("skill_path", "")
+            if sp.exists():
+                routed_block = (
+                    f"\n--- {self.matched_skill.get('skill_path','')} (current content) ---\n"
+                    f"{sp.read_text(encoding='utf-8')}\n"
+                )
+
+        user = (
+            f"Run the 7-question retro and per-skill analysis.\n\n"
+            f"Skill routed this run: {self.skill_id}\n\n"
+            f"ACTIVE mistakes by skill (recurrence is the trigger to propose an edit):\n"
+            f"{by_skill_lines}\n"
+            f"{routed_block}\n"
+            f"mistakes.md content:\n{mistakes}"
+        )
         return AgentPrompt(system=_read_agent_prompt("retro"), user=user)
 
     def submit_retro(self, output: str = "", questions_answered: int = 7,
@@ -416,8 +479,35 @@ class Pipeline:
         for phase, status in self.results.items():
             lines.append(f"  {phase.upper():10}: {status}")
         lines.append(f"  {'VERIFIED':10}: {'YES' if verified else 'NO'}")
+        lines.append(f"  {'SKILL':10}: {self.skill_id}")
+
+        # Per-gate board — what each gate did on the last diff
+        if self.gate_report:
+            lines.append("")
+            lines.append(format_gate_report(self.gate_report))
+
+        # Per-skill mistake recurrence — what's accumulating against each skill
+        by_skill = count_by_skill()
+        if by_skill:
+            lines.extend(["", "ACTIVE MISTAKES BY SKILL (recurrence → retro proposals):"])
+            for skill, n in sorted(by_skill.items(), key=lambda x: -x[1]):
+                flag = "  <- recurring" if n >= 2 else ""
+                lines.append(f"  {skill:25}: {n}{flag}")
+
+        # Self-improvement regressions — applied edits the eval trend dropped below
+        regressions = check_regressions()
+        if regressions:
+            lines.append("")
+            lines.append(format_regressions(regressions))
+
+        # Ledger — accumulated decisions/lessons/disciplines (method-level memory)
+        ledger = ledger_by_kind()
+        if ledger:
+            summary = ", ".join(f"{k.lower()}s {n}" for k, n in sorted(ledger.items()))
+            lines.extend(["", f"LEDGER (method memory): {summary}"])
+
         lines.extend(["", "CHECKPOINT:", f"  {get_summary()}"])
-        lines.extend(["", "EVAL PREVIEW (based on current metrics):"])
+        lines.extend(["", "EVAL PREVIEW (per dimension, based on current metrics):"])
         for dim, (score, reason) in self._preview_scores().items():
             lines.append(f"  {dim:25}: {score}/20  {reason}")
         total = self._preview_score()

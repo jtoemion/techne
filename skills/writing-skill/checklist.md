@@ -5,6 +5,17 @@ description: Pre-publish review for any new or refactored skill. Run through thi
 
 # Skill Review Checklist
 
+## Type Check (do this first — it sets the rest)
+
+```
+[ ] Type named: discipline/rule/gate OR technique/reference
+[ ] Discipline → hardened per skills/writing-skill/discipline.md
+[ ] Technique  → reasoned + measured per skills/writing-skill/evaluation.md
+[ ] Description matches type (see Description Field below)
+```
+
+Wrong type = the proof and content checks below are checking the wrong things.
+
 ## Newspaper Test (read the first 10 lines)
 
 ```
@@ -48,6 +59,41 @@ If any box is empty → the lead is buried. Move the critical thing to the top.
 [ ] SESSION.md — output checklist includes session handoff note
 ```
 
+## Proof It Works (by type — not optional)
+
+Structural tests prove the skill is well-formed, never that it's good.
+RED-first either way: watch the baseline before you trust the skill.
+
+**Discipline / rule / gate skills:**
+```
+[ ] Watched an agent fail the baseline WITHOUT the skill (rationalizations logged)
+[ ] Agent complies WITH the skill under 3 stacked pressures
+[ ] Rationalization table + red-flags list present and built from RED (not imagined)
+[ ] gates.py checked: gate written if diff-visible; NOT stamped gate:yes if it can't fire
+```
+
+**Technique / reference skills:**
+```
+[ ] Ran with-skill vs without-skill on 2-3 realistic prompts
+[ ] with-skill is clearly better (else the skill is dead weight — cut it)
+[ ] No fix that only helps the test cases (overfit check)
+```
+
+**Both:**
+```
+[ ] Triggering eval: fires on should, silent on should-not
+[ ] Near-miss written against each sibling skill it could collide with
+```
+
+## Description Field (CSO, by type)
+
+```
+[ ] Discipline w/ mandatory workflow → WHEN-to-use ONLY, no step summary
+[ ] Technique/reference → what + when, keyword-rich, a touch pushy
+```
+
+See `skills/writing-skill/evaluation.md` and `skills/writing-skill/discipline.md`.
+
 ## Tests (required before committing)
 
 ```
@@ -73,12 +119,17 @@ Read the skill as if you just sat down cold with a task.
 ## Common Mistakes (from retro log)
 
 ```
-Prose intro before the lead     → reader skips it anyway. Cut it.
-Aspirational rules ("should")   → rewrite as testable gates or delete
-Next Steps missing or vague     → "see documentation" is not a chain
-Sub-skill longer than entry     → extract another layer or merge back
-Gate in skill but not in gates.py → skill is aspirational, not enforced
-No tests                        → skill is unverifiable, don't merge
+Prose intro before the lead       → reader skips it anyway. Cut it.
+MUST in a TECHNIQUE skill          → no adversary there; reframe with the why
+MUST in a DISCIPLINE skill         → legitimate, but a real gate beats it. Promote if gate-able.
+Hard rule left as prose            → unenforced. Promote to gates.py.
+Rationalization table imagined     → must be built from a watched RED baseline
+Description leaks the workflow     → discipline body gets skipped. When-to-use only.
+Fix that only helps the test cases → overfit. Generalize or revert.
+Next Steps missing or vague        → "see documentation" is not a chain
+Sub-skill longer than entry        → extract another layer or merge back
+No baseline watched (RED skipped)  → unproven. Don't merge.
+No tests                           → skill is unverifiable, don't merge
 ```
 
 ## After All Boxes Checked
@@ -91,6 +142,8 @@ No tests                        → skill is unverifiable, don't merge
 
 ## Next Steps
 
+- Discipline skill not yet hardened? → `skills/writing-skill/discipline.md` (do this first)
+- Technique skill not yet measured? → `skills/writing-skill/evaluation.md` (do this first)
 - Checklist passes? → commit and push
 - Gate needed for a rule? → `harness/gates.py` → `ALL_GATES` list
 - Skill feels too long? → apply newspaper test, extract to sub-skill
