@@ -63,8 +63,8 @@ def test_override_redirects_state():
             check("the override dir actually holds the state file",
                   (Path(d) / "harness-state.json").exists())
             check("memory/ was NOT written for this worker",
-                  not (Path(d) / "harness-state.json").samefile(store.MEMORY_DIR / "harness-state.json")
-                  if (store.MEMORY_DIR / "harness-state.json").exists() else True)
+                  (Path(d) / "harness-state.json").resolve()
+                  != (store.MEMORY_DIR / "harness-state.json").resolve())
         finally:
             _clear_override()
 

@@ -66,7 +66,7 @@ def _is_persistent(path: Path) -> bool:
     try:
         resolved = path.resolve()
     except OSError:
-        resolved = path
+        resolved = path.absolute()   # always absolute, so the tmp_root comparison holds
     tmp_root = Path(tempfile.gettempdir()).resolve()
     try:
         if resolved == tmp_root or tmp_root in resolved.parents:

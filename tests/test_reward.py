@@ -99,6 +99,19 @@ def test_validate_drift_guard():
     p.unlink()
 
 
+def test_defensive_init():
+    print("\n[reward — log_reward auto-creates a missing ledger (no crash)]")
+    import tempfile
+    d = Path(tempfile.mkdtemp())
+    reward.REWARD_FILE = d / "reward.md"
+    check("file absent before first log", not reward.REWARD_FILE.exists())
+    reward.log_clean("first win in a fresh dir", skill="implementer")  # must not raise
+    check("ledger auto-created on first write", reward.REWARD_FILE.exists())
+    check("the win was recorded", reward.count_by_skill().get("implementer") == 1)
+    reward.REWARD_FILE.unlink()
+    d.rmdir()
+
+
 def test_seed_file_wellformed():
     print("\n[reward — committed memory/reward.md is well-formed]")
     seed = ROOT / "memory" / "reward.md"
@@ -116,6 +129,7 @@ if __name__ == "__main__":
     test_net_gives_denominator()
     test_none_skill_excluded_and_bad_kind()
     test_validate_drift_guard()
+    test_defensive_init()
     test_seed_file_wellformed()
     passed = sum(1 for r in results if r)
     total = len(results)

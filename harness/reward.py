@@ -49,12 +49,23 @@ ENTRY_TEMPLATE = """## [{date}] {kind} | {source}
 def log_reward(kind: str, what: str, skill: str = "none",
                gate: str = "none", source: str = "AUTO-LOGGED") -> None:
     """Append a structured win below the insert marker. `skill` attributes the win
-    to the routed skill, mirroring mistakes.log_mistake, so retro sees per-skill net."""
+    to the routed skill, mirroring mistakes.log_mistake, so retro sees per-skill net.
+
+    Single-writer ledger (like mistakes.py / ledger.py): written by the ONE
+    host/conductor. Isolated parallel workers do NOT write it directly — they report
+    back and the host records (skills/kanban/isolation.md), so concurrent writers
+    don't arise here and no lockfile is needed."""
     kind = kind.upper()
     if kind not in KINDS:
         raise ValueError(f"kind must be one of {KINDS}, got {kind!r}")
     if not REWARD_FILE.exists():
-        raise FileNotFoundError(f"reward.md not found at {REWARD_FILE}")
+        # Defensive init: a missing ledger (clean checkout / fresh dir) must not crash
+        # the pipeline — start an empty one with the marker.
+        REWARD_FILE.parent.mkdir(parents=True, exist_ok=True)
+        REWARD_FILE.write_text(
+            f"# REWARD — Positive Signal (wins per skill)\n\n{INSERT_MARKER}\n",
+            encoding="utf-8",
+        )
     content = REWARD_FILE.read_text(encoding="utf-8")
     if INSERT_MARKER not in content:
         raise ValueError("Insert marker not found in reward.md")
@@ -63,7 +74,8 @@ def log_reward(kind: str, what: str, skill: str = "none",
         date=date, kind=kind, source=source, what=what,
         skill=skill, gate=gate, points=POINTS[kind],
     )
-    REWARD_FILE.write_text(content.replace(INSERT_MARKER, f"{INSERT_MARKER}\n{entry}"),
+    # count=1: idempotent even if the marker were accidentally duplicated.
+    REWARD_FILE.write_text(content.replace(INSERT_MARKER, f"{INSERT_MARKER}\n{entry}", 1),
                            encoding="utf-8")
 
 
@@ -77,10 +89,10 @@ def log_solved(what: str, skill: str = "none", gate: str = "none", source: str =
 
 def _parse_entries(content: str) -> list[dict]:
     pattern = re.compile(
-        r"^\s*## \[(?P<date>[^\]]+)\] (?P<kind>[A-Z]+) \| (?P<source>[^\n]+)\n"
-        r"^\s*\*\*Win\*\*\s*: (?P<what>[^\n]+)\n"
-        r"^\s*\*\*Skill\*\*\s*: (?P<skill>[^\n]+)\n"
-        r"^\s*\*\*Gate\*\*\s*: (?P<gate>[^\n]+)\n"
+        r"^\s*## \[(?P<date>[^\]]+)\] (?P<kind>[A-Z]+) \| (?P<source>[^\r\n]+)\r?\n"
+        r"^\s*\*\*Win\*\*\s*: (?P<what>[^\r\n]+)\r?\n"
+        r"^\s*\*\*Skill\*\*\s*: (?P<skill>[^\r\n]+)\r?\n"
+        r"^\s*\*\*Gate\*\*\s*: (?P<gate>[^\r\n]+)\r?\n"
         r"^\s*\*\*Points\*\*\s*: (?P<points>[0-9]+)",
         re.MULTILINE,
     )

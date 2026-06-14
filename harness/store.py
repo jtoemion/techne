@@ -33,7 +33,9 @@ def state_dir() -> Path:
     See skills/kanban/isolation.md.
     """
     override = os.environ.get(STATE_DIR_ENV)
-    d = Path(override) if override else MEMORY_DIR
+    # Resolve to absolute immediately: a relative override would drift if the
+    # process changes cwd mid-run. MEMORY_DIR is already absolute (ROOT-based).
+    d = Path(override).resolve() if override else MEMORY_DIR
     d.mkdir(parents=True, exist_ok=True)
     return d
 
