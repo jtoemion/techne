@@ -1,9 +1,12 @@
 """
-gates.py — all greppable rule enforcement for this project.
+gates.py — shared gate utilities and the GateViolation exception.
 
-Every skill rule that can be detected in a diff lives here as a gate function.
-Add a new gate when you add a `gate: yes` entry to a skills file.
-Never put subjective rules here — only patterns you can grep.
+Gate functions live in plugins/builtin_gates.py and user-created plugins.
+This module provides the building blocks they all use:
+  - GateViolation exception (the universal gate failure signal)
+  - _strip_diff_marker / _is_comment helpers (used by all gate plugins)
+
+For the full gate registry system, see gate_registry.py.
 """
 
 import re
@@ -12,8 +15,6 @@ import re
 class GateViolation(Exception):
     pass
 
-
-# ─── Diff-line helpers ─────────────────────────────────────────────────────────
 
 def _strip_diff_marker(line: str) -> str:
     """Remove a leading +/- diff marker (and surrounding whitespace),
@@ -29,106 +30,43 @@ def _is_comment(code: str) -> bool:
     return code.startswith(("//", "#", "/*", "*"))
 
 
-# ─── Next.js gates ─────────────────────────────────────────────────────────────
-
-def gate_no_redirect_outside_middleware(diff: str):
-    """Rule: redirect() only allowed in middleware.ts"""
-    current_file = ""
-    for i, line in enumerate(diff.splitlines()):
-        # Track which file this hunk belongs to via diff headers
-        if line.startswith("+++ b/") or line.startswith("+++ a/"):
-            current_file = line[6:].strip()
-            continue
-        if line.startswith("--- ") or line.startswith("+++ ") or line.startswith("diff ") or line.startswith("@@"):
-            continue
-        code = _strip_diff_marker(line)
-        if _is_comment(code):
-            continue
-        if "redirect(" not in code:
-            continue
-        if "middleware.ts" not in current_file:
-            raise GateViolation(
-                f"GATE FAIL [nextjs/redirect]: redirect() on diff line {i+1} "
-                f"is outside middleware.ts (current file: '{current_file or 'unknown'}')\n"
-                f"  → {line.strip()}"
-            )
-
-
-def gate_no_router_import(diff: str):
-    """Rule: import from next/navigation, never next/router"""
-    for i, line in enumerate(diff.splitlines()):
-        code = _strip_diff_marker(line)
-        if _is_comment(code):
-            continue
-        if re.search(r"from\s+['\"]next/router['\"]", code):
-            raise GateViolation(
-                f"GATE FAIL [nextjs/router-import]: found 'next/router' import on line {i+1}. "
-                f"Use 'next/navigation' in App Router.\n"
-                f"  → {line.strip()}"
-            )
-
-
-def gate_no_gSSP(diff: str):
-    """Rule: getServerSideProps removed in App Router"""
-    for i, line in enumerate(diff.splitlines()):
-        if line.startswith(("+++", "---", "@@", "diff ")):
-            continue
-        code = _strip_diff_marker(line)
-        if _is_comment(code):
-            continue
-        if "getServerSideProps" in code:
-            raise GateViolation(
-                f"GATE FAIL [nextjs/gSSP]: getServerSideProps on line {i+1}. "
-                f"Use async server components instead.\n"
-                f"  → {line.strip()}"
-            )
-
-
-# ─── TypeScript gates ───────────────────────────────────────────────────────────
-
-def gate_no_ts_ignore(diff: str):
-    """Rule: no @ts-ignore or @ts-nocheck suppressions"""
-    for i, line in enumerate(diff.splitlines()):
-        if re.search(r"@ts-(ignore|nocheck)", line):
-            raise GateViolation(
-                f"GATE FAIL [ts/suppress]: @ts-ignore or @ts-nocheck on line {i+1}. "
-                f"Fix the type error instead.\n"
-                f"  → {line.strip()}"
-            )
-
-
-# ─── General gates ──────────────────────────────────────────────────────────────
-
-def gate_no_console_log(diff: str):
-    """Rule: no console.log in production code paths"""
-    for i, line in enumerate(diff.splitlines()):
-        # added lines only; skip the +++ file header
-        if not line.startswith("+") or line.startswith("+++"):
-            continue
-        code = _strip_diff_marker(line)
-        if _is_comment(code):
-            continue
-        if "console.log" in code:
-            raise GateViolation(
-                f"GATE FAIL [general/console-log]: console.log added on line {i+1}. "
-                f"Remove before merge.\n"
-                f"  → {line.strip()}"
-            )
-
-
-# ─── Aggregated runner ──────────────────────────────────────────────────────────
-
-ALL_GATES = [
-    gate_no_redirect_outside_middleware,
-    gate_no_router_import,
-    gate_no_gSSP,
-    gate_no_ts_ignore,
-    gate_no_console_log,
-]
-
+# ─── Legacy shim — keeps old callers working during migration ──────────────
 
 def run_all_gates(diff: str) -> bool:
-    """Run every gate. Raises GateViolation on first failure."""
-    for gate in ALL_GATES:
-        gate(diff)
-    return True
+    """
+    Legacy shim. Prefer GateRegistry.run_all() for new code.
+
+    Creates a default registry, discovers plugins, and runs all gates.
+    The conductor.py will be updated to use the registry directly.
+    """
+    from gate_registry import GateRegistry
+
+    registry = GateRegistry()
+    registry.discover_plugins()
+    registry.load_config()
+    return registry.run_all(diff)
+
+
+# ─── Backward-compat re-exports from builtin_gates plugin ─────────────────
+# Old tests import gate functions directly from gates.py. These re-exports
+# point to the plugin versions so existing imports keep working.
+
+def gate_no_redirect_outside_middleware(diff: str):
+    from plugins.builtin_gates import _gate_no_redirect_outside_middleware
+    return _gate_no_redirect_outside_middleware(diff)
+
+def gate_no_router_import(diff: str):
+    from plugins.builtin_gates import _gate_no_router_import
+    return _gate_no_router_import(diff)
+
+def gate_no_gSSP(diff: str):
+    from plugins.builtin_gates import _gate_no_gSSP
+    return _gate_no_gSSP(diff)
+
+def gate_no_ts_ignore(diff: str):
+    from plugins.builtin_gates import _gate_no_ts_ignore
+    return _gate_no_ts_ignore(diff)
+
+def gate_no_console_log(diff: str):
+    from plugins.builtin_gates import _gate_no_console_log
+    return _gate_no_console_log(diff)
