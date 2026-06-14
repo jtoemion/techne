@@ -54,6 +54,8 @@ from checkpoint import (
 )
 from router import route, get_always_loaded
 from session import new_session
+from store import state_dir
+from reward import log_clean, log_solved, net_by_skill, total_points as reward_points
 from measure import run_measurements
 from intent_reasoner import verdict_to_gate
 from apply_retro import has_pending_proposals, check_regressions, format_regressions
@@ -175,6 +177,9 @@ class Pipeline:
         self.sha: str = ""
         self.findings: str = ""
         self.gate_report: list[dict] = []   # per-gate board from the last diff
+        # Outcomes of the non-code gates, surfaced in the activation indicator.
+        self.intent_passed: bool | None = None   # None=not run, True/False=ran
+        self.intent_l1: float | None = None
 
         # Skill in play this run — attributes mistakes to a skill for recurrence
         self.skill_id: str = self.matched_skill["id"] if self.matched_skill else "none"
@@ -272,13 +277,20 @@ class Pipeline:
         until MAX_RETRIES, then HALT. On pass: measure focus/scope + intent L1/L2
         (optional host semantic_verdict), enforce the intent gate.
         """
-        (MEMORY_DIR / "implementer_output.txt").write_text(diff, encoding="utf-8")
+        (state_dir() / "implementer_output.txt").write_text(diff, encoding="utf-8")
         # Full gate board for visibility (does not stop on first failure)
         self.gate_report = run_all_gates_report(diff)
         print(format_gate_report(self.gate_report))
         try:
             run_all_gates(diff)
             log_gate_pass("all_gates" if self.retries_used == 0 else "all_gates_retry")
+            # Positive signal (reward.py): net quality, not capture-farming. First-try
+            # pass = CLEAN (full); a pass after retries = SOLVED (recovery, partial).
+            if self.retries_used == 0:
+                log_clean(f"IMPLEMENT clean: {self.task[:80]}", skill=self.skill_id, gate="all_gates")
+            else:
+                log_solved(f"IMPLEMENT recovered after {self.retries_used} retr(y/ies): {self.task[:80]}",
+                           skill=self.skill_id, gate="all_gates")
             print("[CONDUCTOR] IMPLEMENT passed all gates")
         except GateViolation as e:
             gate_name = str(e).split("[")[1].split("]")[0] if "[" in str(e) else "unknown"
@@ -311,12 +323,15 @@ class Pipeline:
 
         intent = measurements["_intent"]
         l1_score = intent.get("l1_score", 0.0)
+        self.intent_l1 = l1_score
         print(f"[CONDUCTOR] Intent check: {intent['warning']}"
               + (" (!)" if l1_score < 0.5 else ""))
 
         try:
             verdict_to_gate(intent, self.task)   # MISMATCH >= 70% -> GateViolation
+            self.intent_passed = True
         except GateViolation as eg:
+            self.intent_passed = False
             print(f"[CONDUCTOR] (!) Intent gate: {eg}")
             self.eval_metrics["diff_focused"] = False
             self.eval_metrics["pipeline_halted"] = True
@@ -345,11 +360,12 @@ class Pipeline:
 
     def submit_verification(self, test_output: str) -> PhaseResult:
         """Persist host test output, run the SHA gate, mark verified."""
-        (MEMORY_DIR / "test_output.txt").write_text(test_output, encoding="utf-8")
+        run_dir = state_dir()
+        (run_dir / "test_output.txt").write_text(test_output, encoding="utf-8")
         try:
             sha = gate_test_output(
-                test_output_path=str(MEMORY_DIR / "test_output.txt"),
-                run_log_path=str(MEMORY_DIR / "run_log.json"),
+                test_output_path=str(run_dir / "test_output.txt"),
+                run_log_path=str(run_dir / "run_log.json"),
             )
         except Exception as e:
             self.results["verify"] = "FAIL"
@@ -456,10 +472,47 @@ class Pipeline:
 
     # ── STATUS (show after every phase) ─────────────────────────────────────────
 
+    def format_activation(self) -> str:
+        """One consolidated indicator: which SKILL activated + EVERY gate's PASS/FAIL.
+        Proof, in text, that the routed skill loaded and each gate actually fired."""
+        lines = ["ACTIVATION INDICATOR:"]
+        if self.matched_skill:
+            path = self.matched_skill.get("skill_path", "?")
+            lines.append(f"  SKILL ACTIVATED : {self.skill_id}  ({path})")
+        else:
+            lines.append("  SKILL ACTIVATED : none (no specific match — all rules loaded)")
+        loaded = [Path(p).name for p in get_always_loaded()]
+        if self.matched_skill:
+            rp = self.matched_skill.get("skill_path", "")
+            if rp and Path(rp).name not in loaded:
+                loaded.append(Path(rp).name)
+        lines.append(f"  SKILLS LOADED   : {', '.join(loaded) if loaded else '(none)'}")
+
+        # Unified gate board: code gates + intent gate + SHA gate, in fire order.
+        rows: list[tuple[str, bool, str]] = []
+        for r in (self.gate_report or []):
+            rows.append((r["gate"].replace("gate_", ""), r["passed"], r.get("detail", "")))
+        if self.intent_passed is not None:
+            det = f"L1 {self.intent_l1:.2f}" if self.intent_l1 is not None else ""
+            rows.append(("intent", self.intent_passed, det))
+        verify = self.results.get("verify", "")
+        if verify and verify != "PENDING":
+            rows.append(("sha (verification)", verify.startswith("PASS"),
+                         (self.sha[:16] + "...") if self.sha else ""))
+        if rows:
+            passed = sum(1 for _, ok, _ in rows if ok)
+            lines.append(f"  GATES FIRED ({passed}/{len(rows)} passed):")
+            for name, ok, det in rows:
+                tail = f"  -> {det}" if det else ""
+                lines.append(f"    [{'PASS' if ok else 'FAIL'}] {name}{tail}")
+        else:
+            lines.append("  GATES FIRED     : (none yet — run IMPLEMENT)")
+        return "\n".join(lines)
+
     def get_status(self) -> str:
         """
         Returns a structured status report after every phase.
-        Shows: phase results, checkpoint summary, live eval preview.
+        Shows: phase results, the activation indicator, checkpoint, live eval preview.
         Call this after submit_implementation / submit_verification /
         submit_review / submit_retro — display the output to the user.
         """
@@ -479,12 +532,10 @@ class Pipeline:
         for phase, status in self.results.items():
             lines.append(f"  {phase.upper():10}: {status}")
         lines.append(f"  {'VERIFIED':10}: {'YES' if verified else 'NO'}")
-        lines.append(f"  {'SKILL':10}: {self.skill_id}")
 
-        # Per-gate board — what each gate did on the last diff
-        if self.gate_report:
-            lines.append("")
-            lines.append(format_gate_report(self.gate_report))
+        # Consolidated activation indicator: skill loaded + every gate's PASS/FAIL.
+        lines.append("")
+        lines.append(self.format_activation())
 
         # Per-skill mistake recurrence — what's accumulating against each skill
         by_skill = count_by_skill()
@@ -493,6 +544,14 @@ class Pipeline:
             for skill, n in sorted(by_skill.items(), key=lambda x: -x[1]):
                 flag = "  <- recurring" if n >= 2 else ""
                 lines.append(f"  {skill:25}: {n}{flag}")
+
+        # Positive signal (reward.py) — the denominator: wins vs losses, net per skill.
+        # SIGNAL ONLY — informs the human-gated retro; never auto-steers (see reward.py).
+        net = net_by_skill(by_skill)
+        if reward_points() or any(v["wins"] for v in net.values()):
+            lines.extend(["", f"REWARD (positive signal, {reward_points()} pts) — wins/losses/net per skill:"])
+            for skill, v in sorted(net.items(), key=lambda x: -x[1]["net"]):
+                lines.append(f"  {skill:25}: +{v['wins']} / -{v['losses']} / net {v['net']:+d}")
 
         # Self-improvement regressions — applied edits the eval trend dropped below
         regressions = check_regressions()

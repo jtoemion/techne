@@ -23,6 +23,15 @@ MEMORY_DIR = ROOT / "memory"
 SESSION_FILE = MEMORY_DIR / "SESSION.md"
 SESSIONS_DIR = MEMORY_DIR / "sessions"
 
+
+def project_name(root: Path = ROOT) -> str:
+    """The project's name — stable across git worktrees. A worktree lives at
+    `<repo>/.claude/worktrees/<name>`, so `root.name` there is the worktree's, not
+    the project's. Walk back to the real repo name in that case."""
+    if root.parent.name == "worktrees" and root.parent.parent.name == ".claude":
+        return root.parent.parent.parent.name
+    return root.name
+
 SESSION_TEMPLATE = """\
 ---
 session_id: {session_id}
@@ -91,7 +100,7 @@ class SessionLog:
         self.session_id = session_id
         self.agent_tool = agent_tool
         self.timestamp = datetime.now(timezone.utc).isoformat()
-        self.project = ROOT.name  # "techne" or whatever the repo is named
+        self.project = project_name()  # stable across worktrees (e.g. always "techne")
         self.task = ""
         self.status = "IN_PROGRESS"
         self.what_done: list[str] = []

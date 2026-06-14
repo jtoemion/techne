@@ -19,6 +19,7 @@ from pathlib import Path
 TESTS_DIR = Path(__file__).parent
 ROOT = TESTS_DIR.parent
 sys.path.insert(0, str(ROOT / "harness"))
+sys.path.insert(0, str(TESTS_DIR)); import _mem_guard  # noqa: snapshots memory/, restores at exit
 
 import mistakes
 import gates
