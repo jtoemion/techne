@@ -13,10 +13,31 @@ global state — callers pass the path and choose their own default.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 MEMORY_DIR = ROOT / "memory"
+
+# Env var a host (e.g. a Hermes Kanban dispatcher) sets per isolated worker so that
+# parallel Techne runs do not share single-writer run state. Mirrors how Hermes
+# injects HERMES_KANBAN_DB per card. Unset → the shared memory/ dir, as before.
+STATE_DIR_ENV = "TECHNE_STATE_DIR"
+
+
+def state_dir() -> Path:
+    """Resolve where RUN-SCOPED state lives (harness-state.json, run artifacts).
+
+    Defaults to memory/. A caller-provided TECHNE_STATE_DIR isolates one run so
+    parallel workers can't clobber each other's checkpoint counter / verify flag.
+    See skills/kanban/isolation.md.
+    """
+    override = os.environ.get(STATE_DIR_ENV)
+    # Resolve to absolute immediately: a relative override would drift if the
+    # process changes cwd mid-run. MEMORY_DIR is already absolute (ROOT-based).
+    d = Path(override).resolve() if override else MEMORY_DIR
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def read_json(path: "str | Path", default=None):

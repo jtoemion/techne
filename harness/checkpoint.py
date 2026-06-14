@@ -9,19 +9,29 @@ no pipeline can claim "done" without real verification evidence.
 from datetime import datetime, timezone
 from pathlib import Path
 
-from store import read_json, write_json
+from store import read_json, write_json, state_dir
 
 HARNESS_DIR = Path(__file__).parent
 ROOT = HARNESS_DIR.parent
+
+# The DEFAULT checkpoint location (no override). Kept for external callers that
+# back up / restore the real state file. Internal reads/writes go through
+# _state_file(), which honors a per-worker TECHNE_STATE_DIR (Kanban isolation).
 STATE_FILE = ROOT / "memory" / "harness-state.json"
 
 
+def _state_file() -> Path:
+    """Per-run checkpoint file. Resolved each call so a host's TECHNE_STATE_DIR
+    override isolates parallel workers (Kanban compatibility). Default: memory/."""
+    return state_dir() / "harness-state.json"
+
+
 def read_state() -> dict:
-    return read_json(STATE_FILE, default={})
+    return read_json(_state_file(), default={})
 
 
 def write_state(state: dict) -> None:
-    write_json(STATE_FILE, state)
+    write_json(_state_file(), state)
 
 
 def init_state() -> dict:
