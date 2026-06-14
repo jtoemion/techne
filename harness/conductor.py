@@ -56,7 +56,7 @@ from router import route, get_always_loaded, get_common_loaded
 from session import new_session
 from measure import run_measurements
 from intent_reasoner import verdict_to_gate
-from apply_retro import has_pending_proposals
+from apply_retro import has_pending_proposals, auto_apply_pending
 
 HARNESS_DIR = Path(__file__).parent        # techne/harness/
 ROOT = HARNESS_DIR.parent                  # techne/
@@ -396,6 +396,35 @@ class Pipeline:
         self.eval_metrics["retro_proposals"] = produced_proposals
         print("[CONDUCTOR] RETRO complete")
         return PhaseResult("DONE")
+
+    # ── RETRO LOOP (close the learning loop) ────────────────────────────────
+
+    def apply_retro_prompt(self) -> AgentPrompt:
+        """
+        Prompt for the host to review retro proposals before auto-apply.
+        The host can approve (submit_retro_approve) or skip.
+        """
+        pending = has_pending_proposals()
+        user = textwrap.dedent(f"""
+            {pending} retro proposal(s) pending in memory/retro_proposals.md.
+
+            Review the proposals. If they look correct, respond with APPROVE.
+            If any should be skipped, respond with SKIP: <reason>.
+
+            The proposals will be applied automatically after your approval.
+        """).strip()
+        return AgentPrompt(system=_read_agent_prompt("retro"), user=user)
+
+    def submit_retro_approve(self, approval: str = "APPROVE") -> PhaseResult:
+        """Apply retro proposals if host approved."""
+        if "APPROVE" in approval.upper():
+            result = auto_apply_pending()
+            self.eval_metrics["retro_proposals_applied"] = result.get("applied", 0)
+            print(f"[CONDUCTOR] Retro proposals applied: {result}")
+            return PhaseResult("PASS", detail={"retro_apply": result})
+        else:
+            print("[CONDUCTOR] Retro proposals skipped by host")
+            return PhaseResult("PASS", detail={"retro_apply": "skipped"})
 
     # ── HOST GATE INJECTION ───────────────────────────────────────────────────
 
