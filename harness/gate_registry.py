@@ -273,6 +273,6 @@ def _parse_yaml_simple(text: str) -> dict:
             else:
                 current_key = key
                 result[current_key] = []
-        elif stripped.startswith("- ") and current_key:
-            result[current_key].append(stripped[2:].strip().strip('"').strip("'"))
+        elif stripped.lstrip().startswith("- ") and current_key:
+            result[current_key].append(stripped.lstrip()[2:].strip().strip('"').strip("'"))
     return result

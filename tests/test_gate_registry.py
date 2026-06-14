@@ -1,10 +1,12 @@
 """Tests for the gate registry system."""
 import sys
 import os
+import tempfile
+from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'harness'))
 
-from gate_registry import GateRegistry, GateMeta
+from gate_registry import GateRegistry, GateMeta, _parse_yaml_simple
 from gates import GateViolation
 
 
@@ -135,6 +137,66 @@ def test_overwrite_register():
     r.register("test/ov", lambda d: "first")
     r.register("test/ov", lambda d: "second")
     assert r.get("test/ov").fn("x") == "second"
+
+
+def test_load_config_disables_stacks():
+    """load_config with active_stacks disables gates outside those stacks."""
+    r = GateRegistry()
+    r.register("a", lambda d: None, stack="nextjs")
+    r.register("b", lambda d: None, stack="general")
+    r.register("c", lambda d: None, stack="typescript")
+    cfg = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
+    cfg.write("active_stacks:\n  - general\n")
+    cfg.close()
+    r.load_config(config_path=Path(cfg.name))
+    os.unlink(cfg.name)
+    enabled = [g.name for g in r.list_gates()]
+    assert enabled == ["b"], f"Only 'b' (general) should be enabled, got {enabled}"
+
+
+def test_load_config_disables_specific_gates():
+    """load_config with disabled_gates turns off specific gates."""
+    r = GateRegistry()
+    r.register("a", lambda d: None, stack="general")
+    r.register("b", lambda d: None, stack="general")
+    cfg = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
+    cfg.write('disabled_gates:\n  - "b"\n')
+    cfg.close()
+    r.load_config(config_path=Path(cfg.name))
+    os.unlink(cfg.name)
+    enabled = [g.name for g in r.list_gates()]
+    assert enabled == ["a"], f"Only 'a' should be enabled, got {enabled}"
+
+
+def test_parse_yaml_simple():
+    """Minimal YAML parser handles our config format."""
+    text = '''version: "1.0"
+active_stacks:
+  - general
+  - nextjs
+disabled_gates:
+  - "test/gate"
+'''
+    result = _parse_yaml_simple(text)
+    assert result["version"] == "1.0"
+    assert result["active_stacks"] == ["general", "nextjs"]
+    assert result["disabled_gates"] == ["test/gate"]
+
+
+def test_config_before_register():
+    """Config loaded before register() still applies to new gates."""
+    r = GateRegistry()
+    # Load config first — only "general" active
+    cfg = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
+    cfg.write("active_stacks:\n  - general\n")
+    cfg.close()
+    r.load_config(config_path=Path(cfg.name))
+    os.unlink(cfg.name)
+    # Register gates AFTER config load
+    r.register("a", lambda d: None, stack="nextjs")
+    r.register("b", lambda d: None, stack="general")
+    enabled = [g.name for g in r.list_gates()]
+    assert enabled == ["b"], f"Config should retroactively disable, got {enabled}"
 
 
 if __name__ == "__main__":

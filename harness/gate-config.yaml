@@ -1,0 +1,32 @@
+# gate-config.yaml — stack-based gate selection for Techne
+#
+# Declare which stacks are active for this project.
+# Gates tagged with a stack not in this list are disabled automatically.
+#
+# Edit this when adapting Techne to your stack.
+# See COMPONENTS.md "Adapting to your stack" for guidance.
+#
+# Available stacks from built-in gates:
+#   general     — stack-agnostic rules (console.log, etc.)
+#   nextjs      — Next.js App Router rules (redirect, router-import, gSSP)
+#   typescript  — TypeScript suppression rules (@ts-ignore, @ts-nocheck)
+#
+# Additional stacks from plugins:
+#   security    — hardcoded secrets, eval() detection (load security_gates.py)
+
+version: "1.0"
+
+# Active stacks — gates in these stacks will run.
+# Comment out a stack to disable all its gates at once.
+active_stacks:
+  - general
+  - nextjs
+  - typescript
+  # - security   # uncomment after loading security_gates.py plugin
+
+# Per-gate overrides — disable specific gates by name.
+# Useful when you want most of a stack but need one exception.
+disabled_gates: []
+  # - "nextjs/redirect"       # allow redirect() outside middleware
+  # - "general/console-log"   # allow console.log in diffs
+  # - "ts/suppress"           # allow @ts-ignore
