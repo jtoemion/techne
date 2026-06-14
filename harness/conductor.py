@@ -52,7 +52,7 @@ from checkpoint import (
     check_verification,
     get_summary,
 )
-from router import route, get_always_loaded
+from router import route, get_always_loaded, get_common_loaded
 from session import new_session
 from measure import run_measurements
 from intent_reasoner import verdict_to_gate

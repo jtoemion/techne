@@ -146,3 +146,10 @@ disambiguation:
 always_loaded:
   - "skills/nextjs.md"
   - "skills/typescript.md"
+
+# COMMON-LOADED — fallback context when no specific skill matches.
+# Replaces the old behavior of dumping every .md in skills/.
+# Keep this minimal: each file costs context window.
+common_loaded:
+  - "skills/implementer.md"
+  - "skills/typescript.md"

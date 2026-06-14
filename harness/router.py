@@ -101,6 +101,12 @@ def get_always_loaded() -> list[str]:
     return router.get("always_loaded", [])
 
 
+def get_common_loaded() -> list[str]:
+    """Return list of common-loaded skill paths (fallback when no specific skill matches)."""
+    router = _load_router()
+    return router.get("common_loaded", [])
+
+
 def route_with_explanation(task_input: str) -> str:
     """Route and return a human-readable explanation."""
     result = route(task_input)
