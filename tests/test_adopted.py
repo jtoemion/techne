@@ -45,31 +45,31 @@ def test_router():
     print("\n[skill router]")
 
     r = route("there's a bug, something is broken")
-    if r and r["id"] == "diagnose":
+    if r and r["id"] == "techne/diagnose":
         ok("bug report routes to diagnose")
     else:
         fail("bug report routes to diagnose", f"got {r}")
 
     r = route("let's write tests first using TDD")
-    if r and r["id"] == "tdd":
+    if r and r["id"] == "techne/tdd":
         ok("TDD request routes to tdd")
     else:
         fail("TDD request routes to tdd", f"got {r}")
 
     r = route("stress-test this plan before we build it")
-    if r and r["id"] == "grill":
+    if r and r["id"] == "techne/grill":
         ok("plan stress-test routes to grill")
     else:
         fail("plan stress-test routes to grill", f"got {r}")
 
     r = route("update the middleware redirect logic")
-    if r and r["id"] == "nextjs-rules":
+    if r and r["id"] == "techne/nextjs-rules":
         ok("Next.js task routes to nextjs-rules")
     else:
         fail("Next.js task routes to nextjs-rules", f"got {r}")
 
     r = route("fix the TypeScript type error in products.ts")
-    if r and r["id"] == "typescript-rules":
+    if r and r["id"] == "techne/typescript-rules":
         ok("TypeScript task routes to typescript-rules")
     else:
         fail("TypeScript task routes to typescript-rules", f"got {r}")

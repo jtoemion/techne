@@ -8,82 +8,82 @@ updated: "2026-06-02"
 
 # ROUTING TABLE — evaluated top-to-bottom, first match wins
 routing:
-  - id: "diagnose"
+  - id: "techne/diagnose"
     condition: "bug, broken, throwing, failing, regression, not working, debug, diagnose"
     skill_path: "skills/diagnose.md"
     weight: 90
     note: "Always diagnose before attempting a fix. Removed 'error' — too generic, collides with TypeScript routing."
 
-  - id: "writing-skill"
+  - id: "techne/writing-skill"
     condition: "write a skill, create a skill, new skill, skill template, audit skill, refactor skill"
     skill_path: "skills/writing-skill.md"
     weight: 88
     note: "High weight — someone asking to write a skill should land here before tdd/grill."
 
-  - id: "tdd"
+  - id: "techne/tdd"
     condition: "test-first, TDD, red-green-refactor, write tests, test-driven"
     skill_path: "skills/tdd.md"
     weight: 85
 
-  - id: "persona-brainstorm"
+  - id: "techne/persona-brainstorm"
     condition: "persona brainstorm, grill session, client dev dialogue, discover improvement, Ezekiel, Jeremiah, brainstorm session"
     skill_path: "skills/persona-brainstorm.md"
     weight: 85
     note: "Multi-persona discovery loop. Outputs ADRs from real friction."
 
-  - id: "grill"
+  - id: "techne/grill"
     condition: "stress-test plan, challenge design, grill, review approach, before implementing"
     skill_path: "skills/grill.md"
     weight: 80
 
-  - id: "improve-architecture"
+  - id: "techne/improve-architecture"
     condition: "improve architecture, refactoring opportunities, deepen module, more testable, consolidate coupling, architecture review"
     skill_path: "skills/improve-architecture.md"
     weight: 78
     note: "Find deepening opportunities — shallow modules into deep ones. Adopted from mattpocock."
 
-  - id: "prototype"
+  - id: "techne/prototype"
     condition: "prototype, throwaway, mock up, try designs, sanity-check state model, play with it"
     skill_path: "skills/prototype.md"
     weight: 75
     note: "Throwaway code that answers ONE design question. Adopted from mattpocock."
 
-  - id: "check-pr"
+  - id: "techne/check-pr"
     condition: "check pull request, review comments, address review feedback, prepare to merge, pull request status"
     skill_path: "skills/check-pr.md"
     weight: 74
     note: "One-pass PR triage. On a tie with greploop, prefer this (lighter action). Adopted from greptile (MIT)."
 
-  - id: "greploop"
+  - id: "techne/greploop"
     condition: "greploop, optimize pull request, iterate pull request, greptile review, perfect review score"
     skill_path: "skills/greploop.md"
     weight: 72
     note: "Iterate a PR until 5/5 + zero unresolved. Narrow PR-focused /goal. Adopted from greptile (MIT)."
 
-  - id: "nextjs-rules"
+  - id: "techne/nextjs-rules"
     condition: "Next.js, nextjs, app router, page component, middleware, server component, redirect, layout, metadata"
     skill_path: "skills/nextjs.md"
     weight: 50
     note: "Always loaded as context, but explicit match for Next.js-specific tasks"
 
-  - id: "typescript-rules"
+  - id: "techne/typescript-rules"
     condition: "TypeScript, type error, type safety, generics, strict mode"
     skill_path: "skills/typescript.md"
     weight: 50
 
-  - id: "telegram-rulebook"
+  - id: "techne/telegram-rulebook"
     condition: "telegram behavior, megumi rule, thread routing, telegram session"
     skill_path: "telegram/telegram-rulebook/SKILL.md"
     weight: 95
     note: "Always loaded in Telegram sessions. Thread-to-project routing + tone rules."
 
-  - id: "ezra-assistant"
+  - id: "techne/ezra-assistant"
     condition: "Ezra schedule, Ezra attendance, Ezra student package, BnB LMS tutoring, Ezra reminder"
     skill_path: "productivity/ezra-assistant/SKILL.md"
     weight: 82
     note: "Ezra Theodores' tutoring schedule + attendance workflow. Overlaps with tutor-assistant but Ezra-specific."
 
-  - id: "implementer"
+  - id: "techne/implementer"
     condition: "implement, add feature, build, create component, fix, refactor, change"
     skill_path: "skills/implementer.md"
     weight: 30
@@ -92,52 +92,52 @@ routing:
 # DISAMBIGUATION — handle commonly confused skills
 disambiguation:
   - confused:
-      - diagnose
-      - tdd
+      - techne/diagnose
+      - techne/tdd
     rule: |
       diagnose = Something is BROKEN — find root cause before fixing
       tdd = You're BUILDING something new — write tests first
 
   - confused:
-      - grill
-      - tdd
+      - techne/grill
+      - techne/tdd
     rule: |
       grill = Challenge a PLAN before any code is written
       tdd = Execute the plan using test-first development
 
   - confused:
-      - grill
-      - persona-brainstorm
+      - techne/grill
+      - techne/persona-brainstorm
     rule: |
       grill              = SOLO. Single agent challenges a known plan against the codebase.
       persona-brainstorm = MULTI-PERSONA. Ezekiel/Jeremiah dialogue to DISCOVER improvements
                            from real friction. No plan yet — discovery first.
 
   - confused:
-      - check-pr
-      - greploop
+      - techne/check-pr
+      - techne/greploop
     rule: |
       check-pr = ONE pass. Read the PR, categorize issues, report, optionally fix once.
       greploop = LOOP. Iterate the PR until 5/5 + zero unresolved (max 5 iterations).
 
   - confused:
-      - ezra-assistant
-      - tutor-assistant
+      - techne/ezra-assistant
+      - techne/tutor-assistant
     rule: |
       ezra-assistant    = Ezra THEODORES specifically. Use admin UID 5VjkeLYp6HNUnc2HR4J7g0qkg3q1.
                           Has Ezra's fixed routine, HTML report format, and 8-session package rules.
       tutor-assistant   = Generic tutor. Not Ezra. Use when no specific tutor name is given.
 
   - confused:
-      - prototype
-      - grill
+      - techne/prototype
+      - techne/grill
     rule: |
       prototype = Build throwaway code to ANSWER a design question empirically.
       grill     = Stress-test an already-formed plan against the codebase, by questioning.
 
   - confused:
-      - improve-architecture
-      - grill
+      - techne/improve-architecture
+      - techne/grill
     rule: |
       improve-architecture = FIND deepening opportunities (shallow → deep modules), then grill one.
       grill                = Stress-test a plan you ALREADY have.
