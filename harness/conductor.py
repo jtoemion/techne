@@ -39,7 +39,8 @@ import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from gates import GateViolation, run_all_gates
+from gates import GateViolation
+from gate_registry import GateRegistry
 from sha_gate import gate_test_output
 from mistakes import log_mistake, check_relevant, count_active
 from evaluator import evaluate_pipeline_run, EvalReport, load_eval_history as _load_eval_history, _trend
@@ -187,6 +188,11 @@ class Pipeline:
             "retro_questions": 0,
         }
 
+        # Gate registry — discovers plugins, loads config
+        self.registry = GateRegistry()
+        self.registry.discover_plugins()
+        self.registry.load_config()
+
     # ── lifecycle ────────────────────────────────────────────────────────────
 
     @classmethod
@@ -247,7 +253,7 @@ class Pipeline:
         """
         (MEMORY_DIR / "implementer_output.txt").write_text(diff, encoding="utf-8")
         try:
-            run_all_gates(diff)
+            self.registry.run_all(diff)
             log_gate_pass("all_gates" if self.retries_used == 0 else "all_gates_retry")
             print("[CONDUCTOR] IMPLEMENT passed all gates")
         except GateViolation as e:
@@ -390,6 +396,26 @@ class Pipeline:
         self.eval_metrics["retro_proposals"] = produced_proposals
         print("[CONDUCTOR] RETRO complete")
         return PhaseResult("DONE")
+
+    # ── HOST GATE INJECTION ───────────────────────────────────────────────────
+
+    def register_host_gate(self, name, fn, **kwargs):
+        """
+        Let the host inject a custom gate at pipeline start.
+        Example: p.register_host_gate('custom/no-any', my_no_any_gate, stack='typescript')
+        """
+        self.registry.register(name, fn, source='host', **kwargs)
+
+    def add_host_hook(self, hook_type, hook_fn):
+        """
+        Let the host add pre/post hooks around gate execution.
+        hook_type: 'pre' or 'post'
+        hook_fn: pre(diff, meta) or post(diff, meta, exception_or_None)
+        """
+        if hook_type == 'pre':
+            self.registry.add_pre_hook(hook_fn)
+        elif hook_type == 'post':
+            self.registry.add_post_hook(hook_fn)
 
     # ── STATUS (show after every phase) ─────────────────────────────────────────
 
