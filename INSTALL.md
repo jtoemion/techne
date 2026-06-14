@@ -62,7 +62,7 @@ From the repo root, run the deterministic suites. **No API key, no network.**
 ```bash
 # 3a. All harness modules import with zero dependencies
 python -c "import sys; sys.path.insert(0,'harness'); \
-import conductor, router, gates, sha_gate, measure, intent_reasoner, \
+import conductor, gate_registry, router, gates, sha_gate, measure, intent_reasoner, \
 evaluator, checkpoint, session, mistakes, store, diff_parser; \
 print('Techne OK - no SDK needed')"
 
@@ -152,6 +152,16 @@ report = p.finalize()                   # scored eval (0-100) + SESSION.md
 print(report.format_report())
 ```
 
+**Host gate injection** -- the host can add custom gates and hooks without
+touching core files:
+
+```python
+p = Pipeline.start('task')
+p.register_host_gate('custom/no-any', my_gate_fn, stack='typescript')
+p.add_host_hook('pre', my_pre_hook)   # runs before each gate
+p.add_host_hook('post', my_post_hook) # runs after each gate
+```
+
 Phase contract:
 
 | Method | You run | You submit | Techne checks |
@@ -228,7 +238,9 @@ Runtime scratch files (`harness-state.json`, `test_output.txt`,
 | To do this | Edit |
 |---|---|
 | Teach the agent your conventions | `CONTEXT.md` (domain glossary) |
-| Add a hard, greppable rule | `harness/gates.py` + a case in `tests/evals/cases/gate_cases.json` |
+| Add a hard, greppable rule | Drop a `.py` in `harness/plugins/` with `register(registry)` |
+| Disable a stack of gates | `harness/gate-config.yaml` -- remove from `active_stacks` |
+| Disable a single gate | `harness/gate-config.yaml` -- add to `disabled_gates` |
 | Change which skill loads for a task | `harness/skill-router.yaml` |
 | Add a new skill card | follow `skills/writing-skill.md`, then add a router entry |
 | Record a decision | append to `docs/adr/` using `docs/adr/ADR-FORMAT.md` |

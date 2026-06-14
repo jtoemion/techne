@@ -23,6 +23,7 @@ description: Harness engineering entry point. Routes to the right sub-skill base
 | Prompting LLM for UI | `skills/ui-craft.md` |
 | UI specificity standard | `skills/ui-physics.md` |
 | Design-to-dev handoff | `skills/ui-handoff.md` |
+| React + Vite project work | `skills/react-vite.md` |
 | Reviewing agent output | `skills/evaluation.md` |
 | Next.js specific rules | `skills/nextjs.md` |
 | TypeScript type errors | `skills/typescript.md` |
@@ -153,7 +154,7 @@ Shows phase results, checkpoint summary, and live eval preview (scores per dimen
 - SvelteKit deployment issues? → `references/bug-analysis-soaperfume.md` (adapter-hosting mismatch, idempotent migrations, auth guards)
 - Bug triage quick-ref? → `references/bug-analysis-soaperfume.md` (symptom → cause table for common SvelteKit/SQLite patterns)
 - Replicating an existing UI (vanilla HTML prototype → framework code)? → `references/ui-replication-from-reference.md` (audit-then-extract workflow, atom layer first, token-exact matching)
-- Hook-gate bridge (Hermes pre_tool_call → Techne gates.py)? → `references/hook-gate-bridge.md` (plan + architecture for inline gate enforcement via plugin hook)
+- Extending gates? → drop a `.py` file in `harness/plugins/` with `register(registry)` or inject at runtime via `p.register_host_gate()`
 - Writing a new skill? → `superpowers/writing-skills/SKILL.md` (TDD for documentation — RED-GREEN-REFACTOR applied to process docs)
 - UI design decisions? → `superpowers/frontend-avant-garde/SKILL.md` (Senior Frontend Architect — opinionated, output-first)
 - Svelte project work? → `skills/svelte.md` (gap-at-bottom fix, $state patterns, dev-only route guard)

@@ -148,18 +148,18 @@ keywords**. If your host has its own router or skills, these overlap:
 
 | Techne skill | Trigger keywords (abbrev.) | Likely host overlap |
 |---|---|---|
-| diagnose | bug, broken, throwing, failing, regression, debug | a "debug" / "incident" skill |
-| writing-skill | write a skill, create a skill, skill template | a meta "skill-creator" |
-| tdd | test-first, TDD, red-green-refactor, write tests | a "testing-strategy" skill |
-| persona-brainstorm | persona brainstorm, grill session, Ezekiel, Jeremiah | unlikely |
-| grill | stress-test plan, challenge design, before implementing | a "design-review" skill |
-| improve-architecture | architecture review, refactoring opportunities, deepen module | a "refactor" skill |
-| prototype | prototype, throwaway, mock up, sanity-check state model | a "spike" skill |
-| check-pr | check pull request, review comments, prepare to merge | a host PR skill |
-| greploop | greploop, optimize/iterate pull request, greptile review | a host PR skill |
-| nextjs-rules | Next.js, app router, middleware, redirect, server component | framework skills |
-| typescript-rules | TypeScript, type error, generics, strict mode | language skills |
-| implementer | implement, add feature, build, create component, fix, refactor | a generic "code" skill (very broad) |
+| techne/diagnose | bug, broken, throwing, failing, regression, debug | a "debug" / "incident" skill |
+| techne/writing-skill | write a skill, create a skill, skill template | a meta "skill-creator" |
+| techne/tdd | test-first, TDD, red-green-refactor, write tests | a "testing-strategy" skill |
+| techne/persona-brainstorm | persona brainstorm, grill session, Ezekiel, Jeremiah | unlikely |
+| techne/grill | stress-test plan, challenge design, before implementing | a "design-review" skill |
+| techne/improve-architecture | architecture review, refactoring opportunities, deepen module | a "refactor" skill |
+| techne/prototype | prototype, throwaway, mock up, sanity-check state model | a "spike" skill |
+| techne/check-pr | check pull request, review comments, prepare to merge | a host PR skill |
+| techne/greploop | greploop, optimize/iterate pull request, greptile review | a host PR skill |
+| techne/nextjs-rules | Next.js, app router, middleware, redirect, server component | framework skills |
+| techne/typescript-rules | TypeScript, type error, generics, strict mode | language skills |
+| techne/implementer | implement, add feature, build, create component, fix, refactor | a generic "code" skill (very broad) |
 
 **Resolution options:** (a) install under `techne/` and only invoke Techne's
 router explicitly; (b) rename colliding skills + their `skill-router.yaml` ids;
@@ -171,21 +171,22 @@ router explicitly; (b) rename colliding skills + their `skill-router.yaml` ids;
 
 If you are **not** on Next.js + TypeScript, do this before first use:
 
-1. **Replace the gates.** In `harness/gates.py`, remove the five Next.js/TS gate
-   functions from `ALL_GATES` and add your own greppable rules (same shape: scan
-   diff lines, `raise GateViolation` on a match). Use the helpers
-   `_strip_diff_marker` / `_is_comment` so comments don't trip rules.
-2. **Replace the always-loaded skills.** In `harness/skill-router.yaml`, change
+1. **Edit `harness/gate-config.yaml`.** Remove `nextjs` and/or `typescript` from
+   `active_stacks`. The registry automatically disables gates in those stacks.
+   No code changes needed.
+2. **Add your own gates** (optional). Drop a `.py` file in `harness/plugins/`
+   with a `register(registry)` function. See `plugins/security_gates.py` for
+   an example. Add your stack to `active_stacks` in `gate-config.yaml`.
+3. **Replace the always-loaded skills.** In `harness/skill-router.yaml`, change
    `always_loaded` from `nextjs.md`/`typescript.md` to your stack's rule cards,
    and rewrite those cards (`skills/writing-skill.md` shows the format).
-3. **Update the gate eval cases.** Edit `tests/evals/cases/gate_cases.json` to
+4. **Update the gate eval cases.** Edit `tests/evals/cases/gate_cases.json` to
    cover your gates, then `python tests/evals/run_evals.py --save-baseline`.
-4. **Keep everything else.** The router, intent reasoning, eval scoring, memory,
+5. **Keep everything else.** The router, intent reasoning, eval scoring, memory,
    retro loop, and the `diagnose`/`tdd`/`grill`/`writing-skill` skills are
    stack-agnostic and carry over unchanged.
 
-The engine is portable; only the **rules** are Next.js/TS. Swap the rules, keep
-the discipline.
+The engine is portable; only the **rules** are stack-specific plugins.
 
 ---
 
