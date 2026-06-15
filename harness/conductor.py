@@ -44,6 +44,8 @@ from gate_registry import GateRegistry
 from sha_gate import gate_test_output
 from mistakes import log_mistake, check_relevant, count_active
 from evaluator import evaluate_pipeline_run, EvalReport, load_eval_history as _load_eval_history, _trend
+from task_db import TaskDB
+from pipeline_enforcer import PipelineEnforcer, get_phase_prompt
 from checkpoint import (
     increment_pipeline_run,
     log_gate_pass,
@@ -151,11 +153,19 @@ class Pipeline:
     feeds the host's artifact back through Techne's deterministic gates.
     """
 
-    def __init__(self, task: str, run_number: int):
+    def __init__(self, task: str, run_number: int, task_id: str | None = None):
         self.task = task
         self.run_number = run_number
         self.matched_skill = route(task)
         self.relevant_mistakes = _surface_relevant_mistakes(task)
+        self.task_id = task_id
+        self.db: TaskDB | None = None
+        self.enforcer: PipelineEnforcer | None = None
+
+        # Task DB integration (optional — for multi-agent pipeline)
+        if task_id:
+            self.db = TaskDB()
+            self.enforcer = PipelineEnforcer(self.db)
 
         # Artifacts collected from the host as phases complete
         self.diff: str = ""
@@ -196,10 +206,10 @@ class Pipeline:
     # ── lifecycle ────────────────────────────────────────────────────────────
 
     @classmethod
-    def start(cls, task: str) -> "Pipeline":
+    def start(cls, task: str, *, task_id: str | None = None) -> "Pipeline":
         """Begin a pipeline run: increment counter, route, surface mistakes."""
         run_number = increment_pipeline_run()
-        p = cls(task, run_number)
+        p = cls(task, run_number, task_id=task_id)
         print(f"\n[CONDUCTOR] Starting pipeline #{run_number}: {task}")
         if p.matched_skill:
             print(f"[CONDUCTOR] Skill routed: {p.matched_skill['id']} "
@@ -220,6 +230,13 @@ class Pipeline:
 
     def implement_prompt(self) -> AgentPrompt:
         """Prompt for the host to produce a diff. Includes prior gate feedback on retry."""
+        # If task_db is active, inject phase context
+        phase_context = ""
+        if self.enforcer and self.task_id:
+            phase = self.enforcer.get_phase(self.task_id)
+            if phase and phase not in (None, "PENDING"):
+                phase_context = f"\nCurrent pipeline phase: {phase}\n"
+
         if self._last_feedback:
             user = textwrap.dedent(f"""
                 Your previous diff was rejected by the gate:
@@ -251,6 +268,12 @@ class Pipeline:
         until MAX_RETRIES, then HALT. On pass: measure focus/scope + intent L1/L2
         (optional host semantic_verdict), enforce the intent gate.
         """
+        # Pipeline enforcer: check phase transition
+        if self.enforcer and self.task_id:
+            check = self.enforcer.can_enter(self.task_id, "IMPLEMENT")
+            if not check.allowed and check.current_phase not in (None, "PENDING", "BLOCKED"):
+                print(f"[CONDUCTOR] (!) Pipeline: {check.reason}")
+
         (MEMORY_DIR / "implementer_output.txt").write_text(diff, encoding="utf-8")
         try:
             self.registry.run_all(diff)
@@ -353,6 +376,86 @@ class Pipeline:
             {self.diff}
         """).strip()
         return AgentPrompt(system=_read_agent_prompt("reviewer"), user=user)
+
+    # ── CONTEXT-GUARD ──────────────────────────────────────────────────────
+
+    def context_guard_prompt(self) -> AgentPrompt:
+        """Prompt for the host to run the context-guard audit."""
+        user = textwrap.dedent(f"""
+            Task: {self.task}
+            Scan all changes and record an audit trail.
+            Diff (for context):
+            {self.diff[:3000]}
+        """).strip()
+        return AgentPrompt(system=_read_agent_prompt("context-guard"), user=user)
+
+    def submit_context_guard(self, audit_report: str) -> PhaseResult:
+        """Record context-guard audit. No gate check — purely informational."""
+        if self.enforcer and self.task_id:
+            self.enforcer.mark_complete(
+                self.task_id, "CONTEXT_GUARD",
+                agent="context-guard",
+                summary=audit_report[:200],
+                findings=audit_report,
+            )
+        self.results["context_guard"] = "PASS"
+        print("[CONDUCTOR] CONTEXT-GUARD complete")
+        return PhaseResult("PASS")
+
+    # ── CRITIQUE ───────────────────────────────────────────────────────────
+
+    def critique_prompt(self) -> AgentPrompt:
+        """Prompt for the host to run predictive fault analysis."""
+        user = textwrap.dedent(f"""
+            Task: {self.task}
+            Predict emergent bugs from this implementation.
+            Diff:
+            {self.diff[:3000]}
+        """).strip()
+        return AgentPrompt(system=_read_agent_prompt("critique"), user=user)
+
+    def submit_critique(self, critique_report: str) -> PhaseResult:
+        """Record critique findings. Triggers debugger if CRITICAL."""
+        if self.enforcer and self.task_id:
+            verdict = "PASS"
+            if "CRITICAL" in critique_report:
+                verdict = "HARD_FAIL"
+            self.enforcer.mark_complete(
+                self.task_id, "CRITIQUE",
+                agent="critique",
+                summary=critique_report[:200],
+                verdict=verdict,
+                findings=critique_report,
+            )
+            if verdict == "HARD_FAIL":
+                self.results["critique"] = "HARD_FAIL"
+                self.eval_metrics["pipeline_halted"] = True
+                print("[CONDUCTOR] CRITIQUE found CRITICAL issues — debugger recommended")
+                return PhaseResult("HALT", feedback="CRITICAL: " + critique_report[:200])
+        self.results["critique"] = "PASS"
+        print("[CONDUCTOR] CRITIQUE complete")
+        return PhaseResult("PASS")
+
+    # ── DEBUG ──────────────────────────────────────────────────────────────
+
+    def debug_prompt(self) -> AgentPrompt:
+        """Prompt for the debugger agent — called when implementer fails repeatedly."""
+        history_text = ""
+        if self.enforcer and self.task_id:
+            history = self.db.get_task_history(self.task_id)
+            history_text = "\n".join(
+                f"  {e.action}: {e.summary[:80]}" for e in history
+            )
+        user = textwrap.dedent(f"""
+            Task: {self.task}
+            This task has failed multiple times. Diagnose the root cause.
+
+            Event history:
+            {history_text or '(no history)'}
+
+            Last gate feedback: {self._last_feedback or '(none)'}
+        """).strip()
+        return AgentPrompt(system=_read_agent_prompt("debugger"), user=user)
 
     def submit_review(self, findings: str) -> PhaseResult:
         """Evaluate the host's review findings."""

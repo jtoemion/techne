@@ -8,6 +8,12 @@ updated: "2026-06-02"
 
 # ROUTING TABLE — evaluated top-to-bottom, first match wins
 routing:
+  - id: "techne/orchestrator"
+    condition: "implement feature, build feature, add feature, coding task, multi-step, plan, orchestrator, full pipeline, end-to-end, atomic tasks, tdd pipeline"
+    skill_path: "skills/orchestrator.md"
+    weight: 95
+    note: "PRIMARY for non-trivial coding tasks. Routes through multi-agent pipeline."
+
   - id: "techne/diagnose"
     condition: "bug, broken, throwing, failing, regression, not working, debug, diagnose"
     skill_path: "skills/diagnose.md"
@@ -82,6 +88,12 @@ routing:
     skill_path: "productivity/ezra-assistant/SKILL.md"
     weight: 82
     note: "Ezra Theodores' tutoring schedule + attendance workflow. Overlaps with tutor-assistant but Ezra-specific."
+
+  - id: "techne/retro-learn"
+    condition: "retro-learn, reinforcement learning, learn from mistakes, mistake patterns, update discipline, weighted patterns"
+    skill_path: "skills/retro-learn.md"
+    weight: 70
+    note: "Post-pipeline reinforcement learning. Analyzes task_db for patterns."
 
   - id: "techne/implementer"
     condition: "implement, add feature, build, create component, fix, refactor, change"

@@ -9,7 +9,8 @@ description: Harness engineering entry point. Routes to the right sub-skill base
 
 | You're doing... | Load this |
 |---|---|
-| Building a feature or fix | `skills/implementer.md` |
+| **Coding task (2+ steps)** | `skills/orchestrator.md` ← PRIMARY for dev work |
+| Building a single feature or fix | `skills/implementer.md` |
 | Something is broken | `skills/diagnose.md` |
 | Writing tests first | `skills/tdd.md` |
 | Stress-testing a plan | `skills/grill.md` |
@@ -25,6 +26,7 @@ description: Harness engineering entry point. Routes to the right sub-skill base
 | Design-to-dev handoff | `skills/ui-handoff.md` |
 | React + Vite project work | `skills/react-vite.md` |
 | Reviewing agent output | `skills/evaluation.md` |
+| Learning from mistakes (reinforcement) | `skills/retro-learn.md` |
 | Next.js specific rules | `skills/nextjs.md` |
 | TypeScript type errors | `skills/typescript.md` |
 | Svelte/SvelteKit work | `skills/svelte.md` |

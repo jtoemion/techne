@@ -3,7 +3,7 @@
     "id": "r01",
     "input": "diagnose and fix the bug causing login failures",
     "expected_skill": "techne/diagnose",
-    "note": "has 'bug' + 'fix' — diagnose weight 90 beats implementer"
+    "note": "has 'bug' + 'fix' \u2014 diagnose weight 90 beats implementer"
   },
   {
     "id": "r02",
@@ -25,7 +25,7 @@
   },
   {
     "id": "r05",
-    "input": "TDD the AuthService — red green refactor",
+    "input": "TDD the AuthService \u2014 red green refactor",
     "expected_skill": "techne/tdd",
     "note": "all three TDD keywords"
   },
@@ -57,7 +57,7 @@
     "id": "r10",
     "input": "add a redirect in middleware for unauthenticated users",
     "expected_skill": "techne/nextjs-rules",
-    "note": "'redirect' + 'middleware' — both nextjs keywords"
+    "note": "'redirect' + 'middleware' \u2014 both nextjs keywords"
   },
   {
     "id": "r11",
@@ -69,7 +69,7 @@
     "id": "r12",
     "input": "debug the broken auth hook that is failing",
     "expected_skill": "techne/diagnose",
-    "note": "'broken' + 'failing' — diagnose keywords, weight 90"
+    "note": "'broken' + 'failing' \u2014 diagnose keywords, weight 90"
   },
   {
     "id": "r13",
@@ -80,14 +80,14 @@
   {
     "id": "r14",
     "input": "implement the sale badge feature for the product card",
-    "expected_skill": "techne/implementer",
-    "note": "'implement' + 'add feature' — implementer keywords"
+    "expected_skill": "techne/orchestrator",
+    "note": "orchestrator is PRIMARY for coding tasks"
   },
   {
     "id": "r15",
     "input": "refactor the checkout logic and fix the change handler",
     "expected_skill": "techne/implementer",
-    "note": "'refactor' + 'fix' + 'change' — implementer keywords"
+    "note": "'refactor' + 'fix' + 'change' \u2014 implementer keywords"
   },
   {
     "id": "r16",
@@ -99,13 +99,13 @@
     "id": "r17",
     "input": "debug the regression - the product listing is broken and failing",
     "expected_skill": "techne/diagnose",
-    "note": "'regression' + 'broken' + 'failing' — diagnose keywords"
+    "note": "'regression' + 'broken' + 'failing' \u2014 diagnose keywords"
   },
   {
     "id": "r18",
     "input": "build the new WhatsApp button and implement the feature",
-    "expected_skill": "techne/implementer",
-    "note": "'build' + 'implement' — implementer keywords"
+    "expected_skill": "techne/orchestrator",
+    "note": "orchestrator is PRIMARY for coding tasks"
   },
   {
     "id": "r19",
@@ -123,43 +123,43 @@
     "id": "r21",
     "input": "check the pull request for failing checks and review comments",
     "expected_skill": "techne/check-pr",
-    "note": "check + pull + request + review + comments — check-pr (one 'failing' alone is below diagnose threshold)"
+    "note": "check + pull + request + review + comments \u2014 check-pr (one 'failing' alone is below diagnose threshold)"
   },
   {
     "id": "r22",
     "input": "address the review feedback before we merge",
     "expected_skill": "techne/check-pr",
-    "note": "review + feedback + address + merge — check-pr beats grill's single 'review' match"
+    "note": "review + feedback + address + merge \u2014 check-pr beats grill's single 'review' match"
   },
   {
     "id": "r23",
     "input": "optimize the pull request until greptile gives a perfect score",
     "expected_skill": "techne/greploop",
-    "note": "optimize + pull + request + greptile + perfect + score — greploop"
+    "note": "optimize + pull + request + greptile + perfect + score \u2014 greploop"
   },
   {
     "id": "r24",
     "input": "iterate the pull request review with greploop",
     "expected_skill": "techne/greploop",
-    "note": "greploop + iterate + pull + request — distinctive greploop keywords"
+    "note": "greploop + iterate + pull + request \u2014 distinctive greploop keywords"
   },
   {
     "id": "r25",
     "input": "prototype this state machine so I can play with it",
     "expected_skill": "techne/prototype",
-    "note": "prototype + state + play — prototype branch"
+    "note": "prototype + state + play \u2014 prototype branch"
   },
   {
     "id": "r26",
     "input": "mock up a few different designs for the dashboard",
     "expected_skill": "techne/prototype",
-    "note": "mock + designs — prototype UI branch"
+    "note": "mock + designs \u2014 prototype UI branch"
   },
   {
     "id": "r27",
     "input": "find refactoring opportunities to deepen these modules",
     "expected_skill": "techne/improve-architecture",
-    "note": "refactoring + opportunities + deepen + module(s) — beats implementer's single 'refactor'"
+    "note": "refactoring + opportunities + deepen + module(s) \u2014 beats implementer's single 'refactor'"
   },
   {
     "id": "r28",

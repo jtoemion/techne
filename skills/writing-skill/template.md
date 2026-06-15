@@ -10,7 +10,10 @@ description: Copy-paste scaffold for a new Techne skill. Fill in the blanks, del
 ```markdown
 ---
 name: <name>
-description: <one sentence: what it does + when to use it>
+description: >
+  Use when <trigger condition A>, <trigger condition B>, or <trigger condition C>.
+  Even if the user doesn't say "<domain keyword>" directly.
+  Not for <near-miss — what this skill does NOT handle>.
 triggers:
   - <phrase that triggers this skill>
   - <another trigger phrase>
@@ -24,7 +27,7 @@ triggers:
 <code block or compact table — the thing a reader needs immediately>
 ```
 
-[Optional: one-sentence context if truly necessary]
+[One-sentence context only if truly necessary]
 
 ## <Section 2 — examples or patterns>
 
@@ -38,10 +41,17 @@ triggers:
 <rules that don't have gates, but retro will flag>
 ```
 
+## Gotchas
+
+```
+- <Concrete mistake the agent makes without being told — specific, not general>
+- <Another. Add one each time a retro reveals a recurring failure.>
+```
+
 ## Next Steps
 
-- <next situation> → `skills/<related>.md`
-- <next situation> → `skills/<related>/<sub>.md`
+- <next situation — name the trigger condition> → `skills/<related>.md`
+- <need depth on X?> → `skills/<name>/<topic>.md`
 - <done with this?> → back to `skills/<parent>.md`
 ```
 
@@ -52,7 +62,7 @@ triggers:
 ```markdown
 ---
 name: <name>/<topic>
-description: <focused single topic. Load when X situation arises.>
+description: <Focused single topic. Load when <specific situation> arises.>
 ---
 
 # <Topic>
@@ -69,10 +79,11 @@ description: <focused single topic. Load when X situation arises.>
 <concrete>
 ```
 
-## Common Mistakes
+## Gotchas
 
 ```
-<what goes wrong and why>
+- <Mistake specific to this sub-topic>
+- <Another>
 ```
 
 ## Next Steps
@@ -105,7 +116,7 @@ description: <X> rules. Hard gates reject diffs that violate these.
 ## Soft Rules (no gate)
 
 ```
-# weight: medium
+# weight: medium | gate: no
 <rule>  → <short description>
 ```
 
@@ -113,7 +124,7 @@ description: <X> rules. Hard gates reject diffs that violate these.
 
 ```typescript
 // <pattern name>
-<code>
+<working code — not pseudocode>
 ```
 
 ## Next Steps
@@ -149,3 +160,4 @@ description: <X> rules. Hard gates reject diffs that violate these.
 - Template filled in, ready to validate? → `skills/writing-skill/checklist.md`
 - Need to add a gate for a hard rule? → `harness/gates.py` (follow existing pattern)
 - Need newspaper logic explained? → `skills/writing-skill.md`
+- Testing whether the skill helps? → `skills/evaluation.md`
