@@ -354,6 +354,14 @@ def has_pending_proposals() -> int:
     return sum(1 for p in proposals if not p["applied"])
 
 
+def auto_apply_pending() -> dict:
+    """
+    Apply all pending proposals without confirmation.
+    Returns summary dict. Used by the conductor's retro phase.
+    """
+    return review_and_apply(auto=True)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Apply retro proposals to skill files")
     parser.add_argument("--dry-run", action="store_true", help="Show proposals, apply nothing")
