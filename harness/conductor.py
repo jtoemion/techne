@@ -39,9 +39,8 @@ import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from gates import GateViolation
 from gate_registry import GateRegistry
-from sha_gate import gate_test_output
+from enforcement import run_gates, measure_scope, verify_tests
 from mistakes import log_mistake, check_relevant, count_active
 from evaluator import evaluate_pipeline_run, EvalReport, load_eval_history as _load_eval_history, _trend
 from task_db import TaskDB
@@ -56,8 +55,6 @@ from checkpoint import (
 )
 from router import route, get_always_loaded, get_common_loaded
 from session import new_session
-from measure import run_measurements
-from intent_reasoner import verdict_to_gate
 from apply_retro import has_pending_proposals, auto_apply_pending
 
 HARNESS_DIR = Path(__file__).parent        # techne/harness/
@@ -275,47 +272,44 @@ class Pipeline:
                 print(f"[CONDUCTOR] (!) Pipeline: {check.reason}")
 
         (MEMORY_DIR / "implementer_output.txt").write_text(diff, encoding="utf-8")
-        try:
-            self.registry.run_all(diff)
-            log_gate_pass("all_gates" if self.retries_used == 0 else "all_gates_retry")
-            print("[CONDUCTOR] IMPLEMENT passed all gates")
-        except GateViolation as e:
-            gate_name = str(e).split("[")[1].split("]")[0] if "[" in str(e) else "unknown"
-            log_gate_fail(gate_name, str(e))
+        gate = run_gates(diff, self.registry)
+        if not gate.passed:
+            log_gate_fail(gate.gate_name, gate.violation)
             log_mistake(
-                phase="IMPLEMENT", error=str(e)[:200],
-                cause="agent violated skill rule", lesson="pending retro", gate=gate_name,
+                phase="IMPLEMENT", error=gate.violation[:200],
+                cause="agent violated skill rule", lesson="pending retro", gate=gate.gate_name,
             )
             self.retries_used += 1
             self.eval_metrics["gate_violations"] += 1
             self.eval_metrics["retries_used"] = self.retries_used
-            self._last_feedback = str(e)
+            self._last_feedback = gate.violation
             if self.retries_used >= MAX_RETRIES:
                 self.eval_metrics["pipeline_halted"] = True
                 self.results["implement"] = "FAIL"
                 print(f"[CONDUCTOR] IMPLEMENT halted after {MAX_RETRIES} attempts")
-                return PhaseResult("HALT", feedback=str(e))
-            print(f"[CONDUCTOR] IMPLEMENT gate failed (attempt {self.retries_used}): {e}")
-            return PhaseResult("RETRY", feedback=str(e))
+                return PhaseResult("HALT", feedback=gate.violation)
+            print(f"[CONDUCTOR] IMPLEMENT gate failed (attempt {self.retries_used}): {gate.violation}")
+            return PhaseResult("RETRY", feedback=gate.violation)
+
+        log_gate_pass("all_gates" if self.retries_used == 0 else "all_gates_retry")
+        print("[CONDUCTOR] IMPLEMENT passed all gates")
 
         # Gates passed — record diff and run measurements
         self._last_feedback = ""
         self.diff = diff
         self.results["implement"] = "PASS"
 
-        measurements = run_measurements(self.task, diff, semantic_verdict=semantic_verdict)
-        self.eval_metrics["diff_focused"] = measurements["diff_focused"]
-        self.eval_metrics["scope_creep"] = measurements["scope_creep"]
+        scope = measure_scope(self.task, diff, semantic_verdict=semantic_verdict)
+        self.eval_metrics["diff_focused"] = scope.diff_focused
+        self.eval_metrics["scope_creep"] = scope.scope_creep
 
-        intent = measurements["_intent"]
+        intent = scope.intent
         l1_score = intent.get("l1_score", 0.0)
         print(f"[CONDUCTOR] Intent check: {intent['warning']}"
               + (" (!)" if l1_score < 0.5 else ""))
 
-        try:
-            verdict_to_gate(intent, self.task)   # MISMATCH >= 70% -> GateViolation
-        except GateViolation as eg:
-            print(f"[CONDUCTOR] (!) Intent gate: {eg}")
+        if scope.intent_mismatch:
+            print(f"[CONDUCTOR] (!) Intent gate: {scope.violation}")
             self.eval_metrics["diff_focused"] = False
             self.eval_metrics["pipeline_halted"] = True
             self.results["implement"] = "FAIL"
@@ -324,7 +318,7 @@ class Pipeline:
                 cause=intent.get("reason", ""), lesson="diff did not implement the stated task",
                 gate="intent",
             )
-            return PhaseResult("HALT", feedback=str(eg), detail={"intent": intent})
+            return PhaseResult("HALT", feedback=scope.violation, detail={"intent": intent})
 
         return PhaseResult("PASS", detail={"intent": intent})
 
@@ -343,18 +337,14 @@ class Pipeline:
 
     def submit_verification(self, test_output: str) -> PhaseResult:
         """Persist host test output, run the SHA gate, mark verified."""
-        (MEMORY_DIR / "test_output.txt").write_text(test_output, encoding="utf-8")
-        try:
-            sha = gate_test_output(
-                test_output_path=str(MEMORY_DIR / "test_output.txt"),
-                run_log_path=str(MEMORY_DIR / "run_log.json"),
-            )
-        except Exception as e:
+        verify = verify_tests(test_output, memory_dir=MEMORY_DIR)
+        if not verify.passed:
             self.results["verify"] = "FAIL"
             self.eval_metrics["pipeline_halted"] = True
-            print(f"[CONDUCTOR] VERIFY SHA gate failed: {e}")
-            return PhaseResult("HALT", feedback=str(e))
+            print(f"[CONDUCTOR] VERIFY SHA gate failed: {verify.error}")
+            return PhaseResult("HALT", feedback=verify.error)
 
+        sha = verify.sha
         log_gate_pass("sha_gate")
         mark_verified(sha)
         self.sha = sha

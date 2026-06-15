@@ -61,6 +61,7 @@ from pipeline_enforcer import PipelineEnforcer, PHASE_DESCRIPTIONS
 from reward_log import RewardLog
 from prompt_evolution import PromptEvolution
 from gate_evolution import GateEvolution
+from enforcement import build_registry, run_gates, measure_scope, verify_tests
 
 HARNESS_DIR = Path(__file__).parent
 ROOT = HARNESS_DIR.parent
@@ -110,6 +111,10 @@ class OrchestratorLoop:
         self._retry_counts: dict[str, int] = {}  # task_id -> total retries
         self._impl_retry_counts: dict[str, int] = {}  # task_id -> impl retries
 
+        # Deterministic enforcement core — the SAME gates/measure/SHA that
+        # conductor runs. Built once; feeds real signals into the reward log.
+        self.registry = build_registry()
+
         # RL components
         self.reward_log = reward_log or RewardLog()
         self.evolution = PromptEvolution(self.reward_log)
@@ -120,6 +125,10 @@ class OrchestratorLoop:
         self._review_findings: dict[str, list[str]] = {}        # task_id -> findings
         self._task_type: dict[str, str] = {}                    # task_id -> type
         self._variant_used: dict[str, str] = {}                 # task_id -> variant name
+        # Real enforcement signals captured per task, fed to reward at DONE
+        self._gate_pass: dict[str, bool] = {}                   # task_id -> gates passed
+        self._scope_clean: dict[str, bool] = {}                 # task_id -> scope clean
+        self._test_pass: dict[str, bool] = {}                   # task_id -> SHA gate passed
 
     def has_work(self, task_id: str) -> bool:
         """Check if a task still has phases to run."""
@@ -225,6 +234,30 @@ class OrchestratorLoop:
             return LoopOutcome(
                 action=LoopAction.RETRY, phase="IMPLEMENT", task_id=task_id,
                 message=f"Implementer produced no valid diff (attempt {self._impl_retry_counts[task_id]})",
+            )
+
+        # ── Real deterministic enforcement (the merge with conductor) ──────
+        # Run the same hard gates and intent/scope measurement conductor runs,
+        # so the RL reward signal reflects real enforcement, not hardcoded True.
+        gate = run_gates(diff, self.registry)
+        task_text = f"{task.title} {task.description}".strip()
+        scope = measure_scope(task_text, diff)
+        self._gate_pass[task_id] = gate.passed
+        self._scope_clean[task_id] = scope.scope_clean
+
+        if not gate.passed or scope.intent_mismatch:
+            reason = gate.violation if not gate.passed else scope.violation
+            name = gate.gate_name if not gate.passed else "intent"
+            self._impl_retry_counts[task_id] = self._impl_retry_counts.get(task_id, 0) + 1
+            total = self._retry_counts.get(task_id, 0) + 1
+            self._retry_counts[task_id] = total
+            if total >= MAX_TOTAL_RETRIES:
+                return self._escalate_to_debugger(
+                    task_id, f"gate '{name}' failing after max retries"
+                )
+            return LoopOutcome(
+                action=LoopAction.RETRY, phase="IMPLEMENT", task_id=task_id,
+                message=f"Gate [{name}] failed: {reason[:120]}",
             )
 
         # Record implementation
@@ -355,17 +388,14 @@ class OrchestratorLoop:
         )
 
     def _submit_verify(self, task_id: str, test_output: str) -> LoopOutcome:
-        """Process test output. Done if tests pass, retry or escalate if not."""
-        has_pass = any(
-            kw in test_output.lower()
-            for kw in ["pass", "ok", "success", "0 errors", "0 failures"]
-        )
-        has_fail = any(
-            kw in test_output.lower()
-            for kw in ["fail", "error", "traceback", "exception"]
-        )
+        """Process test output. Done if the SHA gate passes, retry/escalate if not."""
+        # Real verification — the SHA gate confirms tests actually ran (no fakes,
+        # unique hash, pass indicators present), the same gate conductor uses.
+        verify = verify_tests(test_output)
+        has_pass = verify.passed
+        self._test_pass[task_id] = verify.passed
 
-        if has_fail and not has_pass:
+        if not verify.passed:
             self._retry_counts[task_id] = self._retry_counts.get(task_id, 0) + 1
 
             if self._retry_counts[task_id] >= MAX_TOTAL_RETRIES:
@@ -414,11 +444,11 @@ class OrchestratorLoop:
             task_id=task_id,
             task_type=task_type,
             prompt_variant=variant,
-            gate_pass=True,  # if we got here, gates passed
-            test_pass=has_pass,
+            gate_pass=self._gate_pass.get(task_id, True),    # real: hard gates
+            test_pass=self._test_pass.get(task_id, has_pass),  # real: SHA gate
             review_findings=review_finds,
             critique_predictions=critique_preds,
-            scope_clean=True,  # TODO: get from context-guard
+            scope_clean=self._scope_clean.get(task_id, True),  # real: focus/scope/intent
             attempt_count=task.attempt if task else 1,
         )
 
@@ -597,7 +627,11 @@ if __name__ == "__main__":
     # Simulate: implement
     prompt = loop.get_prompt(t.id, "IMPLEMENT")
     print(f"Prompt system: {len(prompt['system'])} chars")
-    result = loop.submit(t.id, "IMPLEMENT", "--- a/test.py\n+++ b/test.py\n@@ -1 +1 @@\n-old\n+new")
+    impl_diff = (
+        "--- a/rate_limiter.py\n+++ b/rate_limiter.py\n@@ -1 +1,3 @@\n"
+        "-old\n+def rate_limiter(rate):\n+    # token-bucket limiter\n+    return rate\n"
+    )
+    result = loop.submit(t.id, "IMPLEMENT", impl_diff)
     print(f"After implement: action={result.action.value} message={result.message}")
 
     # Simulate: context-guard
@@ -613,8 +647,14 @@ if __name__ == "__main__":
         result = loop.submit(t.id, "REVIEW", "REVIEW RESULT: PASS\nNo findings")
         print(f"After review: action={result.action.value}")
 
-        # Simulate: verify (pass)
-        result = loop.submit(t.id, "VERIFY", "All tests pass, 0 failures")
+        # Simulate: verify (pass) — must satisfy the real SHA gate
+        verify_output = (
+            "============================= test session starts =============================\n"
+            "collected 12 items\n\n"
+            "tests/test_rate_limiter.py ............                                  [100%]\n\n"
+            "============================== 12 passed in 0.04s ==============================\n"
+        )
+        result = loop.submit(t.id, "VERIFY", verify_output)
         print(f"After verify: action={result.action.value}")
     else:
         print(f"Task blocked for HITL: {result.question}")

@@ -81,7 +81,7 @@ def gate_test_output(
     # Warn if hash is identical to the previous run
     if log and log[-1].get("test_output_hash") == file_hash:
         print(
-            f"[SHA GATE] ⚠ Hash identical to previous run ({file_hash[:16]}...) — "
+            f"[SHA GATE] (!) Hash identical to previous run ({file_hash[:16]}...) -- "
             "verify the agent is not reusing cached output"
         )
 
@@ -96,5 +96,5 @@ def gate_test_output(
     os.makedirs(os.path.dirname(run_log_path), exist_ok=True)
     json.dump(log, open(run_log_path, "w", encoding="utf-8"), indent=2)
 
-    print(f"[SHA GATE] ✓ passed — hash: {file_hash[:16]}...")
+    print(f"[SHA GATE] passed -- hash: {file_hash[:16]}...")
     return file_hash
