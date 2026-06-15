@@ -26,11 +26,12 @@ techne/
   skills/               ← skill cards (orchestrator, tdd, diagnose, etc.)
   agents/               ← agent definitions (implementer, reviewer, etc.)
   harness/              ← the engine
-    conductor.py        ← Pipeline class (host-driven state machine)
+    enforcement.py      ← SHARED deterministic core (gates/scope/SHA) — both drivers use it
+    conductor.py        ← Pipeline driver: single-task, turn-by-turn (delegates to enforcement)
+    orchestrator_loop.py ← Pipeline driver: multi-task loop + RL (delegates to enforcement)
     task_db.py          ← SQLite task + event database
     pipeline_enforcer.py ← phase transition state machine
-    orchestrator_loop.py ← pipeline loop driver + RL integration
-    reward_log.py       ← composite reward tracking
+    reward_log.py       ← composite reward tracking (real signals from enforcement)
     prompt_evolution.py ← prompt variant selection
     gate_evolution.py   ← auto-gate from patterns
     gate_registry.py    ← extensible gate registry
@@ -76,13 +77,25 @@ Per run (after all tasks):
 
 | Module | Status | What it does |
 |--------|--------|--------------|
+| enforcement.py | ✓ solid | Shared core: run_gates / measure_scope / verify_tests (both drivers) |
 | task_db.py | ✓ solid | SQLite task + event tracking |
 | pipeline_enforcer.py | ✓ solid | Phase state machine, HITL blocking |
-| orchestrator_loop.py | ✓ solid | Loop driver, RL integration |
-| reward_log.py | ✓ solid | Composite scoring, cross-agent |
+| conductor.py | ✓ solid | Single-task driver, delegates to enforcement.py |
+| orchestrator_loop.py | ✓ solid | Multi-task loop + RL, real gate/SHA signals via enforcement.py |
+| reward_log.py | ✓ solid | Composite scoring, cross-agent, real signals |
 | prompt_evolution.py | ✓ works | Variant selection, basic evolution |
 | gate_evolution.py | ✓ works | Pattern → regex → gate generation |
 | pipeline_hooks.py | ✓ solid | Gate hooks for enforcement |
+
+### The merge (2026-06-15)
+
+conductor and orchestrator_loop were two drivers over the same pipeline, but
+only conductor ran real deterministic checks; the RL loop fed hardcoded
+`gate_pass=True` / `scope_clean=True` into the reward log. `enforcement.py`
+now holds the three checks both need (`run_gates`, `measure_scope`,
+`verify_tests`); conductor delegates to it (behavior-preserving) and the loop
+records the **real** gate / SHA / scope signals. `synthetic_bootstrap.py`
+seeds the real `rewards.db` so evolution has signal from the first run.
 
 ## What's Weak (patch these)
 
@@ -180,19 +193,22 @@ templates = [
 # Verify everything imports
 cd techne/
 python -c "import sys; sys.path.insert(0, 'harness');
+from enforcement import run_gates, measure_scope, verify_tests;
 from task_db import TaskDB; from pipeline_enforcer import PipelineEnforcer;
 from orchestrator_loop import OrchestratorLoop; from reward_log import RewardLog;
 from prompt_evolution import PromptEvolution; from gate_evolution import GateEvolution;
-from synthetic_bootstrap import SyntheticBootstrap;
+from synthetic_bootstrap import SyntheticBootstrap; from conductor import Pipeline;
 print('All OK')"
 
-# Bootstrap RL with synthetic data (run this FIRST)
+# Bootstrap RL with synthetic data (run this FIRST — seeds memory/rewards.db, idempotent)
 python harness/synthetic_bootstrap.py
 
-# Run evals
+# Run the test suite (114 pass) and evals (73/73)
+python -m pytest tests/ -q
 python tests/evals/run_evals.py
 
-# Smoke test the loop
+# Smoke test the drivers (real gates + SHA gate run)
+python harness/enforcement.py
 python harness/orchestrator_loop.py
 ```
 
