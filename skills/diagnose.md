@@ -66,6 +66,26 @@ If you can't state the prediction, the hypothesis is a guess — discard it.
 - [ ] Root cause in commit message
 ```
 
+## Anti-Patterns — Commit Review Trap
+
+**The bug:** Reviewing only the *current* file state (what is) instead of the *commit delta* (what changed).
+
+A commit message can say "fix X" but the diff may show the fix was never applied — the change was described but not executed. Reading `read_file` of HEAD after the commit misses this entirely.
+
+**Signs you're falling into the trap:**
+- You read `git log` and trust the commit subject
+- You say "the fix was already applied" without running `git show HEAD`
+- The commit message mentions specific code changes but your review doesn't verify each hunk
+
+**The right loop:**
+```
+git show HEAD           # see what the commit actually changed
+git show HEAD:file      # see previous version for comparison
+```
+Then verify: does the delta match what the message claims?
+
+**This trap is especially dangerous on hotfix commits** — pressure to close the ticket leads to trusting "fix X" without verification.
+
 ## Next Steps
 
 - Have root cause, ready to fix? → `skills/implementer.md`

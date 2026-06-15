@@ -10,10 +10,7 @@ description: Copy-paste scaffold for a new Techne skill. Fill in the blanks, del
 ```markdown
 ---
 name: <name>
-description: >
-  Use when <trigger condition A>, <trigger condition B>, or <trigger condition C>.
-  Even if the user doesn't say "<domain keyword>" directly.
-  Not for <near-miss — what this skill does NOT handle>.
+description: <one sentence: what it does + when to use it>
 triggers:
   - <phrase that triggers this skill>
   - <another trigger phrase>
@@ -27,8 +24,6 @@ triggers:
 <code block or compact table — the thing a reader needs immediately>
 ```
 
-[One-sentence context only if truly necessary]
-
 ## <Section 2 — examples or patterns>
 
 ```
@@ -41,28 +36,19 @@ triggers:
 <rules that don't have gates, but retro will flag>
 ```
 
-## Gotchas
-
-```
-- <Concrete mistake the agent makes without being told — specific, not general>
-- <Another. Add one each time a retro reveals a recurring failure.>
-```
-
 ## Next Steps
 
-- <next situation — name the trigger condition> → `skills/<related>.md`
-- <need depth on X?> → `skills/<name>/<topic>.md`
+- <next situation> → `skills/<related>.md`
+- <next situation> → `skills/<related>/<sub>.md`
 - <done with this?> → back to `skills/<parent>.md`
 ```
-
----
 
 ## Sub-Skill — `skills/<name>/<topic>.md`
 
 ```markdown
 ---
 name: <name>/<topic>
-description: <Focused single topic. Load when <specific situation> arises.>
+description: <focused single topic. Load when X situation arises.>
 ---
 
 # <Topic>
@@ -79,11 +65,10 @@ description: <Focused single topic. Load when <specific situation> arises.>
 <concrete>
 ```
 
-## Gotchas
+## Common Mistakes
 
 ```
-- <Mistake specific to this sub-topic>
-- <Another>
+<what goes wrong and why>
 ```
 
 ## Next Steps
@@ -92,15 +77,12 @@ description: <Focused single topic. Load when <specific situation> arises.>
 - <need more depth?> → `skills/<name>/<other-topic>.md`
 ```
 
----
-
 ## Rule File — `skills/<name>.md` with gates
 
 ```markdown
 ---
 name: <name>
-description: <X> rules. Hard gates reject diffs that violate these.
-             Loaded automatically for every task.
+description: <X> rules. Hard gates reject diffs that violate these. Loaded automatically.
 ---
 
 # <Name> Rules
@@ -116,24 +98,47 @@ description: <X> rules. Hard gates reject diffs that violate these.
 ## Soft Rules (no gate)
 
 ```
-# weight: medium | gate: no
+# weight: medium
 <rule>  → <short description>
 ```
 
 ## Quick Patterns
 
 ```typescript
-// <pattern name>
-<working code — not pseudocode>
+// <pattern name> — working code, not pseudocode
+<code>
 ```
+
+## Discipline Skill — `skills/<name>.md` (rule the model resists)
+
+```markdown
+---
+name: <name>
+description: Use when <symptom of being ABOUT to violate>. WHEN-to-use only — no workflow summary.
+---
+
+# <Name>
+
+<One line: the rule, and that violating the letter violates the spirit.>
+
+## Rationalization Table (built from a watched RED baseline)
+
+| Excuse | Reality |
+|--------|---------|
+| "<verbatim excuse from baseline>" | <the reality that defeats it> |
+
+## Red Flags — STOP
+- "<self-deception phrase>"
+- → all of these mean: stop, comply, do not route around it.
+```
+
+Harden it per `skills/writing-skill/discipline.md` before shipping.
 
 ## Next Steps
 
 - Gate firing? → <what to check>
 - Related type errors? → `skills/<related>.md`
 ```
-
----
 
 ## Router Entry — `harness/skill-router.yaml`
 
@@ -145,19 +150,27 @@ description: <X> rules. Hard gates reject diffs that violate these.
   note: "<optional: why this weight, any collision risk>"
 ```
 
----
-
 ## Test File — `tests/test_<name>.py`
 
 ```python
-# tests/test_<name>.py — copy tests/test_persona_brainstorm.py as base
-# Minimum: test_file_structure, test_router, test_next_steps, test_compact
-# See any existing test file in tests/ for the full pattern
+# Copy test_persona_brainstorm.py. Structural: file_structure, router, next_steps, compact
 ```
+
+## Triggering Eval Set — `evals/<name>-trigger.json`
+
+```json
+[
+  { "query": "realistic should-fire prompt, concrete + messy", "should_trigger": "<name>" },
+  { "query": "near-miss: shares keywords, needs a SIBLING skill", "should_trigger": "<sibling>" },
+  { "query": "near-miss that should stay silent", "should_trigger": false }
+]
+```
+
+One near-miss per sibling skill. The negatives are the test, not the positives.
 
 ## Next Steps
 
-- Template filled in, ready to validate? → `skills/writing-skill/checklist.md`
-- Need to add a gate for a hard rule? → `harness/gates.py` (follow existing pattern)
-- Need newspaper logic explained? → `skills/writing-skill.md`
-- Testing whether the skill helps? → `skills/evaluation.md`
+- Discipline skill — harden it? → `skills/writing-skill/discipline.md`
+- Technique skill — does it work? → `skills/writing-skill/evaluation.md`
+- Ready for structural + wiring review? → `skills/writing-skill/checklist.md`
+- Need the founding / type knob? → `skills/writing-skill.md`

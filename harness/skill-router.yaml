@@ -4,98 +4,139 @@
 # First match on condition wins. Higher weight = higher priority on ties.
 
 version: "1.0"
-updated: "2026-06-02"
+updated: "2026-06-09"
 
 # ROUTING TABLE — evaluated top-to-bottom, first match wins
 routing:
-  - id: "techne/orchestrator"
-    condition: "implement feature, build feature, add feature, coding task, multi-step, plan, orchestrator, full pipeline, end-to-end, atomic tasks, tdd pipeline"
-    skill_path: "skills/orchestrator.md"
-    weight: 95
-    note: "PRIMARY for non-trivial coding tasks. Routes through multi-agent pipeline."
-
-  - id: "techne/diagnose"
+  - id: "diagnose"
     condition: "bug, broken, throwing, failing, regression, not working, debug, diagnose"
     skill_path: "skills/diagnose.md"
     weight: 90
     note: "Always diagnose before attempting a fix. Removed 'error' — too generic, collides with TypeScript routing."
 
-  - id: "techne/writing-skill"
+  - id: "writing-skill"
     condition: "write a skill, create a skill, new skill, skill template, audit skill, refactor skill"
     skill_path: "skills/writing-skill.md"
     weight: 88
     note: "High weight — someone asking to write a skill should land here before tdd/grill."
 
-  - id: "techne/tdd"
+  - id: "tdd"
     condition: "test-first, TDD, red-green-refactor, write tests, test-driven"
     skill_path: "skills/tdd.md"
     weight: 85
 
-  - id: "techne/persona-brainstorm"
+  - id: "persona-brainstorm"
     condition: "persona brainstorm, grill session, client dev dialogue, discover improvement, Ezekiel, Jeremiah, brainstorm session"
     skill_path: "skills/persona-brainstorm.md"
     weight: 85
     note: "Multi-persona discovery loop. Outputs ADRs from real friction."
 
-  - id: "techne/grill"
+  - id: "grill"
     condition: "stress-test plan, challenge design, grill, review approach, before implementing"
     skill_path: "skills/grill.md"
     weight: 80
 
-  - id: "techne/improve-architecture"
+  - id: "improve-architecture"
     condition: "improve architecture, refactoring opportunities, deepen module, more testable, consolidate coupling, architecture review"
     skill_path: "skills/improve-architecture.md"
     weight: 78
     note: "Find deepening opportunities — shallow modules into deep ones. Adopted from mattpocock."
 
-  - id: "techne/prototype"
+  - id: "prototype"
     condition: "prototype, throwaway, mock up, try designs, sanity-check state model, play with it"
     skill_path: "skills/prototype.md"
     weight: 75
     note: "Throwaway code that answers ONE design question. Adopted from mattpocock."
 
-  - id: "techne/check-pr"
+  - id: "check-pr"
     condition: "check pull request, review comments, address review feedback, prepare to merge, pull request status"
     skill_path: "skills/check-pr.md"
     weight: 74
     note: "One-pass PR triage. On a tie with greploop, prefer this (lighter action). Adopted from greptile (MIT)."
 
-  - id: "techne/greploop"
+  - id: "greploop"
     condition: "greploop, optimize pull request, iterate pull request, greptile review, perfect review score"
     skill_path: "skills/greploop.md"
     weight: 72
     note: "Iterate a PR until 5/5 + zero unresolved. Narrow PR-focused /goal. Adopted from greptile (MIT)."
 
-  - id: "techne/nextjs-rules"
+  - id: "evaluation"
+    condition: "evaluate agent output, review agent output, score the output, grade the response, eval the result"
+    skill_path: "skills/evaluation.md"
+    weight: 70
+    note: "Scoring/critiquing an agent's OUTPUT quality. Not PR review (that's check-pr)."
+
+  - id: "webapp-testing"
+    condition: "webapp testing, playwright, headless chromium, browser automation, screenshot rendered html, e2e in the browser, frontend behavior in a browser"
+    skill_path: "skills/webapp-testing/SKILL.md"
+    weight: 65
+    note: "Vendored capability skill (Anthropic). Specific keywords only — generic 'app/web/page/test' substring-matched unrelated tasks (whatsapp, app router). See skills/SOURCES.md — do not edit internals."
+
+  - id: "mcp-builder"
+    condition: "mcp, model context protocol, fastmcp, mcp server, mcp tool, mcp sdk"
+    skill_path: "skills/mcp-builder/SKILL.md"
+    weight: 64
+    note: "Vendored capability skill (Anthropic). 'mcp' is the dominant signal. See skills/SOURCES.md — do not edit internals."
+
+  - id: "ui-grill"
+    condition: "ui-grill, grill the ui, ui design decision, design system, visual direction, component design, ui review"
+    skill_path: "skills/ui-grill.md"
+    weight: 60
+    note: "Stress-test UNDECIDED UI design (force exact hex/spacing/motion). Locks a design before code."
+
+  - id: "ui-craft"
+    condition: "ui-craft, prompt an llm for ui, get better ui from llm, generate ui code, high fidelity ui"
+    skill_path: "skills/ui-craft.md"
+    weight: 58
+    note: "Prompt a model to BUILD UI from an already-locked design. 60-30-10, section-by-section."
+
+  - id: "ui-physics"
+    condition: "ui-physics, define the math, define the physics, too vague, generic ai output, design tokens, exact values"
+    skill_path: "skills/ui-physics.md"
+    weight: 57
+    note: "The specificity STANDARD (exact hex/ms/px/easing). Prerequisite for ui-craft and ui-grill."
+
+  - id: "ui-handoff"
+    condition: "ui-handoff, handoff spec, design spec, developer handoff, spec sheet"
+    skill_path: "skills/ui-handoff.md"
+    weight: 56
+    note: "Generate a developer-ready spec from a LOCKED design."
+
+  - id: "nextjs-rules"
     condition: "Next.js, nextjs, app router, page component, middleware, server component, redirect, layout, metadata"
     skill_path: "skills/nextjs.md"
     weight: 50
     note: "Always loaded as context, but explicit match for Next.js-specific tasks"
 
-  - id: "techne/typescript-rules"
+  - id: "typescript-rules"
     condition: "TypeScript, type error, type safety, generics, strict mode"
     skill_path: "skills/typescript.md"
     weight: 50
 
-  - id: "techne/telegram-rulebook"
+  - id: "react-rules"
+    condition: "React, Vite, useEffect, React Query, exhaustive-deps, React hooks"
+    skill_path: "skills/react.md"
+    weight: 50
+    note: "React 19 + Vite pitfalls. NOT Next.js — routing/middleware conventions differ."
+
+  - id: "svelte-rules"
+    condition: "Svelte, SvelteKit, $state, runes, Dexie, +page.svelte"
+    skill_path: "skills/svelte.md"
+    weight: 50
+
+  - id: "telegram-rulebook"
     condition: "telegram behavior, megumi rule, thread routing, telegram session"
     skill_path: "telegram/telegram-rulebook/SKILL.md"
     weight: 95
     note: "Always loaded in Telegram sessions. Thread-to-project routing + tone rules."
 
-  - id: "techne/ezra-assistant"
+  - id: "ezra-assistant"
     condition: "Ezra schedule, Ezra attendance, Ezra student package, BnB LMS tutoring, Ezra reminder"
     skill_path: "productivity/ezra-assistant/SKILL.md"
     weight: 82
     note: "Ezra Theodores' tutoring schedule + attendance workflow. Overlaps with tutor-assistant but Ezra-specific."
 
-  - id: "techne/retro-learn"
-    condition: "retro-learn, reinforcement learning, learn from mistakes, mistake patterns, update discipline, weighted patterns"
-    skill_path: "skills/retro-learn.md"
-    weight: 70
-    note: "Post-pipeline reinforcement learning. Analyzes task_db for patterns."
-
-  - id: "techne/implementer"
+  - id: "implementer"
     condition: "implement, add feature, build, create component, fix, refactor, change"
     skill_path: "skills/implementer.md"
     weight: 30
@@ -104,64 +145,85 @@ routing:
 # DISAMBIGUATION — handle commonly confused skills
 disambiguation:
   - confused:
-      - techne/diagnose
-      - techne/tdd
+      - diagnose
+      - tdd
     rule: |
       diagnose = Something is BROKEN — find root cause before fixing
       tdd = You're BUILDING something new — write tests first
 
   - confused:
-      - techne/grill
-      - techne/tdd
+      - grill
+      - tdd
     rule: |
       grill = Challenge a PLAN before any code is written
       tdd = Execute the plan using test-first development
 
   - confused:
-      - techne/grill
-      - techne/persona-brainstorm
+      - grill
+      - persona-brainstorm
     rule: |
       grill              = SOLO. Single agent challenges a known plan against the codebase.
       persona-brainstorm = MULTI-PERSONA. Ezekiel/Jeremiah dialogue to DISCOVER improvements
                            from real friction. No plan yet — discovery first.
 
   - confused:
-      - techne/check-pr
-      - techne/greploop
+      - check-pr
+      - greploop
     rule: |
       check-pr = ONE pass. Read the PR, categorize issues, report, optionally fix once.
       greploop = LOOP. Iterate the PR until 5/5 + zero unresolved (max 5 iterations).
 
   - confused:
-      - techne/ezra-assistant
-      - techne/tutor-assistant
+      - ezra-assistant
+      - tutor-assistant
     rule: |
       ezra-assistant    = Ezra THEODORES specifically. Use admin UID 5VjkeLYp6HNUnc2HR4J7g0qkg3q1.
                           Has Ezra's fixed routine, HTML report format, and 8-session package rules.
       tutor-assistant   = Generic tutor. Not Ezra. Use when no specific tutor name is given.
 
   - confused:
-      - techne/prototype
-      - techne/grill
+      - prototype
+      - grill
     rule: |
       prototype = Build throwaway code to ANSWER a design question empirically.
       grill     = Stress-test an already-formed plan against the codebase, by questioning.
 
   - confused:
-      - techne/improve-architecture
-      - techne/grill
+      - improve-architecture
+      - grill
     rule: |
       improve-architecture = FIND deepening opportunities (shallow → deep modules), then grill one.
       grill                = Stress-test a plan you ALREADY have.
 
+  - confused:
+      - grill
+      - ui-grill
+    rule: |
+      grill    = stress-test a general PLAN/approach against the codebase (any domain).
+      ui-grill = stress-test UI DESIGN decisions — colors, spacing, motion — in exact values.
+
+  - confused:
+      - ui-grill
+      - ui-craft
+    rule: |
+      ui-grill = DECIDE/lock an undecided design (ask the human, force the math).
+      ui-craft = PROMPT a model to BUILD UI from an already-locked design.
+
+  - confused:
+      - ui-physics
+      - ui-craft
+    rule: |
+      ui-physics = the specificity STANDARD (exact hex/ms/px vocabulary) — the prerequisite.
+      ui-craft   = the prompting WORKFLOW that applies that standard to generate UI.
+
+  - confused:
+      - tdd
+      - webapp-testing
+    rule: |
+      tdd            = write tests FIRST for code you are building (unit/integration).
+      webapp-testing = drive a RUNNING app in a real browser (Playwright) to verify UI behavior.
+
 # ALWAYS-LOADED — these skills are injected as context for every task
 always_loaded:
   - "skills/nextjs.md"
-  - "skills/typescript.md"
-
-# COMMON-LOADED — fallback context when no specific skill matches.
-# Replaces the old behavior of dumping every .md in skills/.
-# Keep this minimal: each file costs context window.
-common_loaded:
-  - "skills/implementer.md"
   - "skills/typescript.md"

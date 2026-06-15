@@ -1,9 +1,20 @@
 ---
 name: writing-skill/checklist
-description: Pre-publish review for any new or refactored skill. Run through this before committing. Covers structure, newspaper test, description quality, gotchas, activation test, ecosystem wiring, and test coverage.
+description: Pre-publish review for any new or refactored skill. Run through this before committing. Covers structure, newspaper test, ecosystem wiring, and test coverage.
 ---
 
 # Skill Review Checklist
+
+## Type Check (do this first — it sets the rest)
+
+```
+[ ] Type named: discipline/rule/gate OR technique/reference
+[ ] Discipline → hardened per skills/writing-skill/discipline.md
+[ ] Technique  → reasoned + measured per skills/writing-skill/evaluation.md
+[ ] Description matches type (see Description Field below)
+```
+
+Wrong type = the proof and content checks below are checking the wrong things.
 
 ## Newspaper Test (read the first 10 lines)
 
@@ -16,32 +27,6 @@ description: Pre-publish review for any new or refactored skill. Run through thi
 
 If any box is empty → the lead is buried. Move the critical thing to the top.
 
-## Description Quality
-
-```
-[ ] Imperative framing: starts with "Use when..." not "This skill does..."
-[ ] Covers indirect triggers: user might not name the domain directly
-[ ] Near-miss exclusions: states what this skill does NOT handle
-[ ] Err pushy: lists every context where this skill applies
-[ ] Under 1024 characters
-```
-
-Test: read the description cold. Would the agent know to load this skill from a
-realistic user prompt that doesn't use the skill's name? If no → rewrite.
-
-## Activation Test (do this before committing)
-
-Run 5 should-trigger prompts and 3 near-miss prompts that should NOT trigger.
-
-```
-[ ] 5 realistic trigger prompts → skill activates on all 5
-[ ] 3 near-miss prompts (share keywords but need a different skill) → no false triggers
-[ ] If any misfire → revise description, re-test
-```
-
-Near-miss example for writing-skill: "add a gate to harness/gates.py" should
-NOT trigger writing-skill (that's `harness/gates.py` directly or `nextjs.md`).
-
 ## Structure
 
 ```
@@ -49,20 +34,8 @@ NOT trigger writing-skill (that's `harness/gates.py` directly or `nextjs.md`).
 [ ] Each sub-skill ≤ 150 lines
 [ ] Every file ends with ## Next Steps
 [ ] Next Steps chains point forward AND back (not dead ends)
-[ ] Sub-skill Next Steps pointer names the trigger condition, not just the path
 [ ] No prose paragraphs — code blocks, tables, bullet lists only
 [ ] No general documentation — only gotchas, gates, and patterns
-[ ] Defaults: one approach chosen, fallback mentioned only if first fails
-[ ] Method: skill teaches HOW to approach problem class, not answer to one instance
-```
-
-## Gotchas
-
-```
-[ ] Every skill body has a ## Gotchas or ## Common Mistakes section
-[ ] Each gotcha is a concrete correction, not general advice
-[ ] Each gotcha comes from a real retro entry or observed recurring mistake
-[ ] No gotcha says "handle appropriately" or "follow best practices"
 ```
 
 ## Rule Files (nextjs.md, typescript.md pattern)
@@ -75,15 +48,6 @@ NOT trigger writing-skill (that's `harness/gates.py` directly or `nextjs.md`).
 [ ] Quick Patterns section has working code, not pseudocode
 ```
 
-## With / Without Comparison
-
-```
-[ ] Ran the target task WITH the skill loaded
-[ ] Ran the target task WITHOUT the skill loaded
-[ ] Output quality improved OR wasted steps reduced
-[ ] If no difference → skill is adding tokens with no return. Trim or delete.
-```
-
 ## Ecosystem Wiring
 
 ```
@@ -94,6 +58,41 @@ NOT trigger writing-skill (that's `harness/gates.py` directly or `nextjs.md`).
 [ ] docs/adr/ — mentioned if skill creates ADRs
 [ ] SESSION.md — output checklist includes session handoff note
 ```
+
+## Proof It Works (by type — not optional)
+
+Structural tests prove the skill is well-formed, never that it's good.
+RED-first either way: watch the baseline before you trust the skill.
+
+**Discipline / rule / gate skills:**
+```
+[ ] Watched an agent fail the baseline WITHOUT the skill (rationalizations logged)
+[ ] Agent complies WITH the skill under 3 stacked pressures
+[ ] Rationalization table + red-flags list present and built from RED (not imagined)
+[ ] gates.py checked: gate written if diff-visible; NOT stamped gate:yes if it can't fire
+```
+
+**Technique / reference skills:**
+```
+[ ] Ran with-skill vs without-skill on 2-3 realistic prompts
+[ ] with-skill is clearly better (else the skill is dead weight — cut it)
+[ ] No fix that only helps the test cases (overfit check)
+```
+
+**Both:**
+```
+[ ] Triggering eval: fires on should, silent on should-not
+[ ] Near-miss written against each sibling skill it could collide with
+```
+
+## Description Field (CSO, by type)
+
+```
+[ ] Discipline w/ mandatory workflow → WHEN-to-use ONLY, no step summary
+[ ] Technique/reference → what + when, keyword-rich, a touch pushy
+```
+
+See `skills/writing-skill/evaluation.md` and `skills/writing-skill/discipline.md`.
 
 ## Tests (required before committing)
 
@@ -115,22 +114,22 @@ Read the skill as if you just sat down cold with a task.
 [ ] "I know where to go next without scanning the whole file"
 [ ] "There is no sentence I could delete and lose critical info"
 [ ] "There is no sentence I must keep that belongs in a wiki instead"
-[ ] "The gotchas section would have saved me from a mistake I'd have made"
 ```
 
 ## Common Mistakes (from retro log)
 
 ```
-Prose intro before the lead          → reader skips it anyway. Cut it.
-Aspirational rules ("should")        → rewrite as testable gates or delete
-Next Steps missing or vague          → "see documentation" is not a chain
-Sub-skill trigger condition unnamed  → "load when X" must be explicit
-Sub-skill longer than entry          → extract another layer or merge back
-Gate in skill but not in gates.py    → skill is aspirational, not enforced
-No gotchas section                   → agent will make the predictable mistakes
-Description describes implementation → rewrite to describe user intent
-No tests                             → skill is unverifiable, don't merge
-No with/without comparison           → skill may be adding tokens with no value
+Prose intro before the lead       → reader skips it anyway. Cut it.
+MUST in a TECHNIQUE skill          → no adversary there; reframe with the why
+MUST in a DISCIPLINE skill         → legitimate, but a real gate beats it. Promote if gate-able.
+Hard rule left as prose            → unenforced. Promote to gates.py.
+Rationalization table imagined     → must be built from a watched RED baseline
+Description leaks the workflow     → discipline body gets skipped. When-to-use only.
+Fix that only helps the test cases → overfit. Generalize or revert.
+Next Steps missing or vague        → "see documentation" is not a chain
+Sub-skill longer than entry        → extract another layer or merge back
+No baseline watched (RED skipped)  → unproven. Don't merge.
+No tests                           → skill is unverifiable, don't merge
 ```
 
 ## After All Boxes Checked
@@ -143,9 +142,9 @@ No with/without comparison           → skill may be adding tokens with no valu
 
 ## Next Steps
 
+- Discipline skill not yet hardened? → `skills/writing-skill/discipline.md` (do this first)
+- Technique skill not yet measured? → `skills/writing-skill/evaluation.md` (do this first)
 - Checklist passes? → commit and push
 - Gate needed for a rule? → `harness/gates.py` → `ALL_GATES` list
 - Skill feels too long? → apply newspaper test, extract to sub-skill
-- Activation test failing? → revise description, check indirect triggers and near-miss exclusions
-- With/without shows no improvement? → trim to only what the agent would get wrong without it
 - Back to the template? → `skills/writing-skill/template.md`
