@@ -97,6 +97,12 @@ now holds the three checks both need (`run_gates`, `measure_scope`,
 records the **real** gate / SHA / scope signals. `synthetic_bootstrap.py`
 seeds the real `rewards.db` so evolution has signal from the first run.
 
+The loop records a reward at **both** terminal outcomes — DONE (win) and
+retry-exhaustion → escalation (loss) — via `_record_reward()`, so evolution
+trains on failures too (a winning variant scores ~1.0 vs a gate-failing
+variant ~0.5). Composite scores are clamped to [0,1]. Still open: multi-variant
+GRPO (#2) — run N variants per task and pick the winner.
+
 ## What's Weak (patch these)
 
 ### 0. Orchestrator is still host-driven
