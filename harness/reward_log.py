@@ -221,6 +221,13 @@ class RewardLog:
         """, (task_type,)).fetchall()
         return [dict(r) for r in rows]
 
+    def has_task(self, task_id: str) -> bool:
+        """True if a reward has already been recorded for this task_id."""
+        row = self._conn.execute(
+            "SELECT 1 FROM rewards WHERE task_id = ? LIMIT 1", (task_id,)
+        ).fetchone()
+        return row is not None
+
     def all_task_types(self) -> list[str]:
         """All task types seen so far."""
         rows = self._conn.execute(

@@ -374,6 +374,7 @@ class SyntheticBootstrap:
         """
         results = {
             "tasks_scored": 0,
+            "tasks_skipped": 0,
             "good_scores": [],
             "bad_scores": [],
         }
@@ -406,11 +407,12 @@ class SyntheticBootstrap:
                 attempt_count=3,
             )
 
-            # Record both
-            self._record(good)
-            self._record(bad)
-
-            results["tasks_scored"] += 2
+            # Record both — idempotently (skip if this synthetic id is present)
+            for score in (good, bad):
+                if self._record(score):
+                    results["tasks_scored"] += 1
+                else:
+                    results["tasks_skipped"] += 1
             results["good_scores"].append(self._compute_composite(good))
             results["bad_scores"].append(self._compute_composite(bad))
 
@@ -435,8 +437,10 @@ class SyntheticBootstrap:
                     return True
         return False
 
-    def _record(self, score: SyntheticScore):
-        """Record a synthetic score in the reward log."""
+    def _record(self, score: SyntheticScore) -> bool:
+        """Record a synthetic score. Returns False if already seeded (idempotent)."""
+        if self.reward_log.has_task(score.task_id):
+            return False
         self.reward_log.record(
             task_id=score.task_id,
             task_type=score.task_type,
@@ -448,6 +452,7 @@ class SyntheticBootstrap:
             scope_clean=score.scope_clean,
             attempt_count=score.attempt_count,
         )
+        return True
 
     def _compute_composite(self, score: SyntheticScore) -> float:
         """Compute what the composite score would be."""
@@ -466,11 +471,20 @@ class SyntheticBootstrap:
 
 if __name__ == "__main__":
     import os
-    log = RewardLog("/tmp/test_synthetic.db")
+    import sys
+
+    # By default, seed the REAL reward log (memory/rewards.db) so prompt and
+    # gate evolution have signal on the first real pipeline run. Idempotent —
+    # re-running skips already-seeded tasks. Pass --demo for a throwaway DB.
+    demo = "--demo" in sys.argv
+    db_path = "/tmp/test_synthetic.db" if demo else None  # None -> default DEFAULT_DB
+    log = RewardLog(db_path)
     boot = SyntheticBootstrap(log)
 
     results = boot.run()
-    print(f"Tasks scored: {results['tasks_scored']}")
+    print(f"Seeded {results['tasks_scored']} synthetic rewards "
+          f"({results['tasks_skipped']} already present) "
+          f"-> {log.db_path}")
     print(f"Good avg: {sum(results['good_scores'])/len(results['good_scores']):.3f}")
     print(f"Bad avg: {sum(results['bad_scores'])/len(results['bad_scores']):.3f}")
     print(f"\n{log.dashboard()}")
@@ -491,5 +505,6 @@ if __name__ == "__main__":
         print(f"  [{c.source_count}x] {c.pattern[:50]} -> {result.approved}")
 
     log.close()
-    os.remove("/tmp/test_synthetic.db")
+    if demo:
+        os.remove("/tmp/test_synthetic.db")
     print("\nSynthetic bootstrap: OK")

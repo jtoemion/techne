@@ -21,6 +21,7 @@ from enforcement import (  # noqa: E402
 from task_db import TaskDB  # noqa: E402
 from reward_log import RewardLog  # noqa: E402
 from orchestrator_loop import OrchestratorLoop, LoopAction  # noqa: E402
+from synthetic_bootstrap import SyntheticBootstrap  # noqa: E402
 
 
 CLEAN_DIFF = (
@@ -168,3 +169,31 @@ def test_loop_verify_blocks_on_faked_test_output(loop):
     outcome = loop.submit(task.id, "VERIFY", "tests pass")  # too short / faked
     assert outcome.action == LoopAction.BLOCK_HITL
     assert loop._test_pass[task.id] is False
+
+
+# ─── synthetic bootstrap seeds real signal, idempotently ─────────────────────
+
+def test_reward_log_has_task(tmp_path):
+    log = RewardLog(str(tmp_path / "r.db"))
+    assert log.has_task("nope") is False
+    log.record(
+        task_id="seen", task_type="auth", prompt_variant="v1",
+        gate_pass=True, test_pass=True, review_findings=[],
+        critique_predictions=[], scope_clean=True, attempt_count=1,
+    )
+    assert log.has_task("seen") is True
+    log.close()
+
+
+def test_synthetic_bootstrap_is_idempotent(tmp_path):
+    log = RewardLog(str(tmp_path / "r.db"))
+    first = SyntheticBootstrap(log).run()
+    assert first["tasks_scored"] > 0
+    assert first["tasks_skipped"] == 0
+    # Re-running must seed nothing new (no duplicate rows).
+    second = SyntheticBootstrap(log).run()
+    assert second["tasks_scored"] == 0
+    assert second["tasks_skipped"] == first["tasks_scored"]
+    total = log._conn.execute("SELECT COUNT(*) FROM rewards").fetchone()[0]
+    assert total == first["tasks_scored"]
+    log.close()
