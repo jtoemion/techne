@@ -128,7 +128,7 @@ def verify_tests(test_output: str, *, memory_dir: Path | None = None) -> VerifyR
     hash). Returns a VerifyResult — never raises.
     """
     mdir = memory_dir or MEMORY_DIR
-    mdir.mkdir(exist_ok=True)
+    mdir.mkdir(parents=True, exist_ok=True)
     out_path = mdir / "test_output.txt"
     out_path.write_text(test_output, encoding="utf-8")
     try:

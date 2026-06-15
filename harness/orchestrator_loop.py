@@ -224,41 +224,24 @@ class OrchestratorLoop:
         has_diff = bool(diff.strip()) and ("@@ " in diff or "--- " in diff)
 
         if not has_diff:
-            self._impl_retry_counts[task_id] = self._impl_retry_counts.get(task_id, 0) + 1
-            total = self._retry_counts.get(task_id, 0) + 1
-            self._retry_counts[task_id] = total
-
-            if total >= MAX_TOTAL_RETRIES:
-                return self._escalate_to_debugger(task_id, "implementer produced no valid diff after max retries")
-
-            return LoopOutcome(
-                action=LoopAction.RETRY, phase="IMPLEMENT", task_id=task_id,
-                message=f"Implementer produced no valid diff (attempt {self._impl_retry_counts[task_id]})",
+            return self._impl_retry_or_escalate(
+                task_id, "diff", "implementer produced no valid diff"
             )
 
         # ── Real deterministic enforcement (the merge with conductor) ──────
-        # Run the same hard gates and intent/scope measurement conductor runs,
-        # so the RL reward signal reflects real enforcement, not hardcoded True.
+        # Run the same hard gates conductor runs, so the RL reward signal
+        # reflects real enforcement, not hardcoded True. Scope/intent is only
+        # measured once the gates pass — a rejected diff is not advanced.
         gate = run_gates(diff, self.registry)
+        self._gate_pass[task_id] = gate.passed
+        if not gate.passed:
+            return self._impl_retry_or_escalate(task_id, gate.gate_name, gate.violation)
+
         task_text = f"{task.title} {task.description}".strip()
         scope = measure_scope(task_text, diff)
-        self._gate_pass[task_id] = gate.passed
         self._scope_clean[task_id] = scope.scope_clean
-
-        if not gate.passed or scope.intent_mismatch:
-            reason = gate.violation if not gate.passed else scope.violation
-            name = gate.gate_name if not gate.passed else "intent"
-            self._impl_retry_counts[task_id] = self._impl_retry_counts.get(task_id, 0) + 1
-            total = self._retry_counts.get(task_id, 0) + 1
-            self._retry_counts[task_id] = total
-            if total >= MAX_TOTAL_RETRIES:
-                return self._escalate_to_debugger(
-                    task_id, f"gate '{name}' failing after max retries"
-                )
-            return LoopOutcome(
-                action=LoopAction.RETRY, phase="IMPLEMENT", task_id=task_id,
-                message=f"Gate [{name}] failed: {reason[:120]}",
-            )
+        if scope.intent_mismatch:
+            return self._impl_retry_or_escalate(task_id, "intent", scope.violation)
 
         # Record implementation
         self.enforcer.mark_complete(
@@ -466,6 +449,23 @@ class OrchestratorLoop:
         )
 
     # ── Escalation ───────────────────────────────────────────────────────
+
+    def _impl_retry_or_escalate(self, task_id: str, name: str, reason: str) -> LoopOutcome:
+        """
+        Shared IMPLEMENT-failure handling: bump the retry counters and either
+        ask the host to retry, or escalate once the total-retry budget is spent.
+        """
+        self._impl_retry_counts[task_id] = self._impl_retry_counts.get(task_id, 0) + 1
+        total = self._retry_counts.get(task_id, 0) + 1
+        self._retry_counts[task_id] = total
+        if total >= MAX_TOTAL_RETRIES:
+            return self._escalate_to_debugger(
+                task_id, f"'{name}' failing after max retries"
+            )
+        return LoopOutcome(
+            action=LoopAction.RETRY, phase="IMPLEMENT", task_id=task_id,
+            message=f"[{name}] failed (attempt {self._impl_retry_counts[task_id]}): {reason[:120]}",
+        )
 
     def _escalate_to_debugger(self, task_id: str, reason: str) -> LoopOutcome:
         """
