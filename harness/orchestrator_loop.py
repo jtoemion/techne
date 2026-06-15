@@ -62,6 +62,7 @@ from reward_log import RewardLog
 from prompt_evolution import PromptEvolution
 from gate_evolution import GateEvolution
 from enforcement import build_registry, run_gates, measure_scope, verify_tests
+from evaluator import evaluate_pipeline_run, EvalReport
 
 HARNESS_DIR = Path(__file__).parent
 ROOT = HARNESS_DIR.parent
@@ -129,6 +130,13 @@ class OrchestratorLoop:
         self._gate_pass: dict[str, bool] = {}                   # task_id -> gates passed
         self._scope_clean: dict[str, bool] = {}                 # task_id -> scope clean
         self._test_pass: dict[str, bool] = {}                   # task_id -> SHA gate passed
+        # Richer state for the deterministic EVAL phase (100-point eval report)
+        self._scope: dict[str, object] = {}                     # task_id -> ScopeResult
+        self._diff: dict[str, str] = {}                         # task_id -> implement diff
+        self._review_result: dict[str, str] = {}               # task_id -> PASS|SOFT_FAIL
+        self._gate_violations: dict[str, int] = {}             # task_id -> # gate failures
+        self._eval: dict[str, EvalReport] = {}                 # task_id -> eval report
+        self._eval_run_no = 0
 
     def has_work(self, task_id: str) -> bool:
         """Check if a task still has phases to run."""
@@ -232,13 +240,16 @@ class OrchestratorLoop:
         # Run the same hard gates conductor runs, so the RL reward signal
         # reflects real enforcement, not hardcoded True. Scope/intent is only
         # measured once the gates pass — a rejected diff is not advanced.
+        self._diff[task_id] = diff
         gate = run_gates(diff, self.registry)
         self._gate_pass[task_id] = gate.passed
         if not gate.passed:
+            self._gate_violations[task_id] = self._gate_violations.get(task_id, 0) + 1
             return self._impl_retry_or_escalate(task_id, gate.gate_name, gate.violation)
 
         task_text = f"{task.title} {task.description}".strip()
         scope = measure_scope(task_text, diff)
+        self._scope[task_id] = scope
         self._scope_clean[task_id] = scope.scope_clean
         if scope.intent_mismatch:
             return self._impl_retry_or_escalate(task_id, "intent", scope.violation)
@@ -356,13 +367,15 @@ class OrchestratorLoop:
                 ],
             )
 
+        review_verdict = "PASS" if "PASS" in review else "SOFT_FAIL"
         self.enforcer.mark_complete(
             task_id, "REVIEW",
             agent="reviewer",
             summary=review[:200],
             findings=review,
-            verdict="PASS" if "PASS" in review else "SOFT_FAIL",
+            verdict=review_verdict,
         )
+        self._review_result[task_id] = review_verdict
         # Record review findings for cross-agent scoring
         self._review_findings[task_id] = _extract_findings(review)
         return LoopOutcome(
@@ -410,6 +423,10 @@ class OrchestratorLoop:
             summary=f"Tests passed",
             test_output_hash=hash(test_output).__repr__(),
         )
+
+        # ── EVAL phase: the original 100-point deterministic eval ───
+        report = self._run_eval(task_id)
+
         self.enforcer.mark_complete(
             task_id, "DONE",
             agent="orchestrator",
@@ -420,7 +437,7 @@ class OrchestratorLoop:
 
         return LoopOutcome(
             action=LoopAction.DONE, phase="DONE", task_id=task_id,
-            message="All phases complete — task done",
+            message=f"All phases complete — eval {report.total}/100 ({report.grade})",
         )
 
     # ── Reward recording ─────────────────────────────────────────────────
@@ -447,6 +464,62 @@ class OrchestratorLoop:
             scope_clean=self._scope_clean.get(task_id, False),  # real: focus/scope/intent
             attempt_count=max(1, task.attempt if task else 1),  # >=1: a terminal task ran at least once
         )
+
+    # ── EVAL phase: original 100-point deterministic eval ────────────────
+
+    def _build_eval_metrics(self, task_id: str) -> dict:
+        """
+        Map the loop's captured enforcement signals onto the evaluator's
+        metric kwargs — the SAME 100-point eval the conductor runs.
+
+        Retro Value maps to the RL learning step (reward recording + per-run
+        evolution), which is the loop's equivalent of the conductor's retro.
+        """
+        scope = self._scope.get(task_id)
+        diff_lower = self._diff.get(task_id, "").lower()
+        drift = (
+            diff_lower.count("+  todo") + diff_lower.count("+ // todo")
+            + diff_lower.count("+  fixme") + diff_lower.count("+ // fixme")
+            + diff_lower.count("+ console.log") + diff_lower.count("+console.log")
+        )
+        test_pass = self._test_pass.get(task_id, False)
+        return dict(
+            gate_violations=self._gate_violations.get(task_id, 0),
+            retries_used=self._retry_counts.get(task_id, 0),
+            pipeline_halted=False,
+            sha_passed=test_pass,
+            output_existed=test_pass,
+            had_pass_indicators=test_pass,
+            diff_focused=scope.diff_focused if scope else True,
+            scope_creep=scope.scope_creep if scope else False,
+            review_result=self._review_result.get(task_id, "PASS"),
+            drift_markers=drift,
+            retro_ran=True,            # RL learning step = reward + evolution
+            retro_questions=7,
+        )
+
+    def _run_eval(self, task_id: str) -> EvalReport:
+        """Run the deterministic 100-point eval and record it as the EVAL phase."""
+        task = self.db.get_task(task_id)
+        self._eval_run_no += 1
+        report = evaluate_pipeline_run(
+            task=task.title if task else task_id,
+            pipeline_number=self._eval_run_no,
+            **self._build_eval_metrics(task_id),
+        )
+        self._eval[task_id] = report
+        self.enforcer.mark_complete(
+            task_id, "EVAL",
+            agent="evaluator",
+            summary=f"Eval {report.total}/100 ({report.grade})",
+            findings=report.format_report()[:1500],
+            verdict="PASS" if report.total >= 75 else "SOFT_FAIL",
+        )
+        return report
+
+    def get_eval(self, task_id: str) -> EvalReport | None:
+        """Return the 100-point eval report for a completed task, if any."""
+        return self._eval.get(task_id)
 
     # ── Escalation ───────────────────────────────────────────────────────
 

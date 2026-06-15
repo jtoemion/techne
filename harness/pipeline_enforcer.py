@@ -44,6 +44,7 @@ PHASES = [
     "CRITIQUE",
     "REVIEW",
     "VERIFY",
+    "EVAL",
     "DONE",
 ]
 
@@ -58,7 +59,8 @@ TRANSITIONS = {
     "CONTEXT_GUARD":["CRITIQUE", "BLOCKED", "FAILED"],     # audit done → critique, or fail
     "CRITIQUE":     ["REVIEW", "BLOCKED", "FAILED"],       # critique done → review, or fail
     "REVIEW":       ["VERIFY", "BLOCKED", "IMPLEMENT", "FAILED"],  # review: pass→verify, hardfail→re-implement
-    "VERIFY":       ["DONE", "BLOCKED", "IMPLEMENT", "FAILED"],    # verify: pass→done, fail→re-implement
+    "VERIFY":       ["EVAL", "DONE", "BLOCKED", "IMPLEMENT", "FAILED"],  # verify: pass→eval(→done), fail→re-implement
+    "EVAL":         ["DONE", "FAILED"],                     # deterministic 100-pt score → done
     "DONE":         [],                                      # terminal
     "FAILED":       [],                                      # terminal
 }
@@ -70,6 +72,7 @@ PHASE_DESCRIPTIONS = {
     "CRITIQUE": "Predict emergent bugs from the implementation diff",
     "REVIEW": "Security/correctness/gate compliance review",
     "VERIFY": "Run tests, capture real output",
+    "EVAL": "Score the run deterministically (100-point eval report)",
     "DONE": "Task complete",
     "BLOCKED": "Task blocked — needs human input or debugger",
     "FAILED": "Task terminal failure",
@@ -226,6 +229,11 @@ class PipelineEnforcer:
                 test_output_hash=test_output_hash, summary=summary,
             )
             self._overwrite_last_action(task_id, "VERIFY")
+        elif phase == "EVAL":
+            self.db._log_event(
+                task_id, agent, "EVAL", summary[:200],
+                findings=findings, verdict=verdict,
+            )
         elif phase == "DONE":
             self.db.done_task(task_id, agent=agent)
             self._overwrite_last_action(task_id, "DONE")

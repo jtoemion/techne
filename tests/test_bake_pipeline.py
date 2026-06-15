@@ -181,6 +181,53 @@ def test_bake_win_and_loss_separate_in_reward_log(loop):
     assert scores["v_lose"]["gate_passes"] == 0
 
 
+# ── Layer 6: EVAL phase (original 100-point deterministic eval) ──────────────
+
+def test_bake_eval_phase_runs_and_scores(loop):
+    t, outcome = _drive_to_done(loop, CLEAN, GOOD_TESTS)
+    assert outcome.action == LoopAction.DONE
+    report = loop.get_eval(t.id)
+    assert report is not None
+    assert 0 <= report.total <= 100
+    assert set(report.scores) == {
+        "Gate Compliance", "Verification Integrity",
+        "Process Discipline", "Review Quality", "Retro Value",
+    }
+
+
+def test_bake_eval_phase_recorded_in_history(loop):
+    t, _ = _drive_to_done(loop, CLEAN, GOOD_TESTS)
+    actions = [e.action for e in loop.db.get_task_history(t.id)]
+    # The EVAL phase sits between VERIFY and DONE in the trail.
+    assert "EVAL" in actions
+    assert actions.index("VERIFY") < actions.index("EVAL") < actions.index("DONE")
+
+
+def test_bake_eval_clean_run_scores_full(loop):
+    t, _ = _drive_to_done(loop, CLEAN, GOOD_TESTS)
+    assert loop.get_eval(t.id).total == 100
+
+
+def test_bake_eval_reflects_gate_violation(loop):
+    # A gate violation corrected on retry must cost Gate Compliance points.
+    t = loop.db.create_task("add rate_limiter", discipline="implement")
+    assert loop.submit(t.id, "IMPLEMENT", CONSOLE_LOG).action == LoopAction.RETRY
+    loop.submit(t.id, "IMPLEMENT", CLEAN)
+    loop.submit(t.id, "CONTEXT_GUARD", "ok")
+    loop.submit(t.id, "CRITIQUE", "No critical findings")
+    loop.submit(t.id, "REVIEW", "REVIEW RESULT: PASS")
+    loop.submit(t.id, "VERIFY", GOOD_TESTS)
+    report = loop.get_eval(t.id)
+    assert report.scores["Gate Compliance"][0] < 20     # not a perfect gate run
+    assert report.total < 100
+
+
+def test_bake_eval_reflects_scope_creep(loop):
+    t, _ = _drive_to_done(loop, UNRELATED, GOOD_TESTS, task_type="api")
+    report = loop.get_eval(t.id)
+    assert report.scores["Process Discipline"][0] < 20   # scope creep detected
+
+
 # ── Bake report (human-readable) ─────────────────────────────────────────────
 
 def _bake_report():
@@ -223,9 +270,12 @@ def _bake_report():
         print(f"      {v['prompt_variant']:7} score={v['avg_score']:.3f} "
               f"gate_passes={v['gate_passes']} test_passes={v['test_passes']}")
 
-    print("-" * 64)
-    print("eval scoring (100-pt EvalReport): NOT in the RL loop by design —")
-    print("the RL loop's composite reward above replaces it (conductor still uses it).")
+    # Layer 6: EVAL phase — the original 100-point deterministic eval
+    rep = loop.get_eval(t.id)
+    print(f"[6] EVAL phase     {rep.total}/100 ({rep.grade}) — original 100-pt eval, now a phase")
+    for dim, (sc, _r) in rep.scores.items():
+        print(f"      {dim:24} {sc}/20")
+
     print("=" * 64)
     db.close()
 
