@@ -376,7 +376,9 @@ def _composite_score(
     test = 1.0 if test_pass else 0.0
     review = 1.0 if not review_findings else max(0.0, 1.0 - len(review_findings) * 0.2)
     scope = 1.0 if scope_clean else 0.0
-    attempts = max(0.0, 1.0 - (attempt_count - 1) * 0.25)  # 1 attempt=1.0, 2=0.75, 3=0.5, 4=0.25
+    # 1 attempt=1.0, 2=0.75, 3=0.5, 4=0.25; clamp to [0,1] so the composite
+    # invariant holds even if a caller passes attempt_count < 1.
+    attempts = max(0.0, min(1.0, 1.0 - (attempt_count - 1) * 0.25))
 
     return (
         WEIGHTS["gate_pass"] * gate +

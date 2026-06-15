@@ -160,6 +160,33 @@ def test_loop_full_run_records_real_reward(loop):
     assert rows[0]["scope_clean"] == 1
 
 
+def test_loop_records_loss_on_escalation(loop):
+    """A task that exhausts retries must train the loop too, not just wins."""
+    task = loop.db.create_task("add a debug widget", discipline="implement")
+    outcome = None
+    for _ in range(5):  # MAX_TOTAL_RETRIES gate failures -> escalate
+        outcome = loop.submit(task.id, "IMPLEMENT", CONSOLE_LOG_DIFF)
+    assert outcome.action == LoopAction.BLOCK_HITL  # escalated to debugger
+    rows = loop.reward_log._conn.execute(
+        "SELECT gate_pass, test_pass FROM rewards WHERE task_id = ?",
+        (task.id,),
+    ).fetchall()
+    assert len(rows) == 1               # one loss recorded at escalation, not per-retry
+    assert rows[0]["gate_pass"] == 0    # real failure signal
+    assert rows[0]["test_pass"] == 0    # never reached verify
+
+
+def test_loop_does_not_record_reward_on_in_budget_retry(loop):
+    """Retries within budget are not terminal — no reward until DONE or escalation."""
+    task = loop.db.create_task("add a debug widget", discipline="implement")
+    outcome = loop.submit(task.id, "IMPLEMENT", CONSOLE_LOG_DIFF)
+    assert outcome.action == LoopAction.RETRY
+    count = loop.reward_log._conn.execute(
+        "SELECT COUNT(*) FROM rewards WHERE task_id = ?", (task.id,)
+    ).fetchone()[0]
+    assert count == 0
+
+
 def test_loop_verify_blocks_on_faked_test_output(loop):
     task = loop.db.create_task("add rate_limiter", discipline="implement")
     loop.submit(task.id, "IMPLEMENT", CLEAN_DIFF)
@@ -172,6 +199,20 @@ def test_loop_verify_blocks_on_faked_test_output(loop):
 
 
 # ─── synthetic bootstrap seeds real signal, idempotently ─────────────────────
+
+def test_composite_score_stays_within_unit_interval():
+    from reward_log import _composite_score
+    # Degenerate attempt_count=0 must not push the composite above 1.0.
+    best = _composite_score(
+        gate_pass=True, test_pass=True, review_findings=[],
+        critique_accuracy=1.0, scope_clean=True, attempt_count=0,
+    )
+    worst = _composite_score(
+        gate_pass=False, test_pass=False, review_findings=["a", "b", "c", "d", "e", "f"],
+        critique_accuracy=0.0, scope_clean=False, attempt_count=9,
+    )
+    assert 0.0 <= worst <= best <= 1.0
+
 
 def test_reward_log_has_task(tmp_path):
     log = RewardLog(str(tmp_path / "r.db"))

@@ -392,7 +392,6 @@ class OrchestratorLoop:
         # Real verification — the SHA gate confirms tests actually ran (no fakes,
         # unique hash, pass indicators present), the same gate conductor uses.
         verify = verify_tests(test_output)
-        has_pass = verify.passed
         self._test_pass[task_id] = verify.passed
 
         if not verify.passed:
@@ -433,34 +432,48 @@ class OrchestratorLoop:
             agent="orchestrator",
         )
 
-        # ── RECORD REWARD (the RL signal) ───────────────────────────
-        task = self.db.get_task(task_id)
-        task_type = self._task_type.get(task_id, "general")
-        variant = self._variant_used.get(task_id, "v1")
-        critique_preds = self._critique_predictions.get(task_id, [])
-        review_finds = self._review_findings.get(task_id, [])
-
-        self.reward_log.record(
-            task_id=task_id,
-            task_type=task_type,
-            prompt_variant=variant,
-            gate_pass=self._gate_pass.get(task_id, True),    # real: hard gates
-            test_pass=self._test_pass.get(task_id, has_pass),  # real: SHA gate
-            review_findings=review_finds,
-            critique_predictions=critique_preds,
-            scope_clean=self._scope_clean.get(task_id, True),  # real: focus/scope/intent
-            attempt_count=task.attempt if task else 1,
-        )
+        # ── RECORD REWARD (the RL signal) — a win ───────────────────
+        self._record_reward(task_id)
 
         return LoopOutcome(
             action=LoopAction.DONE, phase="DONE", task_id=task_id,
             message="All phases complete — task done",
         )
 
+    # ── Reward recording ─────────────────────────────────────────────────
+
+    def _record_reward(self, task_id: str) -> None:
+        """
+        Record the RL reward for a task that reached a terminal outcome.
+
+        Both wins (DONE) and losses (retries exhausted → escalation) train the
+        loop — learning only from successes biases evolution toward variants
+        that never get hard tasks. Reads the real signals captured during the
+        run; a signal left unset means the run never earned it (a task that
+        failed at IMPLEMENT never ran tests), so it defaults to False.
+        """
+        task = self.db.get_task(task_id)
+        self.reward_log.record(
+            task_id=task_id,
+            task_type=self._task_type.get(task_id, "general"),
+            prompt_variant=self._variant_used.get(task_id, "v1"),
+            gate_pass=self._gate_pass.get(task_id, False),     # real: hard gates
+            test_pass=self._test_pass.get(task_id, False),     # real: SHA gate
+            review_findings=self._review_findings.get(task_id, []),
+            critique_predictions=self._critique_predictions.get(task_id, []),
+            scope_clean=self._scope_clean.get(task_id, False),  # real: focus/scope/intent
+            attempt_count=max(1, task.attempt if task else 1),  # >=1: a terminal task ran at least once
+        )
+
     # ── Escalation ───────────────────────────────────────────────────────
 
     def _escalate_to_debugger(self, task_id: str, reason: str) -> LoopOutcome:
-        """Escalate to debugger agent. Returns BLOCK_HITL with debugger context."""
+        """
+        Escalate to debugger after retries are exhausted. Records the failed
+        attempt as a negative reward (the loop must learn from losses too) and
+        blocks for a human decision.
+        """
+        self._record_reward(task_id)
         self.enforcer.block_for_hitl(
             task_id,
             question=f"Needs debugger: {reason}",
