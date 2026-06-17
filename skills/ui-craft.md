@@ -1,6 +1,6 @@
 ---
 name: ui-craft
-description: Get high-fidelity UI from a basic LLM by treating it like an inexperienced junior designer. Section-by-section prompting, forced visual math (60-30-10 rule, exact spacing), iterative refinement loop. Use when generating, iterating, or evaluating UI code from an LLM.
+description: Get high-fidelity UI code OUT of an LLM once the design is locked. Treat the model like a junior designer — section-by-section prompting, forced visual math (60-30-10, exact spacing), iterative refinement on specific values. Use when prompting a model to BUILD UI. To decide an undecided design first, use ui-grill.
 triggers:
   - ui-craft
   - prompt an LLM for UI
@@ -143,6 +143,7 @@ You have:
 
 ## Next Steps
 
-- Design locked? → `skills/ui-grill.md` (stress-test the decisions you just made)
-- Ready to build? → `skills/implementer.md`
-- Need domain-specific design constraints? → create `skills/<domain>-design.md`
+- Design decisions still vague? → `skills/ui-grill.md` (lock them before prompting the model)
+- Need the exact-values standard for this prompt? → `skills/ui-physics.md`
+- UI built, handing to engineers? → `skills/ui-handoff.md`
+- Ready to build it yourself? → `skills/implementer.md`

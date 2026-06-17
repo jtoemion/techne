@@ -20,8 +20,8 @@ version: "1.0"
 # Comment out a stack to disable all its gates at once.
 active_stacks:
   - general
-  - nextjs
   - typescript
+  # - nextjs    # disabled — not a Next.js project (React/Vite)
   # - security   # uncomment after loading security_gates.py plugin
 
 # Per-gate overrides — disable specific gates by name.

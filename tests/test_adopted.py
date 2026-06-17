@@ -15,6 +15,7 @@ from pathlib import Path
 TESTS_DIR = Path(__file__).parent
 ROOT = TESTS_DIR.parent
 sys.path.insert(0, str(ROOT / "harness"))
+sys.path.insert(0, str(TESTS_DIR)); import _mem_guard  # noqa: snapshots memory/, restores at exit
 
 from router import route, get_always_loaded, route_with_explanation
 from mistakes import log_mistake, check_relevant, count_active, mark_resolved, _parse_entries, MISTAKES_FILE, INSERT_MARKER

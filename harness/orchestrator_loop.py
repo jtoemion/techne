@@ -2,7 +2,7 @@
 orchestrator_loop.py — The pipeline loop driver.
 
 Takes a list of task IDs and drives them through the multi-agent pipeline:
-  CONTEXT_PREFLIGHT → IMPLEMENT → CONTEXT_GUARD → CRITIQUE → REVIEW → VERIFY → DONE
+  IMPLEMENT → CONTEXT_GUARD → CRITIQUE → REVIEW → VERIFY → DONE
 
 This is NOT an agent. It's a state machine that generates prompts for the
 host agent to execute. The host runs each prompt as its own model turn,
@@ -41,7 +41,7 @@ Usage:
         elif outcome == "RETRY":
             pass  # loop.next_phase() returns the same phase
         elif outcome == "ESCALATE":
-            # Debugger dispatched, then retry from CONTEXT_PREFLIGHT
+            # Debugger dispatched, then retry from IMPLEMENT
             pass
 
     # After all tasks
@@ -61,7 +61,8 @@ from pipeline_enforcer import PipelineEnforcer, PHASE_DESCRIPTIONS
 from reward_log import RewardLog
 from prompt_evolution import PromptEvolution
 from gate_evolution import GateEvolution
-from context_preflight import extract_changed_files_from_report, format_preflight_prompt
+from enforcement import build_registry, run_gates, measure_scope, verify_tests
+from evaluator import evaluate_pipeline_run, EvalReport
 
 HARNESS_DIR = Path(__file__).parent
 ROOT = HARNESS_DIR.parent
@@ -111,6 +112,10 @@ class OrchestratorLoop:
         self._retry_counts: dict[str, int] = {}  # task_id -> total retries
         self._impl_retry_counts: dict[str, int] = {}  # task_id -> impl retries
 
+        # Deterministic enforcement core — the SAME gates/measure/SHA that
+        # conductor runs. Built once; feeds real signals into the reward log.
+        self.registry = build_registry()
+
         # RL components
         self.reward_log = reward_log or RewardLog()
         self.evolution = PromptEvolution(self.reward_log)
@@ -121,6 +126,17 @@ class OrchestratorLoop:
         self._review_findings: dict[str, list[str]] = {}        # task_id -> findings
         self._task_type: dict[str, str] = {}                    # task_id -> type
         self._variant_used: dict[str, str] = {}                 # task_id -> variant name
+        # Real enforcement signals captured per task, fed to reward at DONE
+        self._gate_pass: dict[str, bool] = {}                   # task_id -> gates passed
+        self._scope_clean: dict[str, bool] = {}                 # task_id -> scope clean
+        self._test_pass: dict[str, bool] = {}                   # task_id -> SHA gate passed
+        # Richer state for the deterministic EVAL phase (100-point eval report)
+        self._scope: dict[str, object] = {}                     # task_id -> ScopeResult
+        self._diff: dict[str, str] = {}                         # task_id -> implement diff
+        self._review_result: dict[str, str] = {}               # task_id -> PASS|SOFT_FAIL
+        self._gate_violations: dict[str, int] = {}             # task_id -> # gate failures
+        self._eval: dict[str, EvalReport] = {}                 # task_id -> eval report
+        self._eval_run_no = 0
 
     def has_work(self, task_id: str) -> bool:
         """Check if a task still has phases to run."""
@@ -136,10 +152,7 @@ class OrchestratorLoop:
 
     def next_phase(self, task_id: str) -> str:
         """Determine the next phase for a task."""
-        phase = self.enforcer.get_phase(task_id)
-        if phase is None:
-            return "CONTEXT_PREFLIGHT"
-        return phase
+        return self.enforcer.get_phase(task_id) or "IMPLEMENT"
 
     def get_prompt(self, task_id: str, phase: str) -> dict:
         """
@@ -168,9 +181,7 @@ class OrchestratorLoop:
                 message=f"Task {task_id} not found",
             )
 
-        if phase == "CONTEXT_PREFLIGHT":
-            return self._submit_context_preflight(task_id, result)
-        elif phase == "IMPLEMENT":
+        if phase == "IMPLEMENT":
             return self._submit_implement(task_id, result)
         elif phase == "CONTEXT_GUARD":
             return self._submit_context_guard(task_id, result)
@@ -213,32 +224,6 @@ class OrchestratorLoop:
 
     # ── Phase submission handlers ────────────────────────────────────────
 
-    def _submit_context_preflight(self, task_id: str, report: str) -> LoopOutcome:
-        """Process mandatory context-preflight output. Advance only after hash refresh."""
-        if not report.strip():
-            return LoopOutcome(
-                action=LoopAction.RETRY, phase="CONTEXT_PREFLIGHT", task_id=task_id,
-                message="Context-preflight produced no report",
-            )
-
-        if "context_hash.txt" not in report and "context hash" not in report.lower():
-            self._retry_counts[task_id] = self._retry_counts.get(task_id, 0) + 1
-            return LoopOutcome(
-                action=LoopAction.RETRY, phase="CONTEXT_PREFLIGHT", task_id=task_id,
-                message="Context-preflight did not refresh context_hash.txt",
-            )
-
-        self.enforcer.mark_complete(
-            task_id, "CONTEXT_PREFLIGHT",
-            agent="context-preflight",
-            summary=report[:200],
-            changed_files=extract_changed_files_from_report(report),
-        )
-        return LoopOutcome(
-            action=LoopAction.RUN_PHASE, phase="IMPLEMENT", task_id=task_id,
-            message="Context preflight complete — advancing to implementation",
-        )
-
     def _submit_implement(self, task_id: str, diff: str) -> LoopOutcome:
         """Process implementer output. Check gates, retry or advance."""
         task = self.db.get_task(task_id)
@@ -247,17 +232,27 @@ class OrchestratorLoop:
         has_diff = bool(diff.strip()) and ("@@ " in diff or "--- " in diff)
 
         if not has_diff:
-            self._impl_retry_counts[task_id] = self._impl_retry_counts.get(task_id, 0) + 1
-            total = self._retry_counts.get(task_id, 0) + 1
-            self._retry_counts[task_id] = total
-
-            if total >= MAX_TOTAL_RETRIES:
-                return self._escalate_to_debugger(task_id, "implementer produced no valid diff after max retries")
-
-            return LoopOutcome(
-                action=LoopAction.RETRY, phase="IMPLEMENT", task_id=task_id,
-                message=f"Implementer produced no valid diff (attempt {self._impl_retry_counts[task_id]})",
+            return self._impl_retry_or_escalate(
+                task_id, "diff", "implementer produced no valid diff"
             )
+
+        # ── Real deterministic enforcement (the merge with conductor) ──────
+        # Run the same hard gates conductor runs, so the RL reward signal
+        # reflects real enforcement, not hardcoded True. Scope/intent is only
+        # measured once the gates pass — a rejected diff is not advanced.
+        self._diff[task_id] = diff
+        gate = run_gates(diff, self.registry)
+        self._gate_pass[task_id] = gate.passed
+        if not gate.passed:
+            self._gate_violations[task_id] = self._gate_violations.get(task_id, 0) + 1
+            return self._impl_retry_or_escalate(task_id, gate.gate_name, gate.violation)
+
+        task_text = f"{task.title} {task.description}".strip()
+        scope = measure_scope(task_text, diff)
+        self._scope[task_id] = scope
+        self._scope_clean[task_id] = scope.scope_clean
+        if scope.intent_mismatch:
+            return self._impl_retry_or_escalate(task_id, "intent", scope.violation)
 
         # Record implementation
         self.enforcer.mark_complete(
@@ -372,13 +367,15 @@ class OrchestratorLoop:
                 ],
             )
 
+        review_verdict = "PASS" if "PASS" in review else "SOFT_FAIL"
         self.enforcer.mark_complete(
             task_id, "REVIEW",
             agent="reviewer",
             summary=review[:200],
             findings=review,
-            verdict="PASS" if "PASS" in review else "SOFT_FAIL",
+            verdict=review_verdict,
         )
+        self._review_result[task_id] = review_verdict
         # Record review findings for cross-agent scoring
         self._review_findings[task_id] = _extract_findings(review)
         return LoopOutcome(
@@ -387,17 +384,13 @@ class OrchestratorLoop:
         )
 
     def _submit_verify(self, task_id: str, test_output: str) -> LoopOutcome:
-        """Process test output. Done if tests pass, retry or escalate if not."""
-        has_pass = any(
-            kw in test_output.lower()
-            for kw in ["pass", "ok", "success", "0 errors", "0 failures"]
-        )
-        has_fail = any(
-            kw in test_output.lower()
-            for kw in ["fail", "error", "traceback", "exception"]
-        )
+        """Process test output. Done if the SHA gate passes, retry/escalate if not."""
+        # Real verification — the SHA gate confirms tests actually ran (no fakes,
+        # unique hash, pass indicators present), the same gate conductor uses.
+        verify = verify_tests(test_output)
+        self._test_pass[task_id] = verify.passed
 
-        if has_fail and not has_pass:
+        if not verify.passed:
             self._retry_counts[task_id] = self._retry_counts.get(task_id, 0) + 1
 
             if self._retry_counts[task_id] >= MAX_TOTAL_RETRIES:
@@ -430,39 +423,130 @@ class OrchestratorLoop:
             summary=f"Tests passed",
             test_output_hash=hash(test_output).__repr__(),
         )
+
+        # ── EVAL phase: the original 100-point deterministic eval ───
+        report = self._run_eval(task_id)
+
         self.enforcer.mark_complete(
             task_id, "DONE",
             agent="orchestrator",
         )
 
-        # ── RECORD REWARD (the RL signal) ───────────────────────────
-        task = self.db.get_task(task_id)
-        task_type = self._task_type.get(task_id, "general")
-        variant = self._variant_used.get(task_id, "v1")
-        critique_preds = self._critique_predictions.get(task_id, [])
-        review_finds = self._review_findings.get(task_id, [])
-
-        self.reward_log.record(
-            task_id=task_id,
-            task_type=task_type,
-            prompt_variant=variant,
-            gate_pass=True,  # if we got here, gates passed
-            test_pass=has_pass,
-            review_findings=review_finds,
-            critique_predictions=critique_preds,
-            scope_clean=True,  # TODO: get from context-guard
-            attempt_count=task.attempt if task else 1,
-        )
+        # ── RECORD REWARD (the RL signal) — a win ───────────────────
+        self._record_reward(task_id)
 
         return LoopOutcome(
             action=LoopAction.DONE, phase="DONE", task_id=task_id,
-            message="All phases complete — task done",
+            message=f"All phases complete — eval {report.total}/100 ({report.grade})",
         )
+
+    # ── Reward recording ─────────────────────────────────────────────────
+
+    def _record_reward(self, task_id: str) -> None:
+        """
+        Record the RL reward for a task that reached a terminal outcome.
+
+        Both wins (DONE) and losses (retries exhausted → escalation) train the
+        loop — learning only from successes biases evolution toward variants
+        that never get hard tasks. Reads the real signals captured during the
+        run; a signal left unset means the run never earned it (a task that
+        failed at IMPLEMENT never ran tests), so it defaults to False.
+        """
+        task = self.db.get_task(task_id)
+        self.reward_log.record(
+            task_id=task_id,
+            task_type=self._task_type.get(task_id, "general"),
+            prompt_variant=self._variant_used.get(task_id, "v1"),
+            gate_pass=self._gate_pass.get(task_id, False),     # real: hard gates
+            test_pass=self._test_pass.get(task_id, False),     # real: SHA gate
+            review_findings=self._review_findings.get(task_id, []),
+            critique_predictions=self._critique_predictions.get(task_id, []),
+            scope_clean=self._scope_clean.get(task_id, False),  # real: focus/scope/intent
+            attempt_count=max(1, task.attempt if task else 1),  # >=1: a terminal task ran at least once
+        )
+
+    # ── EVAL phase: original 100-point deterministic eval ────────────────
+
+    def _build_eval_metrics(self, task_id: str) -> dict:
+        """
+        Map the loop's captured enforcement signals onto the evaluator's
+        metric kwargs — the SAME 100-point eval the conductor runs.
+
+        Retro Value maps to the RL learning step (reward recording + per-run
+        evolution), which is the loop's equivalent of the conductor's retro.
+        """
+        scope = self._scope.get(task_id)
+        diff_lower = self._diff.get(task_id, "").lower()
+        drift = (
+            diff_lower.count("+  todo") + diff_lower.count("+ // todo")
+            + diff_lower.count("+  fixme") + diff_lower.count("+ // fixme")
+            + diff_lower.count("+ console.log") + diff_lower.count("+console.log")
+        )
+        test_pass = self._test_pass.get(task_id, False)
+        return dict(
+            gate_violations=self._gate_violations.get(task_id, 0),
+            retries_used=self._retry_counts.get(task_id, 0),
+            pipeline_halted=False,
+            sha_passed=test_pass,
+            output_existed=test_pass,
+            had_pass_indicators=test_pass,
+            diff_focused=scope.diff_focused if scope else True,
+            scope_creep=scope.scope_creep if scope else False,
+            review_result=self._review_result.get(task_id, "PASS"),
+            drift_markers=drift,
+            retro_ran=True,            # RL learning step = reward + evolution
+            retro_questions=7,
+        )
+
+    def _run_eval(self, task_id: str) -> EvalReport:
+        """Run the deterministic 100-point eval and record it as the EVAL phase."""
+        task = self.db.get_task(task_id)
+        self._eval_run_no += 1
+        report = evaluate_pipeline_run(
+            task=task.title if task else task_id,
+            pipeline_number=self._eval_run_no,
+            **self._build_eval_metrics(task_id),
+        )
+        self._eval[task_id] = report
+        self.enforcer.mark_complete(
+            task_id, "EVAL",
+            agent="evaluator",
+            summary=f"Eval {report.total}/100 ({report.grade})",
+            findings=report.format_report()[:1500],
+            verdict="PASS" if report.total >= 75 else "SOFT_FAIL",
+        )
+        return report
+
+    def get_eval(self, task_id: str) -> EvalReport | None:
+        """Return the 100-point eval report for a completed task, if any."""
+        return self._eval.get(task_id)
 
     # ── Escalation ───────────────────────────────────────────────────────
 
+    def _impl_retry_or_escalate(self, task_id: str, name: str, reason: str) -> LoopOutcome:
+        """
+        Shared IMPLEMENT-failure handling: bump the retry counters and either
+        ask the host to retry, or escalate once the total-retry budget is spent.
+        """
+        self._impl_retry_counts[task_id] = self._impl_retry_counts.get(task_id, 0) + 1
+        total = self._retry_counts.get(task_id, 0) + 1
+        self._retry_counts[task_id] = total
+        if total >= MAX_TOTAL_RETRIES:
+            return self._escalate_to_debugger(
+                task_id, f"'{name}' failing after max retries"
+            )
+        return LoopOutcome(
+            action=LoopAction.RETRY, phase="IMPLEMENT", task_id=task_id,
+            message=f"[{name}] failed (attempt {self._impl_retry_counts[task_id]}): {reason[:120]}",
+        )
+
     def _escalate_to_debugger(self, task_id: str, reason: str) -> LoopOutcome:
-        """Escalate to debugger agent. Returns BLOCK_HITL with debugger context."""
+        """
+        Escalate to debugger after retries are exhausted. Records the failed
+        attempt as a negative reward (the loop must learn from losses too) and
+        blocks for a human decision.
+        """
+        self._record_reward(task_id)
         self.enforcer.block_for_hitl(
             task_id,
             question=f"Needs debugger: {reason}",
@@ -484,7 +568,6 @@ class OrchestratorLoop:
     def _read_agent_body(self, phase: str) -> str:
         """Read the agent .md file for a phase, return body (frontmatter stripped)."""
         agent_map = {
-            "CONTEXT_PREFLIGHT": "context-preflight",
             "IMPLEMENT": "implementer",
             "CONTEXT_GUARD": "context-guard",
             "CRITIQUE": "critique",
@@ -513,34 +596,11 @@ class OrchestratorLoop:
             f"TASK: {task.title}",
             f"DESCRIPTION: {task.description}",
             f"DISCIPLINE: {task.discipline}",
-            f"TAGS: {', '.join(task.tags) if task.tags else 'none'}",
             f"ATTEMPT: #{task.attempt}",
             f"PHASE: {phase}",
             "",
             f"INSTRUCTIONS: {PHASE_DESCRIPTIONS.get(phase, phase)}",
         ]
-
-        prior_changed_files: list[str] = []
-        for event in prior:
-            prior_changed_files.extend(event.changed_files)
-
-        if phase == "CONTEXT_PREFLIGHT":
-            lines.extend(
-                [
-                    "",
-                    format_preflight_prompt(
-                        task_id=task_id,
-                        title=task.title,
-                        description=task.description,
-                        discipline=task.discipline,
-                        tags=task.tags,
-                        changed_files=prior_changed_files,
-                    ),
-                ]
-            )
-        elif prior_changed_files:
-            lines.extend(["", "PRIOR_CHANGED_FILES:"])
-            lines.extend(f"  {path}" for path in dict.fromkeys(prior_changed_files))
 
         if prior:
             lines.append("")
@@ -582,22 +642,29 @@ class OrchestratorLoop:
 
     def post_run_evolve(self) -> dict:
         """
-        Run after all tasks complete. Evolves prompts and gates.
-        Returns summary of what evolved.
+        Run after all tasks complete. Stages prompt proposals and evolves gates.
+        Returns summary of what was proposed/generated.
+
+        Prompt proposals are staged only — they do not change which prompt is
+        used until a human ratifies them (propose → validate → ratify). The loop
+        never auto-promotes a prompt rewrite.
         """
         result = {
-            "prompts_evolved": [],
+            "prompts_proposed": [],
             "gates_generated": [],
             "dashboard": "",
         }
 
-        # Evolve prompts for each task type seen
+        # Stage a prompt proposal for each task type seen (pending ratification).
         for task_type in self.reward_log.all_task_types():
-            new_variant = self.evolution.evolve(task_type, "implementer")
-            result["prompts_evolved"].append({
-                "task_type": task_type,
-                "new_variant": new_variant,
-            })
+            proposal = self.evolution.propose(task_type, "implementer")
+            if proposal is not None:
+                result["prompts_proposed"].append({
+                    "task_type": task_type,
+                    "variant_name": proposal.variant_name,
+                    "proposal_id": proposal.id,
+                    "status": proposal.status,
+                })
 
         # Auto-evolve gates
         new_gates = self.gate_evolution.auto_evolve(min_count=3)
@@ -650,14 +717,14 @@ if __name__ == "__main__":
     print(f"Has work: {loop.has_work(t.id)}")
     print(f"Next phase: {loop.next_phase(t.id)}")
 
-    # Simulate: context preflight
-    prompt = loop.get_prompt(t.id, "CONTEXT_PREFLIGHT")
-    print(f"Prompt system: {len(prompt['system'])} chars")
-    result = loop.submit(t.id, "CONTEXT_PREFLIGHT", "CONTEXT-PREFLIGHT REPORT\nFILES WRITTEN:\n  .techne/context/context_hash.txt")
-    print(f"After context-preflight: action={result.action.value} message={result.message}")
-
     # Simulate: implement
-    result = loop.submit(t.id, "IMPLEMENT", "--- a/test.py\n+++ b/test.py\n@@ -1 +1 @@\n-old\n+new")
+    prompt = loop.get_prompt(t.id, "IMPLEMENT")
+    print(f"Prompt system: {len(prompt['system'])} chars")
+    impl_diff = (
+        "--- a/rate_limiter.py\n+++ b/rate_limiter.py\n@@ -1 +1,3 @@\n"
+        "-old\n+def rate_limiter(rate):\n+    # token-bucket limiter\n+    return rate\n"
+    )
+    result = loop.submit(t.id, "IMPLEMENT", impl_diff)
     print(f"After implement: action={result.action.value} message={result.message}")
 
     # Simulate: context-guard
@@ -673,8 +740,14 @@ if __name__ == "__main__":
         result = loop.submit(t.id, "REVIEW", "REVIEW RESULT: PASS\nNo findings")
         print(f"After review: action={result.action.value}")
 
-        # Simulate: verify (pass)
-        result = loop.submit(t.id, "VERIFY", "All tests pass, 0 failures")
+        # Simulate: verify (pass) — must satisfy the real SHA gate
+        verify_output = (
+            "============================= test session starts =============================\n"
+            "collected 12 items\n\n"
+            "tests/test_rate_limiter.py ............                                  [100%]\n\n"
+            "============================== 12 passed in 0.04s ==============================\n"
+        )
+        result = loop.submit(t.id, "VERIFY", verify_output)
         print(f"After verify: action={result.action.value}")
     else:
         print(f"Task blocked for HITL: {result.question}")

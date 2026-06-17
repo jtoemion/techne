@@ -23,108 +23,31 @@ description: Harness engineering entry point. Routes to the right sub-skill base
 | Prompting LLM for UI | `skills/ui-craft.md` |
 | UI specificity standard | `skills/ui-physics.md` |
 | Design-to-dev handoff | `skills/ui-handoff.md` |
-| React + Vite project work | `skills/react-vite.md` |
 | Reviewing agent output | `skills/evaluation.md` |
 | Context preflight / project context | `skills/context-amortization.md` |
 | Honcho checkpoint before compaction | `skills/honcho-precompaction-checkpoint.md` |
 | Next.js specific rules | `skills/nextjs.md` |
 | TypeScript type errors | `skills/typescript.md` |
+| React 19 + Vite work | `skills/react.md` |
 | Svelte/SvelteKit work | `skills/svelte.md` |
+| Testing a web app in a browser | `skills/webapp-testing/SKILL.md` |
+| Building an MCP server | `skills/mcp-builder/SKILL.md` |
 
-## Live Framework Findings
+> The last two are **vendored capability skills** (Anthropic) — folders with `scripts/`
+> the agent runs as black-box tools. Bundle format, not Techne house format; do not edit
+> their internals. Provenance + re-sync: `skills/SOURCES.md`.
 
-### React 19 + Vite (pastpapr patterns)
+#### `patch` tool — use `write_file` for non-trivial edits
 
-#### `useEffect` with React Query mutations — add the mutation object to deps
+When replacing multi-line blocks where the indentation or line count changes, the `patch` tool can mangle whitespace silently. Symptoms:
+- Indentation drifts (extra/different leading spaces)
+- Entire lines or expressions get dropped from the replacement
+- LSP then reports "variable implicitly has 'any' type" on the dropped expression
 
-```tsx
-// Wrong — ESLint will flag missing resetMutation
-useEffect(() => {
-  if (isOpen) {
-    resetMutation.reset();
-  }
-}, [isOpen]);
-
-// Correct
-useEffect(() => {
-  if (isOpen) {
-    resetMutation.reset();
-  }
-}, [isOpen, resetMutation]);
-```
-
-**Why:** React Query's `useMutation()` returns a new object reference every render. A closure that omits it from deps captures a stale ref. The effect fires on `isOpen` change, but if the mutation object itself changes between renders (it will), the effect may not see the latest state. Always include mutation objects in effect deps.
-
-#### `useEffect` with intentional guard — use eslint-disable with rationale
-
-```tsx
-// Wrong — warning fires even though the guard is intentional
-useEffect(() => {
-  if (isOpen && messages.length === 0) {
-    setMessages([{ role: 'assistant', content: WELCOME_MESSAGE }]);
-  }
-}, [isOpen]);
-
-// Correct — suppress with inline disable + reason
-useEffect(() => {
-  if (isOpen && messages.length === 0) {
-    setMessages([{ role: 'assistant', content: WELCOME_MESSAGE }]);
-  }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [isOpen]); // intentionally omit messages — guard by length check prevents re-init
-```
-
-**Why:** Adding `messages` to deps would cause the effect to re-run every time `messages` changes, defeating the `length === 0` guard. The lint warning is technically correct but the guard is intentional — suppress with comment so future agents understand the intent.
-
-### Svelte 5 + IndexedDB
-
-#### `$state` array + helper function mutation
-
-When you pass a `$state` array to a helper that mutates it (e.g. `removeTag` or `addTag`), the helper must receive the updater function, not the array directly:
-
-```ts
-// Broken — mutation doesn't propagate to $state
-function removeTag(tags: string[], index: number) {
-  tags.splice(index, 1); // mutates local copy, not the $state
-}
-
-// Correct — functional update form
-function removeTag(tags: string[], index: number, setTags: (t: string[]) => void) {
-  const updated = [...tags];
-  updated.splice(index, 1);
-  setTags(updated); // e.g. (t) => myTags = t
-}
-
-// In component:
-<button onclick={() => removeTag(myTags, i, (t) => myTags = t)}>×</button>
-```
-
-#### Schema vs types duality in Dexie projects
-
-In projects with both a public type interface (`lib/types.ts`) and a full Dexie schema (`lib/db/schema.ts`), the two will diverge. Components that call Dexie-backed DB functions must import from `schema.ts`, not `types.ts` — the schema version has the full field set including `_sync`, `stock_qty`, `bpom_number`, etc. The `types.ts` version may be a stripped public interface. Fields exist at runtime but the type won't show them.
-
-#### Dev-only route guard (SvelteKit)
-
-For routes that should not exist in production (debug tools, cosmic graphs, etc.):
-
-```ts
-import { dev } from '$app/environment';
-import { goto } from '$app/navigation';
-
-if (!dev) goto('/');
-```
-
-Place at the very top of `<script>` in `+page.svelte`. SSR=false routes still go through Node.js build — this guard catches production builds.
-
-#### Dynamic import of uninstalled modules
-
-When a module is dynamically imported (`await import('d3')`) and the package is not in `dependencies`/`devDependencies`, Vite fails at transform time with `Failed to resolve import`. Always verify the package is installed before using dynamic import:
-
-```bash
-pnpm add -D d3 @types/d3
-```
-
-Static `import` fails at build bundling; dynamic `import()` fails at Vite's transform plugin — both require the package to be present.
+For edits that change more than ~3 lines or involve indentation restructuring, prefer `write_file` with the full corrected file content. Use `patch` only for:
+- Single-line fixes
+- Exact line-for-line replacements with identical indentation
+- Well-contained blocks where you control the exact old_string match
 
 ## Always Loaded
 
@@ -135,7 +58,7 @@ These are injected for every task — do not skip:
 - `skills/nextjs.md` — hard gates that will reject your diff (Next.js projects only)
 - `skills/typescript.md` — hard gates that will reject your diff
 
-**Scope note:** Techne's gates (`gate_no_redirect_outside_middleware`, `gate_no_router_import`, etc.) and its pipeline phases (IMPLEMENT → VERIFY → REVIEW → RETRO → EVALUATE) are designed for **Next.js full-stack projects**. For React 19 + Vite projects (e.g., pastpapr), the routing and middleware conventions don't apply. Load the skill for its sub-skill routing and ESLint/TypeScript pitfall references, but skip the Next.js-specific gate logic.
+**Scope note:** Techne's gates (`gate_no_redirect_outside_middleware`, `gate_no_router_import`, etc.) and its pipeline phases (IMPLEMENT → VERIFY → REVIEW → RETRO → EVALUATE) are designed for **Next.js full-stack projects**. For React 19 + Vite projects (e.g., pastpapr), the routing and middleware conventions don't apply. Use this router for sub-skill routing and load `skills/react.md` for the ESLint/TypeScript pitfalls, but skip the Next.js-specific gate logic.
 
 ## Pipeline Phases
 
@@ -158,7 +81,9 @@ Shows phase results, checkpoint summary, and live eval preview (scores per dimen
 - SvelteKit deployment issues? → `references/bug-analysis-soaperfume.md` (adapter-hosting mismatch, idempotent migrations, auth guards)
 - Bug triage quick-ref? → `references/bug-analysis-soaperfume.md` (symptom → cause table for common SvelteKit/SQLite patterns)
 - Replicating an existing UI (vanilla HTML prototype → framework code)? → `references/ui-replication-from-reference.md` (audit-then-extract workflow, atom layer first, token-exact matching)
-- Extending gates? → drop a `.py` file in `harness/plugins/` with `register(registry)` or inject at runtime via `p.register_host_gate()`
+- Hook-gate bridge (Hermes pre_tool_call → Techne gates.py)? → `references/hook-gate-bridge.md` (plan + architecture for inline gate enforcement via plugin hook)
+- LMS-hermes bridge (student-portal → Hermes custom provider + MCP tools)? → `references/lms-hermes-bridge.md` (Phase 1 ✅, Phase 2 LMS side ✅ — commit `6d9d467` reviewed/fixed. Hermes side: see `HERMES_SIDE_PHASE2.md` — token extraction, auto-inject, scope enforcement, 3 open questions for Hermes team)
 - Writing a new skill? → `superpowers/writing-skills/SKILL.md` (TDD for documentation — RED-GREEN-REFACTOR applied to process docs)
 - UI design decisions? → `superpowers/frontend-avant-garde/SKILL.md` (Senior Frontend Architect — opinionated, output-first)
-- Svelte project work? → `skills/svelte.md` (gap-at-bottom fix, $state patterns, dev-only route guard)
+- React 19 + Vite project work? → `skills/react.md` (useEffect deps, React Query mutation refs, exhaustive-deps guards)
+- Svelte project work? → `skills/svelte.md` ($state mutation through helpers, Dexie schema/types duality, dev-only route guard, dynamic imports)

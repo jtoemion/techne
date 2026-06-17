@@ -7,6 +7,172 @@
 # Adopted from jtoemion/harness-engineering-skills
 
 <!-- New entries go below this line -->
+## [2026-06-15T12:25:38Z] IMPLEMENT | AUTO-LOGGED
+**Error**     : Intent gate: MISMATCH
+**Cause**     : Diff is empty — nothing was built.
+**Lesson**    : diff did not implement the stated task
+**Gate**      : intent
+**Status**    : ACTIVE
+
+## [2026-06-15T12:25:38Z] IMPLEMENT | AUTO-LOGGED
+**Error**     : Intent gate: MISMATCH
+**Cause**     : host judged the diff implements the wrong thing
+**Lesson**    : diff did not implement the stated task
+**Gate**      : intent
+**Status**    : ACTIVE
+
+## [2026-06-15T12:25:38Z] IMPLEMENT | AUTO-LOGGED
+**Error**     : Intent gate: MISMATCH
+**Cause**     : Diff is empty — nothing was built.
+**Lesson**    : diff did not implement the stated task
+**Gate**      : intent
+**Status**    : ACTIVE
+
+## [2026-06-14T22:55:16Z] IMPLEMENT | AUTO-LOGGED
+**Error**     : Intent gate: MISMATCH
+**Cause**     : Diff is empty — nothing was built.
+**Lesson**    : diff did not implement the stated task
+**Gate**      : intent
+**Status**    : ACTIVE
+
+## [2026-06-14T22:55:16Z] IMPLEMENT | AUTO-LOGGED
+**Error**     : Intent gate: MISMATCH
+**Cause**     : host judged the diff implements the wrong thing
+**Lesson**    : diff did not implement the stated task
+**Gate**      : intent
+**Status**    : ACTIVE
+
+## [2026-06-14T22:55:16Z] IMPLEMENT | AUTO-LOGGED
+**Error**     : Intent gate: MISMATCH
+**Cause**     : Diff is empty — nothing was built.
+**Lesson**    : diff did not implement the stated task
+**Gate**      : intent
+**Status**    : ACTIVE
+
+## [2026-06-14T22:55:16Z] IMPLEMENT | AUTO-LOGGED
+**Error**     : GATE FAIL [nextjs/redirect]: redirect() on diff line 3 is outside middleware.ts (current file: 'app/products/[slug]/page.tsx')
+  → +  redirect('/dashboard')
+**Cause**     : agent violated skill rule
+**Lesson**    : pending retro
+**Gate**      : nextjs/redirect
+**Status**    : ACTIVE
+
+## [2026-06-14T22:48:49Z] IMPLEMENT | AUTO-LOGGED
+**Error**     : Intent gate: MISMATCH
+**Cause**     : Diff is empty — nothing was built.
+**Lesson**    : diff did not implement the stated task
+**Gate**      : intent
+**Status**    : ACTIVE
+
+## [2026-06-14T22:48:49Z] IMPLEMENT | AUTO-LOGGED
+**Error**     : Intent gate: MISMATCH
+**Cause**     : host judged the diff implements the wrong thing
+**Lesson**    : diff did not implement the stated task
+**Gate**      : intent
+**Status**    : ACTIVE
+
+## [2026-06-14T22:48:49Z] IMPLEMENT | AUTO-LOGGED
+**Error**     : Intent gate: MISMATCH
+**Cause**     : Diff is empty — nothing was built.
+**Lesson**    : diff did not implement the stated task
+**Gate**      : intent
+**Status**    : ACTIVE
+
+## [2026-06-14T22:48:49Z] IMPLEMENT | AUTO-LOGGED
+**Error**     : GATE FAIL [nextjs/redirect]: redirect() on diff line 3 is outside middleware.ts (current file: 'app/products/[slug]/page.tsx')
+  → +  redirect('/dashboard')
+**Cause**     : agent violated skill rule
+**Lesson**    : pending retro
+**Gate**      : nextjs/redirect
+**Status**    : ACTIVE
+
+## [2026-06-14T22:48:10Z] IMPLEMENT | AUTO-LOGGED
+**Error**     : Intent gate: MISMATCH
+**Cause**     : Diff is empty — nothing was built.
+**Lesson**    : diff did not implement the stated task
+**Gate**      : intent
+**Status**    : ACTIVE
+
+## [2026-06-14T22:48:10Z] IMPLEMENT | AUTO-LOGGED
+**Error**     : Intent gate: MISMATCH
+**Cause**     : host judged the diff implements the wrong thing
+**Lesson**    : diff did not implement the stated task
+**Gate**      : intent
+**Status**    : ACTIVE
+
+## [2026-06-14T22:48:10Z] IMPLEMENT | AUTO-LOGGED
+**Error**     : Intent gate: MISMATCH
+**Cause**     : Diff is empty — nothing was built.
+**Lesson**    : diff did not implement the stated task
+**Gate**      : intent
+**Status**    : ACTIVE
+
+## [2026-06-14T22:48:10Z] IMPLEMENT | AUTO-LOGGED
+**Error**     : GATE FAIL [nextjs/redirect]: redirect() on diff line 3 is outside middleware.ts (current file: 'app/products/[slug]/page.tsx')
+  → +  redirect('/dashboard')
+**Cause**     : agent violated skill rule
+**Lesson**    : pending retro
+**Gate**      : nextjs/redirect
+**Status**    : ACTIVE
+
+## [2026-06-14T22:47:22Z] IMPLEMENT | AUTO-LOGGED
+**Error**     : Intent gate: MISMATCH
+**Cause**     : Diff is empty — nothing was built.
+**Lesson**    : diff did not implement the stated task
+**Gate**      : intent
+**Status**    : ACTIVE
+
+## [2026-06-14T22:47:22Z] IMPLEMENT | AUTO-LOGGED
+**Error**     : Intent gate: MISMATCH
+**Cause**     : host judged the diff implements the wrong thing
+**Lesson**    : diff did not implement the stated task
+**Gate**      : intent
+**Status**    : ACTIVE
+
+## [2026-06-14T22:47:22Z] IMPLEMENT | AUTO-LOGGED
+**Error**     : Intent gate: MISMATCH
+**Cause**     : Diff is empty — nothing was built.
+**Lesson**    : diff did not implement the stated task
+**Gate**      : intent
+**Status**    : ACTIVE
+
+## [2026-06-14T22:47:22Z] IMPLEMENT | AUTO-LOGGED
+**Error**     : GATE FAIL [nextjs/redirect]: redirect() on diff line 3 is outside middleware.ts (current file: 'app/products/[slug]/page.tsx')
+  → +  redirect('/dashboard')
+**Cause**     : agent violated skill rule
+**Lesson**    : pending retro
+**Gate**      : nextjs/redirect
+**Status**    : ACTIVE
+
+## [2026-06-14T17:16:39Z] IMPLEMENT | AUTO-LOGGED
+**Error**     : Intent gate: MISMATCH
+**Cause**     : Diff is empty — nothing was built.
+**Lesson**    : diff did not implement the stated task
+**Gate**      : intent
+**Status**    : ACTIVE
+
+## [2026-06-14T17:16:39Z] IMPLEMENT | AUTO-LOGGED
+**Error**     : Intent gate: MISMATCH
+**Cause**     : host judged the diff implements the wrong thing
+**Lesson**    : diff did not implement the stated task
+**Gate**      : intent
+**Status**    : ACTIVE
+
+## [2026-06-14T17:16:39Z] IMPLEMENT | AUTO-LOGGED
+**Error**     : Intent gate: MISMATCH
+**Cause**     : Diff is empty — nothing was built.
+**Lesson**    : diff did not implement the stated task
+**Gate**      : intent
+**Status**    : ACTIVE
+
+## [2026-06-14T17:16:39Z] IMPLEMENT | AUTO-LOGGED
+**Error**     : GATE FAIL [nextjs/redirect]: redirect() on diff line 3 is outside middleware.ts (current file: 'app/products/[slug]/page.tsx')
+  → +  redirect('/dashboard')
+**Cause**     : agent violated skill rule
+**Lesson**    : pending retro
+**Gate**      : nextjs/redirect
+**Status**    : ACTIVE
+
 ## [2026-06-02T14:57:39Z] CONDUCTOR | TEST-DISCOVERED
 **Error**     : AttributeError: 'dict' object has no attribute 'verdict'
 **Cause**     : verdict_to_gate() expected IntentVerdict dataclass, got plain dict from full_intent_check

@@ -23,10 +23,6 @@ Parent Agent (you)
 │
 ├─ LOOP per task:
 │   │
-│   ├─ loop.next_phase(task_id) → "CONTEXT_PREFLIGHT"
-│   ├─ loop.get_prompt(task_id, "CONTEXT_PREFLIGHT") → {system, user}
-│   ├─ delegate_task(prompt) → context report
-│   ├─ loop.submit(task_id, "CONTEXT_PREFLIGHT", result) → LoopOutcome
 │   ├─ loop.next_phase(task_id) → "IMPLEMENT"
 │   ├─ loop.get_prompt(task_id, "IMPLEMENT") → {system, user}
 │   ├─ delegate_task(prompt) → result
@@ -44,18 +40,6 @@ Parent Agent (you)
 │
 └─ loop.summary() → dashboard
 ```
-
-## Step 0: Pre-Compaction Honcho Checkpoint
-
-Before any session compaction, checkpoint durable facts to Honcho.
-
-```
-extract durable facts → skills/honcho-precompaction-checkpoint.md → honcho_conclude → verify recall → compact
-```
-
-Checkpoint only durable facts: user preferences, project conventions, architecture decisions, HITL boundaries, stable file paths, and verified workflow rules. Do not checkpoint full transcripts, temporary TODOs, commit SHAs, PR numbers, or command logs.
-
-If Honcho is unreachable, use Hermes memory as fallback and report the Honcho failure.
 
 ## Step 1: Decompose
 
@@ -135,7 +119,6 @@ The human's decision is recorded in task_db and the loop resumes.
 ```python
 def phase_toolsets(phase: str) -> list[str]:
     return {
-        "CONTEXT_PREFLIGHT":["terminal", "file"],  # may write .techne/context
         "IMPLEMENT":    ["terminal", "file"],
         "CONTEXT_GUARD":["terminal", "file"],  # needs git diff
         "CRITIQUE":     ["file"],              # read-only
@@ -152,7 +135,6 @@ Minimal, self-contained:
 - Phase instructions (from their .md)
 - Prior phase results (summary, not full output)
 - Past mistakes for this task type
-- Mandatory context pack for CONTEXT_PREFLIGHT and later worker phases
 
 They do NOT get:
 - The loop state machine

@@ -2,8 +2,8 @@
 pipeline_enforcer.py — State machine that enforces the multi-agent pipeline order.
 
 The pipeline phases are:
-  CONTEXT_PREFLIGHT → IMPLEMENT → CONTEXT_GUARD → CRITIQUE → REVIEW → VERIFY → DONE
-                                               ↘ BLOCKED → DEBUG → CONTEXT_PREFLIGHT (retry)
+  IMPLEMENT → CONTEXT_GUARD → CRITIQUE → REVIEW → VERIFY → DONE
+                                                  ↘ BLOCKED → DEBUG → IMPLEMENT (retry)
 
 The enforcer:
   - Tracks phase state per task in the task_db
@@ -17,12 +17,10 @@ Usage:
     enforcer = PipelineEnforcer(db)
 
     # Before each phase:
-    enforcer.can_enter(task_id, "CONTEXT_PREFLIGHT")  # True for a fresh task
-    enforcer.can_enter(task_id, "IMPLEMENT")         # False — context preflight has not run yet
-    enforcer.can_enter(task_id, "REVIEW")            # False — context-guard has not run yet
+    enforcer.can_enter(task_id, "IMPLEMENT")    # True if task is PENDING or BLOCKED
+    enforcer.can_enter(task_id, "REVIEW")       # False — context-guard hasn't run yet
 
     # After each phase:
-    enforcer.mark_complete(task_id, "CONTEXT_PREFLIGHT", agent="context-preflight", summary="...")
     enforcer.mark_complete(task_id, "IMPLEMENT", agent="implementer", summary="...")
     enforcer.mark_complete(task_id, "CONTEXT_GUARD", agent="context-guard", summary="...")
 
@@ -41,40 +39,40 @@ from task_db import TaskDB, Task
 # ── Phase definitions ────────────────────────────────────────────────────
 
 PHASES = [
-    "CONTEXT_PREFLIGHT",
     "IMPLEMENT",
     "CONTEXT_GUARD",
     "CRITIQUE",
     "REVIEW",
     "VERIFY",
+    "EVAL",
     "DONE",
 ]
 
 # Valid transitions: from_state -> allowed next states
 # The pipeline is strict: you can only go forward, or to BLOCKED/DEBUG from any point.
 TRANSITIONS = {
-    None:           ["CONTEXT_PREFLIGHT"],                   # fresh task
-    "PENDING":      ["CONTEXT_PREFLIGHT"],                   # ready to start
-    "BLOCKED":      ["CONTEXT_PREFLIGHT", "IMPLEMENT", "DEBUG"], # retry after block
-    "DEBUG":        ["CONTEXT_PREFLIGHT", "IMPLEMENT"],      # debug fixes, then context refresh
-    "CONTEXT_PREFLIGHT":["IMPLEMENT", "BLOCKED", "FAILED"],  # context ready → implement, or fail
+    None:           ["IMPLEMENT"],                          # fresh task
+    "PENDING":      ["IMPLEMENT"],                          # ready to start
+    "BLOCKED":      ["IMPLEMENT", "DEBUG"],                 # retry after block
+    "DEBUG":        ["IMPLEMENT"],                          # debug fixes, then re-implement
     "IMPLEMENT":    ["CONTEXT_GUARD", "BLOCKED", "FAILED"], # impl done → audit, or fail
     "CONTEXT_GUARD":["CRITIQUE", "BLOCKED", "FAILED"],     # audit done → critique, or fail
     "CRITIQUE":     ["REVIEW", "BLOCKED", "FAILED"],       # critique done → review, or fail
     "REVIEW":       ["VERIFY", "BLOCKED", "IMPLEMENT", "FAILED"],  # review: pass→verify, hardfail→re-implement
-    "VERIFY":       ["DONE", "BLOCKED", "IMPLEMENT", "FAILED"],    # verify: pass→done, fail→re-implement
+    "VERIFY":       ["EVAL", "DONE", "BLOCKED", "IMPLEMENT", "FAILED"],  # verify: pass→eval(→done), fail→re-implement
+    "EVAL":         ["DONE", "FAILED"],                     # deterministic 100-pt score → done
     "DONE":         [],                                      # terminal
     "FAILED":       [],                                      # terminal
 }
 
 # Human-readable phase descriptions (for subagent prompts)
 PHASE_DESCRIPTIONS = {
-    "CONTEXT_PREFLIGHT": "Prepare mandatory context pack and refresh context hash",
     "IMPLEMENT": "Write code (TDD: test first, minimal diff)",
     "CONTEXT_GUARD": "Scan changes, record audit trail (file inventory, scope check)",
     "CRITIQUE": "Predict emergent bugs from the implementation diff",
     "REVIEW": "Security/correctness/gate compliance review",
     "VERIFY": "Run tests, capture real output",
+    "EVAL": "Score the run deterministically (100-point eval report)",
     "DONE": "Task complete",
     "BLOCKED": "Task blocked — needs human input or debugger",
     "FAILED": "Task terminal failure",
@@ -140,10 +138,10 @@ class PipelineEnforcer:
             )
 
         # Check task status for blocked/failed
-        if task.status == "BLOCKED" and target_phase not in ("CONTEXT_PREFLIGHT", "IMPLEMENT", "DEBUG"):
+        if task.status == "BLOCKED" and target_phase not in ("IMPLEMENT", "DEBUG"):
             return PhaseTransition(
                 allowed=False, current_phase=current, target_phase=target_phase,
-                reason=f"Task is BLOCKED — only CONTEXT_PREFLIGHT, IMPLEMENT, or DEBUG allowed",
+                reason=f"Task is BLOCKED — only IMPLEMENT or DEBUG allowed",
                 task=task,
             )
 
@@ -231,6 +229,11 @@ class PipelineEnforcer:
                 test_output_hash=test_output_hash, summary=summary,
             )
             self._overwrite_last_action(task_id, "VERIFY")
+        elif phase == "EVAL":
+            self.db._log_event(
+                task_id, agent, "EVAL", summary[:200],
+                findings=findings, verdict=verdict,
+            )
         elif phase == "DONE":
             self.db.done_task(task_id, agent=agent)
             self._overwrite_last_action(task_id, "DONE")
