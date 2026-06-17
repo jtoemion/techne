@@ -172,5 +172,11 @@
     "input": "make agents stop rereading the whole project before every task",
     "expected_skill": "techne/context-amortization",
     "note": "context preflight / project context routing"
+  },
+  {
+    "id": "r30",
+    "input": "checkpoint honcho before compaction so we don't lose critical context",
+    "expected_skill": "techne/honcho-precompaction-checkpoint",
+    "note": "Honcho pre-compaction checkpoint routing"
   }
 ]

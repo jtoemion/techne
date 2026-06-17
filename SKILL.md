@@ -26,6 +26,7 @@ description: Harness engineering entry point. Routes to the right sub-skill base
 | React + Vite project work | `skills/react-vite.md` |
 | Reviewing agent output | `skills/evaluation.md` |
 | Context preflight / project context | `skills/context-amortization.md` |
+| Honcho checkpoint before compaction | `skills/honcho-precompaction-checkpoint.md` |
 | Next.js specific rules | `skills/nextjs.md` |
 | TypeScript type errors | `skills/typescript.md` |
 | Svelte/SvelteKit work | `skills/svelte.md` |
@@ -130,6 +131,7 @@ Static `import` fails at build bundling; dynamic `import()` fails at Vite's tran
 These are injected for every task — do not skip:
 
 - `skills/context-amortization.md` — mandatory context preflight and context packs
+- `skills/honcho-precompaction-checkpoint.md` — checkpoint durable facts to Honcho before compaction
 - `skills/nextjs.md` — hard gates that will reject your diff (Next.js projects only)
 - `skills/typescript.md` — hard gates that will reject your diff
 

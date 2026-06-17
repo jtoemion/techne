@@ -26,6 +26,12 @@ routing:
     weight: 92
     note: "Mandatory context preflight rules; always loaded for every task."
 
+  - id: "techne/honcho-precompaction-checkpoint"
+    condition: "honcho before compaction, pre-compaction checkpoint, session compaction, long-term memory, checkpoint honcho, critical context"
+    skill_path: "skills/honcho-precompaction-checkpoint.md"
+    weight: 91
+    note: "Preserve durable facts in Honcho before raw session context is compacted."
+
   - id: "techne/tdd"
     condition: "test-first, TDD, red-green-refactor, write tests, test-driven"
     skill_path: "skills/tdd.md"
@@ -151,6 +157,7 @@ disambiguation:
 # ALWAYS-LOADED — these skills are injected as context for every task
 always_loaded:
   - "skills/context-amortization.md"
+  - "skills/honcho-precompaction-checkpoint.md"
   - "skills/nextjs.md"
   - "skills/typescript.md"
 

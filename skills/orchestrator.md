@@ -45,6 +45,18 @@ Parent Agent (you)
 └─ loop.summary() → dashboard
 ```
 
+## Step 0: Pre-Compaction Honcho Checkpoint
+
+Before any session compaction, checkpoint durable facts to Honcho.
+
+```
+extract durable facts → skills/honcho-precompaction-checkpoint.md → honcho_conclude → verify recall → compact
+```
+
+Checkpoint only durable facts: user preferences, project conventions, architecture decisions, HITL boundaries, stable file paths, and verified workflow rules. Do not checkpoint full transcripts, temporary TODOs, commit SHAs, PR numbers, or command logs.
+
+If Honcho is unreachable, use Hermes memory as fallback and report the Honcho failure.
+
 ## Step 1: Decompose
 
 Break the plan into atomic tasks. Each task:
