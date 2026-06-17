@@ -24,8 +24,8 @@ techne/
 
 Techne is **host-driven**: your agent harness (Claude Code, Hermes, OpenCode)
 is the model. Techne never calls a model and needs no API key — it supplies the
-deterministic spine (routing, gates, SHA, intent L1/L2, eval, session) and the
-host runs each phase as its own turn.
+deterministic spine (routing, gates, SHA, intent L1/L2, eval, session, and
+mandatory context preflight) and the host runs each phase as its own turn.
 
 ```python
 import sys; sys.path.insert(0, "harness")
@@ -76,7 +76,7 @@ SKILL.md → implementer.md → nextjs.md / typescript.md
 ## Pipeline
 
 ```
-IMPLEMENT → gates.py → VERIFY → sha_gate.py → REVIEW → RETRO → EVALUATE
+CONTEXT_PREFLIGHT → IMPLEMENT → CONTEXT_GUARD → CRITIQUE → REVIEW → VERIFY → DONE
 ```
 
 Every run produces a scored evaluation report (0-100) saved to `memory/latest_eval.txt`.

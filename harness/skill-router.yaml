@@ -20,6 +20,18 @@ routing:
     weight: 88
     note: "High weight — someone asking to write a skill should land here before tdd/grill."
 
+  - id: "context-amortization"
+    condition: "context preflight, context pack, context hash, context amortization, project context, .techne/context, stop rereading the project"
+    skill_path: "skills/context-amortization.md"
+    weight: 92
+    note: "Mandatory context preflight rules; always loaded for every task."
+
+  - id: "honcho-precompaction-checkpoint"
+    condition: "honcho before compaction, pre-compaction checkpoint, session compaction, long-term memory, checkpoint honcho, critical context"
+    skill_path: "skills/honcho-precompaction-checkpoint.md"
+    weight: 91
+    note: "Preserve durable facts in Honcho before raw session context is compacted."
+
   - id: "tdd"
     condition: "test-first, TDD, red-green-refactor, write tests, test-driven"
     skill_path: "skills/tdd.md"

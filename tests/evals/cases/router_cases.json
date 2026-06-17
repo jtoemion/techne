@@ -26,5 +26,7 @@
   { "id": "r25", "input": "prototype this state machine so I can play with it", "expected_skill": "prototype", "note": "prototype + state + play — prototype branch" },
   { "id": "r26", "input": "mock up a few different designs for the dashboard", "expected_skill": "prototype", "note": "mock + designs — prototype UI branch" },
   { "id": "r27", "input": "find refactoring opportunities to deepen these modules", "expected_skill": "improve-architecture", "note": "refactoring + opportunities + deepen + module(s) — beats implementer's single 'refactor'" },
-  { "id": "r28", "input": "do an architecture review to consolidate the coupling", "expected_skill": "improve-architecture", "note": "architecture + review + consolidate + coupling" }
+  { "id": "r28", "input": "do an architecture review to consolidate the coupling", "expected_skill": "improve-architecture", "note": "architecture + review + consolidate + coupling" },
+  { "id": "r29", "input": "make agents stop rereading the whole project context before every task", "expected_skill": "context-amortization", "note": "context preflight / project context routing — weight 92" },
+  { "id": "r30", "input": "checkpoint honcho before compaction so we don't lose critical context", "expected_skill": "honcho-precompaction-checkpoint", "note": "Honcho pre-compaction checkpoint routing — weight 91" }
 ]

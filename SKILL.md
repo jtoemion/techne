@@ -24,6 +24,8 @@ description: Harness engineering entry point. Routes to the right sub-skill base
 | UI specificity standard | `skills/ui-physics.md` |
 | Design-to-dev handoff | `skills/ui-handoff.md` |
 | Reviewing agent output | `skills/evaluation.md` |
+| Context preflight / project context | `skills/context-amortization.md` |
+| Honcho checkpoint before compaction | `skills/honcho-precompaction-checkpoint.md` |
 | Next.js specific rules | `skills/nextjs.md` |
 | TypeScript type errors | `skills/typescript.md` |
 | React 19 + Vite work | `skills/react.md` |
@@ -51,6 +53,8 @@ For edits that change more than ~3 lines or involve indentation restructuring, p
 
 These are injected for every task — do not skip:
 
+- `skills/context-amortization.md` — mandatory context preflight and context packs
+- `skills/honcho-precompaction-checkpoint.md` — checkpoint durable facts to Honcho before compaction
 - `skills/nextjs.md` — hard gates that will reject your diff (Next.js projects only)
 - `skills/typescript.md` — hard gates that will reject your diff
 
@@ -59,7 +63,7 @@ These are injected for every task — do not skip:
 ## Pipeline Phases
 
 ```
-IMPLEMENT → VERIFY → REVIEW → RETRO → EVALUATE
+CONTEXT_PREFLIGHT → IMPLEMENT → CONTEXT_GUARD → CRITIQUE → REVIEW → VERIFY → DONE
 ```
 
 Each phase is a separate agent. Only the conductor advances phases.
