@@ -28,10 +28,15 @@ Usage:
 
 from __future__ import annotations
 
+import copy
 import json
-from dataclasses import dataclass, field
+import subprocess
+import sys
+import uuid
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from reward_log import RewardLog, WEIGHTS
 
@@ -39,6 +44,8 @@ HARNESS_DIR = Path(__file__).parent
 ROOT = HARNESS_DIR.parent
 AGENTS_DIR = ROOT / "agents"
 MEMORY_DIR = ROOT / "memory"
+DEFAULT_PROPOSALS_PATH = MEMORY_DIR / "prompt_proposals.json"
+EVAL_RUNNER = ROOT / "tests" / "evals" / "run_evals.py"
 
 # Default prompt variants (the starting point)
 DEFAULT_VARIANTS = {
@@ -99,6 +106,38 @@ class VariantStats:
     test_pass_rate: float
 
 
+@dataclass
+class Proposal:
+    """
+    A staged prompt mutation awaiting validation and human ratification.
+
+    A proposal never affects which prompt is used until it is ratified. This is
+    the firewall against score-driven auto-edits: the system may *propose* a full
+    rewrite, but recurrence (propose), a structural gate (validate), and a human
+    (ratify) must all agree before it joins the active pool.
+
+    status transitions:
+        pending → validated → ratified   (the happy path)
+        pending → rejected                (failed the structural gate)
+        validated → rejected              (human declined)
+    """
+    id: str
+    task_type: str
+    agent: str
+    base_variant: str          # the winner this was mutated from
+    variant_name: str          # proposed new variant name
+    config: dict               # description / system_suffix / temperature
+    status: str = "pending"    # pending | validated | rejected | ratified
+    candidate_score: float = 0.0
+    incumbent_score: float = 0.0
+    created: str = ""
+    ratified_by: str = ""
+
+    def __post_init__(self):
+        if not self.created:
+            self.created = datetime.now(timezone.utc).isoformat()
+
+
 class PromptEvolution:
     """
     Manages prompt variants and selects the best one for each task type.
@@ -112,9 +151,12 @@ class PromptEvolution:
     6. Losers get retired
     """
 
-    def __init__(self, reward_log: RewardLog):
+    def __init__(self, reward_log: RewardLog, proposals_path: str | Path | None = None):
         self.reward_log = reward_log
-        self.variants = dict(DEFAULT_VARIANTS)  # agent -> variant_name -> config
+        # Deep copy: promotion mutates self.variants, must not leak into the
+        # module-level DEFAULT_VARIANTS or bleed across instances.
+        self.variants = copy.deepcopy(DEFAULT_VARIANTS)  # agent -> variant_name -> config
+        self.proposals_path = Path(proposals_path or DEFAULT_PROPOSALS_PATH)
 
     def select(self, task_type: str, agent: str = "implementer") -> dict:
         """
@@ -161,15 +203,19 @@ class PromptEvolution:
             attempt_count=attempt_count,
         )
 
-    def evolve(self, task_type: str, agent: str = "implementer") -> str:
+    def _mutate_winner(
+        self, task_type: str, agent: str = "implementer"
+    ) -> Optional[tuple[str, str, dict]]:
         """
-        Generate a new variant by mutating the current winner.
-        Returns the new variant name.
+        Mutate the current winner into a candidate variant config.
+
+        Returns (base_variant, new_name, config) or None when there is not
+        enough data to evolve (the recurrence gate — best_variant needs
+        min_runs). Pure: touches neither the active pool nor the proposals log.
         """
         winner_name = self.reward_log.best_variant(task_type, min_runs=3)
         if not winner_name or winner_name not in self.variants.get(agent, {}):
-            # Not enough data to evolve
-            return list(self.variants.get(agent, {}).keys())[0] if self.variants.get(agent) else "v1"
+            return None
 
         winner = self.variants[agent][winner_name]
 
@@ -179,31 +225,182 @@ class PromptEvolution:
         if misses and agent == "critique":
             blind_spot_hint = f"\n- Also check for: {misses[0]['pattern'][:60]}"
 
-        # Generate new variant by mutating
         new_name = f"{winner_name}_evolved"
         new_suffix = winner.get("system_suffix", "") + blind_spot_hint
 
-        # Adjust temperature based on score
+        # Adjust temperature based on score: low score → explore, high → exploit.
         scores = self.reward_log.variant_scores(task_type)
         winner_score = next(
             (s["avg_score"] for s in scores if s["prompt_variant"] == winner_name),
             0.5,
         )
-        # If score is low, try higher temperature (more exploration)
-        # If score is high, keep temperature low (exploit)
         new_temp = winner.get("temperature", 0.2)
         if winner_score < 0.6:
             new_temp = min(0.5, new_temp + 0.1)
         elif winner_score > 0.8:
             new_temp = max(0.1, new_temp - 0.05)
 
-        self.variants.setdefault(agent, {})[new_name] = {
+        config = {
             "description": f"Evolved from {winner_name}",
             "system_suffix": new_suffix,
             "temperature": new_temp,
         }
+        return winner_name, new_name, config
 
-        return new_name
+    def propose(self, task_type: str, agent: str = "implementer") -> Optional[Proposal]:
+        """
+        Stage a mutation of the current winner as a Proposal.
+
+        Returns the staged Proposal, or None when the recurrence gate is not
+        met. The proposal is persisted but NOT added to the active pool — it
+        cannot affect prompt selection until validate() + ratify() promote it.
+        """
+        mutated = self._mutate_winner(task_type, agent)
+        if mutated is None:
+            return None
+        base_variant, new_name, config = mutated
+
+        # Idempotent while open: post_run_evolve calls propose() every cycle, so
+        # don't stack duplicates. Reuse an existing un-resolved proposal for the
+        # same (agent, variant_name). Resolved ones (rejected/ratified) don't block.
+        for existing in self._load_proposals():
+            if (existing.agent == agent
+                    and existing.variant_name == new_name
+                    and existing.status in ("pending", "validated")):
+                return existing
+
+        proposal = Proposal(
+            id=uuid.uuid4().hex[:12],
+            task_type=task_type,
+            agent=agent,
+            base_variant=base_variant,
+            variant_name=new_name,
+            config=config,
+            incumbent_score=self._incumbent_score(task_type, base_variant),
+        )
+        self._save_proposal(proposal)
+        return proposal
+
+    def validate(
+        self,
+        proposal: Proposal,
+        scorer: Optional[Callable[[dict], float]] = None,
+    ) -> Proposal:
+        """
+        Structural gate: score the candidate and mark it validated or rejected.
+
+        `scorer(config) -> float` is the seam where a per-variant evaluator
+        plugs in. The default runs the eval suite and reports a coarse
+        pass/fail regression signal (1.0 if the suite passes, else 0.0) — it
+        confirms the candidate does not ship against a red suite, it does NOT
+        prove the variant is better. Supply a custom scorer for that.
+
+        Never promotes — passing validation only makes a proposal eligible for
+        ratification.
+        """
+        scorer = scorer or self._default_scorer
+        proposal.candidate_score = float(scorer(proposal.config))
+        proposal.status = (
+            "validated"
+            if proposal.candidate_score >= proposal.incumbent_score
+            else "rejected"
+        )
+        self._save_proposal(proposal)
+        return proposal
+
+    def ratify(self, proposal_id: str, approved: bool, by: str = "human") -> bool:
+        """
+        Human ratification — the only path that promotes a proposal.
+
+        Promotes into the active pool ONLY when the proposal exists, was
+        structurally validated, and the human approved it. Any other case
+        leaves the active pool untouched and returns False. This enforces all
+        three gates together: recurrence (propose) + structural (validate) +
+        human (ratify).
+        """
+        proposal = self.get_proposal(proposal_id)
+        if proposal is None:
+            return False
+
+        if not approved:
+            proposal.status = "rejected"
+            proposal.ratified_by = by
+            self._save_proposal(proposal)
+            return False
+
+        if proposal.status != "validated":
+            # Structurally-gated: cannot promote what history hasn't cleared.
+            return False
+
+        self.variants.setdefault(proposal.agent, {})[proposal.variant_name] = proposal.config
+        proposal.status = "ratified"
+        proposal.ratified_by = by
+        self._save_proposal(proposal)
+        return True
+
+    def evolve(self, task_type: str, agent: str = "implementer") -> str:
+        """
+        Back-compat shim. Stages a proposal (no longer auto-activates).
+
+        Returns the proposed variant name, or the current best/default name when
+        there is nothing to evolve. Promotion now requires validate() + ratify().
+        """
+        proposal = self.propose(task_type, agent)
+        if proposal is not None:
+            return proposal.variant_name
+        agent_variants = self.variants.get(agent, {})
+        return next(iter(agent_variants)) if agent_variants else "v1"
+
+    # ── Proposal persistence + scoring ───────────────────────────────────
+
+    def _incumbent_score(self, task_type: str, variant: str) -> float:
+        """Recorded avg composite score of the incumbent variant (default 0.5)."""
+        scores = self.reward_log.variant_scores(task_type)
+        return next(
+            (s["avg_score"] for s in scores if s["prompt_variant"] == variant),
+            0.5,
+        )
+
+    def _default_scorer(self, config: dict) -> float:
+        """Coarse structural gate: 1.0 if the eval suite passes, else 0.0."""
+        if not EVAL_RUNNER.exists():
+            return 0.0
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-X", "utf8", str(EVAL_RUNNER)],
+                capture_output=True, cwd=str(ROOT), timeout=600,
+            )
+            return 1.0 if proc.returncode == 0 else 0.0
+        except (subprocess.SubprocessError, OSError):
+            return 0.0
+
+    def _load_proposals(self) -> list[Proposal]:
+        if not self.proposals_path.exists():
+            return []
+        try:
+            raw = json.loads(self.proposals_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return []
+        return [Proposal(**d) for d in raw]
+
+    def _save_proposal(self, proposal: Proposal) -> None:
+        """Upsert a proposal into the log by id."""
+        proposals = [p for p in self._load_proposals() if p.id != proposal.id]
+        proposals.append(proposal)
+        self.proposals_path.parent.mkdir(parents=True, exist_ok=True)
+        self.proposals_path.write_text(
+            json.dumps([asdict(p) for p in proposals], indent=2),
+            encoding="utf-8",
+        )
+
+    def get_proposal(self, proposal_id: str) -> Optional[Proposal]:
+        return next((p for p in self._load_proposals() if p.id == proposal_id), None)
+
+    def list_proposals(self, status: Optional[str] = None) -> list[Proposal]:
+        proposals = self._load_proposals()
+        if status is not None:
+            proposals = [p for p in proposals if p.status == status]
+        return proposals
 
     def retire_losers(self, task_type: str, agent: str = "implementer", min_runs: int = 5):
         """
@@ -270,7 +467,8 @@ class PromptEvolution:
 if __name__ == "__main__":
     import os
     log = RewardLog("/tmp/test_evo.db")
-    evo = PromptEvolution(log)
+    # Use a temp proposals file so the self-test never writes to real memory/.
+    evo = PromptEvolution(log, proposals_path="/tmp/test_evo_proposals.json")
 
     # Record some outcomes
     for i in range(5):
@@ -295,4 +493,6 @@ if __name__ == "__main__":
 
     log.close()
     os.remove("/tmp/test_evo.db")
+    if os.path.exists("/tmp/test_evo_proposals.json"):
+        os.remove("/tmp/test_evo_proposals.json")
     print("\nPrompt evolution: OK")

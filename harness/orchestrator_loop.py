@@ -642,22 +642,29 @@ class OrchestratorLoop:
 
     def post_run_evolve(self) -> dict:
         """
-        Run after all tasks complete. Evolves prompts and gates.
-        Returns summary of what evolved.
+        Run after all tasks complete. Stages prompt proposals and evolves gates.
+        Returns summary of what was proposed/generated.
+
+        Prompt proposals are staged only — they do not change which prompt is
+        used until a human ratifies them (propose → validate → ratify). The loop
+        never auto-promotes a prompt rewrite.
         """
         result = {
-            "prompts_evolved": [],
+            "prompts_proposed": [],
             "gates_generated": [],
             "dashboard": "",
         }
 
-        # Evolve prompts for each task type seen
+        # Stage a prompt proposal for each task type seen (pending ratification).
         for task_type in self.reward_log.all_task_types():
-            new_variant = self.evolution.evolve(task_type, "implementer")
-            result["prompts_evolved"].append({
-                "task_type": task_type,
-                "new_variant": new_variant,
-            })
+            proposal = self.evolution.propose(task_type, "implementer")
+            if proposal is not None:
+                result["prompts_proposed"].append({
+                    "task_type": task_type,
+                    "variant_name": proposal.variant_name,
+                    "proposal_id": proposal.id,
+                    "status": proposal.status,
+                })
 
         # Auto-evolve gates
         new_gates = self.gate_evolution.auto_evolve(min_count=3)

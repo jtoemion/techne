@@ -14,3 +14,4 @@ tests/evals/results/*.json
 memory/tasks.db
 memory/rewards.db
 memory/test_baseline.json
+memory/prompt_proposals.json
