@@ -8,10 +8,11 @@ description: How to implement a task correctly. Read before writing any code. Co
 ## Pre-Flight (before touching any file)
 
 ```
-1. Read skills/nextjs.md     — gates will reject violations
-2. Read skills/typescript.md — gates will reject violations
-3. Read memory/mistakes.md   — check if this task type has failed before
-4. Locate only the files needed (Glob/Grep — don't browse)
+1. Read skills/context-amortization.md — mandatory context preflight
+2. Read skills/nextjs.md     — gates will reject violations
+3. Read skills/typescript.md — gates will reject violations
+4. Read memory/mistakes.md   — check if this task type has failed before
+5. Locate only the files needed (Glob/Grep — don't browse)
 ```
 
 ## Diff Discipline

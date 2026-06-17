@@ -20,6 +20,12 @@ routing:
     weight: 88
     note: "High weight — someone asking to write a skill should land here before tdd/grill."
 
+  - id: "techne/context-amortization"
+    condition: "context preflight, context pack, context hash, context amortization, project context, .techne/context, stop rereading the project"
+    skill_path: "skills/context-amortization.md"
+    weight: 92
+    note: "Mandatory context preflight rules; always loaded for every task."
+
   - id: "techne/tdd"
     condition: "test-first, TDD, red-green-refactor, write tests, test-driven"
     skill_path: "skills/tdd.md"
@@ -144,6 +150,7 @@ disambiguation:
 
 # ALWAYS-LOADED — these skills are injected as context for every task
 always_loaded:
+  - "skills/context-amortization.md"
   - "skills/nextjs.md"
   - "skills/typescript.md"
 
