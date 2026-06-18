@@ -123,6 +123,79 @@ def test_multi_task_plan():
     check("all tasks DONE", plan.all_done)
 
 
+def test_on_submit_hook_runs_after_every_phase_submit():
+    print("\n[plan — on_submit hook sees every phase submission]")
+    db, rl = _fresh()
+    seen = []
+    run_plan(["add sale badge to product page"], model=FakeModel(),
+             run_tests=lambda: PASSING_TESTS, db=db, reward_log=rl,
+             prepare_context=False,
+             on_submit=lambda task, phase, outcome: seen.append((phase, outcome.action.value)))
+    phases = [phase for phase, _ in seen]
+    check("hook saw IMPLEMENT", "IMPLEMENT" in phases)
+    check("hook saw CRITIQUE", "CRITIQUE" in phases)
+    check("hook saw VERIFY", "VERIFY" in phases)
+    check("hook saw RETRO close", "RETRO" in phases)
+
+
+def test_critique_follow_up_tasks_become_children_immediately():
+    print("\n[plan — critique FOLLOW_UP_TASK lines become child tasks]")
+    db, rl = _fresh()
+    critique = """CRITIQUE REPORT
+Risk Level: LOW
+LOW:
+- Index lookup is pre-existing and out of scope [convex/schema.ts:12] — would slow reads.
+FOLLOW_UP_TASKS:
+- FOLLOW_UP_TASK: Add Convex index for users.by_email lookup
+VERDICT: CLEAR
+"""
+    plan = run_plan(["add sale badge to product page"], model=FakeModel(critique=critique),
+                    run_tests=lambda: PASSING_TESTS, db=db, reward_log=rl,
+                    prepare_context=False)
+    children = db.get_children(plan.tasks[0].task_id)
+    check("one follow-up child task created", len(children) == 1)
+    check("child keeps critique-follow-up tag", "critique-follow-up" in children[0].tags)
+    check("child title came from FOLLOW_UP_TASK", children[0].title == "Add Convex index for users.by_email lookup")
+
+
+def test_critique_ignores_placeholder_follow_up_tasks():
+    print("\n[plan — critique placeholder FOLLOW_UP_TASK lines are ignored]")
+    db, rl = _fresh()
+    critique = """CRITIQUE REPORT
+Risk Level: LOW
+LOW:
+- No issues found.
+FOLLOW_UP_TASKS:
+- FOLLOW_UP_TASK: <atomic task title for any real but out-of-scope finding>
+VERDICT: CLEAR
+"""
+    plan = run_plan(["add sale badge to product page"], model=FakeModel(critique=critique),
+                    run_tests=lambda: PASSING_TESTS, db=db, reward_log=rl,
+                    prepare_context=False)
+    children = db.get_children(plan.tasks[0].task_id)
+    check("placeholder follow-up did not create a child", len(children) == 0)
+
+
+def test_critical_critique_still_creates_follow_up_tasks_before_hitl():
+    print("\n[plan — CRITICAL critique keeps explicit follow-up tasks]")
+    db, rl = _fresh()
+    critique = """CRITIQUE REPORT
+Risk Level: CRITICAL
+CRITICAL:
+- CRITICAL [src/foo.py:1] — blocking issue.
+FOLLOW_UP_TASKS:
+- FOLLOW_UP_TASK: Add regression coverage for foo edge case
+VERDICT: NEEDS_FIX
+"""
+    plan = run_plan(["add sale badge to product page"], model=FakeModel(critique=critique),
+                    run_tests=lambda: PASSING_TESTS, db=db, reward_log=rl,
+                    prepare_context=False, on_hitl=lambda outcome: "Proceed to review anyway")
+    children = db.get_children(plan.tasks[0].task_id)
+    check("critical critique created the follow-up child", len(children) == 1)
+    check("critical follow-up title preserved",
+          children[0].title == "Add regression coverage for foo edge case")
+
+
 def test_critical_blocks_then_resumes_with_hitl():
     print("\n[plan — critique CRITICAL → BLOCK_HITL, resolved by on_hitl]")
     db, rl = _fresh()
@@ -168,6 +241,10 @@ if __name__ == "__main__":
     test_single_task_runs_all_phases_to_done()
     test_reward_log_and_evolution_fed()
     test_multi_task_plan()
+    test_on_submit_hook_runs_after_every_phase_submit()
+    test_critique_follow_up_tasks_become_children_immediately()
+    test_critique_ignores_placeholder_follow_up_tasks()
+    test_critical_critique_still_creates_follow_up_tasks_before_hitl()
     test_critical_blocks_then_resumes_with_hitl()
     test_prepare_context_invokes_amortization()
     passed = sum(1 for r in results if r)

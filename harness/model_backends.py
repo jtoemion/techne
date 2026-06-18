@@ -6,8 +6,10 @@ driver.run_task takes an injected `model(system, user, phase) -> str` and a
 they're chosen at the entry point, not baked into the pipeline.
 
 Providers (all lazy-import their SDK, so every dependency is optional):
+  minimax     — Xiaomi/Mimo gateway via OpenAI-compatible chat completions. DEFAULT.
+                key: MINIMAX_API_KEY
   claude-cli  — headless Claude Code CLI (`claude -p`, prompt via stdin). Reuses the
-                existing Claude Code auth; no API key, no extra dependency. DEFAULT.
+                existing Claude Code auth; no API key, no extra dependency.
   anthropic   — Anthropic Python SDK.                       key: ANTHROPIC_API_KEY
   openai      — OpenAI SDK chat-completions. With `base_url` this also speaks to ANY
                 OpenAI-COMPATIBLE endpoint — OpenRouter (→ Claude/Gemini/Llama/…), Groq,
@@ -134,6 +136,31 @@ def gemini_model(*, model: str = "gemini-2.0-flash", max_tokens: int = 8000,
     return _model
 
 
+# ── minimax (xiaomi/mimo) — OpenAI-compatible gateway to the Xiaomi family ──
+
+# Xiaomi/Mimo subscription default endpoint. Override with base_url= if you proxy it.
+MINIMAX_BASE_URL = "https://api.minimax.io/v1"
+MINIMAX_API_KEY_ENV = "MINIMAX_API_KEY"
+# Common Xiaomi family models (override per-call via model=).
+MINIMAX_DEFAULT_MODEL = "MiniMax-M2.7"
+
+
+def minimax_model(*, model: str = MINIMAX_DEFAULT_MODEL,
+                  base_url: str = MINIMAX_BASE_URL,
+                  max_tokens: int = 8000, temperature: float = 0.2,
+                  api_key_env: str = MINIMAX_API_KEY_ENV) -> ModelFn:
+    """Xiaomi/Mimo (minimax) provider. Reuses the openai SDK because Xiaomi's gateway
+    speaks the OpenAI chat-completions protocol. The defaults match the minimax
+    subscription: base_url points at the official MiniMax API, and the API key
+    is read from MINIMAX_API_KEY. Override `model` to use other Xiaomi-family models
+    (mimo-v2.5, mimo-v2.5-pro, MiniMax-M2.7, MiniMax-M3)."""
+    return openai_model(
+        model=model, base_url=base_url,
+        max_tokens=max_tokens, temperature=temperature,
+        api_key_env=api_key_env,
+    )
+
+
 # ── registry / factory ───────────────────────────────────────────────────────
 
 _BACKENDS: dict[str, Callable[..., ModelFn]] = {
@@ -141,7 +168,14 @@ _BACKENDS: dict[str, Callable[..., ModelFn]] = {
     "anthropic": anthropic_model,
     "openai": openai_model,
     "gemini": gemini_model,
+    "minimax": minimax_model,
 }
+
+
+def default_provider() -> str:
+    """The provider make_model() picks when none is specified. Kept as a function so
+    tests / env-driven entry points can override without patching the registry."""
+    return os.environ.get("TECHNE_PROVIDER", "minimax")
 
 
 def providers() -> list[str]:

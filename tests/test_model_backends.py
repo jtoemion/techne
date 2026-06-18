@@ -120,8 +120,8 @@ def test_anthropic_missing_key_or_pkg_raises():
 def test_make_model_dispatches_and_rejects_unknown():
     print("\n[make_model — registry dispatch + unknown provider]")
     import model_backends as _mb
-    check("providers() lists all four",
-          set(_mb.providers()) == {"claude-cli", "anthropic", "openai", "gemini"})
+    check("providers() lists all five",
+          set(_mb.providers()) == {"claude-cli", "anthropic", "openai", "gemini", "minimax"})
     raised = False
     try:
         _mb.make_model("not-a-provider")
@@ -169,6 +169,24 @@ def test_openai_base_url_is_accepted_for_compatibility():
     check("openai_model exposes api_key_env (swap providers' keys)", "api_key_env" in params)
 
 
+def test_minimax_provider_wraps_openai_with_xiaomi_defaults():
+    print("\n[minimax — Xiaomi/Mimo provider reuses openai with correct defaults]")
+    import inspect as _i
+    params = _i.signature(mb.minimax_model).parameters
+    check("minimax_model exposes model", "model" in params)
+    check("minimax_model exposes base_url", "base_url" in params)
+    check("minimax_model exposes api_key_env", "api_key_env" in params)
+    check("MINIMAX_BASE_URL points at api.minimax.io",
+          "api.minimax.io" in mb.MINIMAX_BASE_URL)
+    check("MINIMAX_DEFAULT_MODEL is MiniMax-M2.7",
+          mb.MINIMAX_DEFAULT_MODEL == "MiniMax-M2.7")
+    check("MINIMAX_API_KEY_ENV reads the right env var",
+          mb.MINIMAX_API_KEY_ENV == "MINIMAX_API_KEY")
+    check("minimax is registered in _BACKENDS", "minimax" in mb._BACKENDS)
+    check("minimax resolves through make_model with the Xiaomi base_url",
+          mb._BACKENDS["minimax"] is mb.minimax_model)
+
+
 def test_command_test_runner_runs_real_command():
     print("\n[command_test_runner — runs a real command, returns its output]")
     run = mb.command_test_runner([sys.executable, "-c", "print('10 passed')"])
@@ -197,6 +215,7 @@ if __name__ == "__main__":
     test_openai_provider_fails_clearly_without_sdk_or_key()
     test_gemini_provider_fails_clearly_without_sdk_or_key()
     test_openai_base_url_is_accepted_for_compatibility()
+    test_minimax_provider_wraps_openai_with_xiaomi_defaults()
     test_command_test_runner_runs_real_command()
     test_patching_left_no_residue()
     passed = sum(1 for r in results if r)
