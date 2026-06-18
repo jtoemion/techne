@@ -151,8 +151,29 @@ class OrchestratorLoop:
         return True
 
     def next_phase(self, task_id: str) -> str:
-        """Determine the next phase for a task."""
-        return self.enforcer.get_phase(task_id) or "IMPLEMENT"
+        """The next phase to RUN for a task.
+
+        enforcer.get_phase() returns the last COMPLETED phase, so the next phase is the
+        one after it in PHASES (not that phase again — that bug made the loop re-submit
+        IMPLEMENT forever). EVAL runs inside VERIFY's handler, so the host never runs it.
+        """
+        from pipeline_enforcer import PHASES
+
+        # A reset task (PENDING, e.g. after a debugger/re-implement unblock) resumes at
+        # IMPLEMENT even though stale completed-phase events linger in history.
+        task = self.db.get_task(task_id)
+        if task and task.status == "PENDING":
+            return "IMPLEMENT"
+
+        last = self.enforcer.get_phase(task_id)
+        if last is None:
+            return "IMPLEMENT"
+        if last in ("DONE", "FAILED"):
+            return last
+        try:
+            return PHASES[PHASES.index(last) + 1]
+        except (ValueError, IndexError):
+            return "DONE"
 
     def get_prompt(self, task_id: str, phase: str) -> dict:
         """
@@ -191,6 +212,12 @@ class OrchestratorLoop:
             return self._submit_review(task_id, result)
         elif phase == "VERIFY":
             return self._submit_verify(task_id, result)
+        elif phase == "EVAL":
+            return self._submit_eval(task_id, result)
+        elif phase == "RETRO":
+            return self._submit_retro(task_id, result)
+        elif phase == "DEBUG":
+            return self._submit_debug(task_id, result)
         else:
             return LoopOutcome(
                 action=LoopAction.DONE, phase=phase, task_id=task_id,
@@ -282,6 +309,15 @@ class OrchestratorLoop:
             message="Audit complete — advancing to critique",
         )
 
+    def _submit_debug(self, task_id: str, diff: str) -> LoopOutcome:
+        """A debugger session produced a corrected implementation. Reset to a fresh
+        state and re-enter the pipeline as a new IMPLEMENT, so CONTEXT_GUARD / CRITIQUE /
+        REVIEW / VERIFY all re-run on the FIXED code (the prior audits are now stale).
+        This is the clean BLOCKED→DEBUG→IMPLEMENT re-entry the TRANSITIONS table promises.
+        """
+        self.db.reset_task(task_id, to_status="PENDING")
+        return self._submit_implement(task_id, diff)
+
     def _submit_critique(self, task_id: str, critique: str) -> LoopOutcome:
         """Process critique output. Block for HITL if CRITICAL, else advance."""
         # Look for actual CRITICAL findings, not just the word "CRITICAL"
@@ -297,6 +333,7 @@ class OrchestratorLoop:
                 break
 
         if has_critical:
+            self._create_critique_follow_up_tasks(task_id, critique)
             # Extract the critical finding for the HITL question
             critical_line = next(
                 (l for l in critique.split("\n") if "CRITICAL" in l),
@@ -331,9 +368,11 @@ class OrchestratorLoop:
         )
         # Record critique predictions for cross-agent scoring
         self._critique_predictions[task_id] = _extract_findings(critique)
+        follow_ups = self._create_critique_follow_up_tasks(task_id, critique)
+        suffix = f"; created {len(follow_ups)} follow-up task(s)" if follow_ups else ""
         return LoopOutcome(
             action=LoopAction.RUN_PHASE, phase="REVIEW", task_id=task_id,
-            message="Critique clean — advancing to review",
+            message=f"Critique clean — advancing to review{suffix}",
         )
 
     def _submit_review(self, task_id: str, review: str) -> LoopOutcome:
@@ -424,20 +463,42 @@ class OrchestratorLoop:
             test_output_hash=hash(test_output).__repr__(),
         )
 
-        # ── EVAL phase: the original 100-point deterministic eval ───
-        report = self._run_eval(task_id)
-
-        self.enforcer.mark_complete(
-            task_id, "DONE",
-            agent="orchestrator",
+        # Tests passed — score the run (EVAL) before reflecting (RETRO).
+        return LoopOutcome(
+            action=LoopAction.RUN_PHASE, phase="EVAL", task_id=task_id,
+            message="Verified — advancing to eval (deterministic score)",
         )
 
-        # ── RECORD REWARD (the RL signal) — a win ───────────────────
+    def _submit_eval(self, task_id: str, _ignored: str = "") -> LoopOutcome:
+        """EVAL phase — the deterministic 100-point score. No model: computed from the
+        real signals captured during the run (_run_eval also records the phase).
+        Advances to RETRO so reflection has the objective score to reason about."""
+        report = self._run_eval(task_id)   # computes the score AND marks EVAL complete
+        return LoopOutcome(
+            action=LoopAction.RUN_PHASE, phase="RETRO", task_id=task_id,
+            message=f"Scored {report.total}/100 ({report.grade}) — advancing to retro",
+        )
+
+    def _submit_retro(self, task_id: str, reflection: str) -> LoopOutcome:
+        """RETRO phase — record the run's reflection, then close.
+
+        The retro agent (agents/retro.md) answers the structured questions, reflects on
+        the EVAL score + per-skill recurrence, and STAGES skill-edit proposals
+        (ratify-gated, never auto-applied). Here we record it, mark DONE, and record the
+        RL reward — so reflection + learning happen on EVERY run, not never.
+        """
+        self.enforcer.mark_complete(
+            task_id, "RETRO", agent="retro",
+            summary=reflection[:200], findings=reflection,
+        )
+        self.enforcer.mark_complete(task_id, "DONE", agent="orchestrator")
         self._record_reward(task_id)
 
+        report = self._eval.get(task_id)
+        total = report.total if report else 0
         return LoopOutcome(
             action=LoopAction.DONE, phase="DONE", task_id=task_id,
-            message=f"All phases complete — eval {report.total}/100 ({report.grade})",
+            message=f"All phases complete — eval {total}/100",
         )
 
     # ── Reward recording ─────────────────────────────────────────────────
@@ -626,6 +687,30 @@ class OrchestratorLoop:
         removed = sum(1 for l in diff.splitlines() if l.startswith("-") and not l.startswith("---"))
         return f"+{added} -{removed}"
 
+    def _create_critique_follow_up_tasks(self, task_id: str, critique: str) -> list[str]:
+        """Turn explicit critique follow-ups into child tasks immediately.
+
+        Critique often surfaces real but out-of-scope issues. Keeping them in prose
+        loses work. To avoid noisy auto-task creation, only lines that start with
+        FOLLOW_UP_TASK: become child tasks; everything else remains normal critique text.
+        """
+        parent = self.db.get_task(task_id)
+        existing_titles = {child.title for child in self.db.get_children(task_id)}
+        created: list[str] = []
+        for title in _extract_follow_up_tasks(critique):
+            if title in existing_titles:
+                continue
+            task = self.db.create_task(
+                title,
+                description=f"Created from CRITIQUE on {task_id}: {title}",
+                parent_id=task_id,
+                discipline=parent.discipline if parent else "tdd",
+                priority=max((parent.priority - 1) if parent else 0, 0),
+                tags=["critique-follow-up"],
+            )
+            created.append(task.id)
+        return created
+
     # ── RL integration ───────────────────────────────────────────────────
 
     def set_task_type(self, task_id: str, task_type: str) -> None:
@@ -642,16 +727,17 @@ class OrchestratorLoop:
 
     def post_run_evolve(self) -> dict:
         """
-        Run after all tasks complete. Stages prompt proposals and evolves gates.
-        Returns summary of what was proposed/generated.
+        Run after all tasks complete. Stages prompt AND gate proposals.
+        Returns summary of what was proposed.
 
-        Prompt proposals are staged only — they do not change which prompt is
-        used until a human ratifies them (propose → validate → ratify). The loop
-        never auto-promotes a prompt rewrite.
+        Both are staged only (propose → validate → ratify); neither a prompt
+        rewrite nor a new gate is promoted until a human ratifies it. A gate is
+        part of the grader, so the loop must never auto-write one — same firewall
+        as prompts, applied to the grader.
         """
         result = {
             "prompts_proposed": [],
-            "gates_generated": [],
+            "gates_proposed": [],
             "dashboard": "",
         }
 
@@ -666,9 +752,14 @@ class OrchestratorLoop:
                     "status": proposal.status,
                 })
 
-        # Auto-evolve gates
-        new_gates = self.gate_evolution.auto_evolve(min_count=3)
-        result["gates_generated"] = [str(p) for p in new_gates]
+        # Stage gate proposals (recurrence gate). A gate is part of the grader,
+        # so it is NOT written until validate() + ratify() — never auto-written.
+        gate_proposals = self.gate_evolution.propose(min_count=3)
+        result["gates_proposed"] = [
+            {"gate_name": gp.gate_name, "proposal_id": gp.id,
+             "source_count": gp.source_count, "status": gp.status}
+            for gp in gate_proposals
+        ]
 
         # Dashboard
         result["dashboard"] = self.rl_dashboard()
@@ -685,6 +776,32 @@ class OrchestratorLoop:
             self.gate_evolution.dashboard(),
         ]
         return "\n".join(parts)
+
+
+def _extract_follow_up_tasks(text: str) -> list[str]:
+    """Extract explicit child-task requests from critique output.
+
+    Accepted forms:
+      FOLLOW_UP_TASK: add index for users.by_email
+      - FOLLOW_UP_TASK: cover network-error retry path
+
+    Ordinary bullets are intentionally ignored; critique can discuss risks without
+    automatically expanding the board.
+    """
+    tasks: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- "):
+            stripped = stripped[2:].strip()
+        if not stripped.upper().startswith("FOLLOW_UP_TASK:"):
+            continue
+        _, _, title = stripped.partition(":")
+        title = title.strip()
+        if not title or "<" in title or ">" in title:
+            continue
+        if title and title not in tasks:
+            tasks.append(title)
+    return tasks
 
 
 def _extract_findings(text: str) -> list[str]:
