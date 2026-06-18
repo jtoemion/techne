@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from conductor import Pipeline, MAX_RETRIES, ROOT
+from model_backends import default_provider
 
 # A model call for one agent phase: (system, user, phase) -> raw text artifact.
 #   phase is "implement" | "review" | "retro" so an adapter can pick model/temp per role.
@@ -128,7 +129,8 @@ class PlanResult:
         return bool(self.tasks) and all(t.done for t in self.tasks)
 
 
-def _drive_task(loop, task, model: ModelFn, run_tests: TestFn, on_hitl, max_steps: int):
+def _drive_task(loop, task, model: ModelFn, run_tests: TestFn, on_hitl, max_steps: int,
+                on_submit=None):
     """Walk ONE task through the orchestrator's phases until terminal.
 
     Driven by each submit's `outcome.phase` (the handler tells us the next phase to run),
@@ -149,6 +151,8 @@ def _drive_task(loop, task, model: ModelFn, run_tests: TestFn, on_hitl, max_step
             prompt = loop.get_prompt(tid, phase)
             artifact = model(prompt["system"], prompt["user"], phase)
         outcome = loop.submit(tid, phase, artifact)
+        if on_submit is not None:
+            on_submit(task, phase, outcome)
         action = outcome.action
         if action == LoopAction.DONE:
             return TaskRun(tid, task.title, "DONE")
@@ -173,6 +177,7 @@ def run_plan(
     db=None,
     reward_log=None,
     on_hitl=None,
+    on_submit=None,
     prepare_context: bool = True,
     project_root: Path = ROOT,
     evolve: bool = True,
@@ -188,6 +193,8 @@ def run_plan(
     default (None) stops that task safely instead of auto-approving.
 
     `tasks` is a list of strings (titles) or {"title","description"} dicts.
+    `on_submit(task, phase, outcome)` runs after every loop.submit(); hosts use it for
+    durable checkpoints such as Honcho after every phase submission.
     """
     from task_db import TaskDB
     from orchestrator_loop import OrchestratorLoop
@@ -206,7 +213,8 @@ def run_plan(
             task = db.create_task(spec)
         else:
             task = db.create_task(spec["title"], description=spec.get("description", ""))
-        runs.append(_drive_task(loop, task, model, run_tests, on_hitl, max_steps_per_task))
+        runs.append(_drive_task(loop, task, model, run_tests, on_hitl,
+                                max_steps_per_task, on_submit=on_submit))
 
     evolution = loop.post_run_evolve() if evolve else {}
 
@@ -231,8 +239,8 @@ if __name__ == "__main__":
     ap.add_argument("task", nargs="?", help="a single task (omit if using --plan)")
     ap.add_argument("--plan", metavar="FILE",
                     help="run a GROUP of tasks (one per line) through the full RL pipeline")
-    ap.add_argument("--provider", choices=providers(), default="claude-cli",
-                    help="model provider (default: headless Claude Code CLI, no API key)")
+    ap.add_argument("--provider", choices=providers(), default=default_provider(),
+                    help="model provider (default: Xiaomi/Mimo via minimax, no API key if configured)")
     ap.add_argument("--model", default=None,
                     help="model id (provider default if omitted)")
     ap.add_argument("--base-url", default=None,

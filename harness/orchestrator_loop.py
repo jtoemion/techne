@@ -333,6 +333,7 @@ class OrchestratorLoop:
                 break
 
         if has_critical:
+            self._create_critique_follow_up_tasks(task_id, critique)
             # Extract the critical finding for the HITL question
             critical_line = next(
                 (l for l in critique.split("\n") if "CRITICAL" in l),
@@ -367,9 +368,11 @@ class OrchestratorLoop:
         )
         # Record critique predictions for cross-agent scoring
         self._critique_predictions[task_id] = _extract_findings(critique)
+        follow_ups = self._create_critique_follow_up_tasks(task_id, critique)
+        suffix = f"; created {len(follow_ups)} follow-up task(s)" if follow_ups else ""
         return LoopOutcome(
             action=LoopAction.RUN_PHASE, phase="REVIEW", task_id=task_id,
-            message="Critique clean — advancing to review",
+            message=f"Critique clean — advancing to review{suffix}",
         )
 
     def _submit_review(self, task_id: str, review: str) -> LoopOutcome:
@@ -684,6 +687,30 @@ class OrchestratorLoop:
         removed = sum(1 for l in diff.splitlines() if l.startswith("-") and not l.startswith("---"))
         return f"+{added} -{removed}"
 
+    def _create_critique_follow_up_tasks(self, task_id: str, critique: str) -> list[str]:
+        """Turn explicit critique follow-ups into child tasks immediately.
+
+        Critique often surfaces real but out-of-scope issues. Keeping them in prose
+        loses work. To avoid noisy auto-task creation, only lines that start with
+        FOLLOW_UP_TASK: become child tasks; everything else remains normal critique text.
+        """
+        parent = self.db.get_task(task_id)
+        existing_titles = {child.title for child in self.db.get_children(task_id)}
+        created: list[str] = []
+        for title in _extract_follow_up_tasks(critique):
+            if title in existing_titles:
+                continue
+            task = self.db.create_task(
+                title,
+                description=f"Created from CRITIQUE on {task_id}: {title}",
+                parent_id=task_id,
+                discipline=parent.discipline if parent else "tdd",
+                priority=max((parent.priority - 1) if parent else 0, 0),
+                tags=["critique-follow-up"],
+            )
+            created.append(task.id)
+        return created
+
     # ── RL integration ───────────────────────────────────────────────────
 
     def set_task_type(self, task_id: str, task_type: str) -> None:
@@ -749,6 +776,32 @@ class OrchestratorLoop:
             self.gate_evolution.dashboard(),
         ]
         return "\n".join(parts)
+
+
+def _extract_follow_up_tasks(text: str) -> list[str]:
+    """Extract explicit child-task requests from critique output.
+
+    Accepted forms:
+      FOLLOW_UP_TASK: add index for users.by_email
+      - FOLLOW_UP_TASK: cover network-error retry path
+
+    Ordinary bullets are intentionally ignored; critique can discuss risks without
+    automatically expanding the board.
+    """
+    tasks: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- "):
+            stripped = stripped[2:].strip()
+        if not stripped.upper().startswith("FOLLOW_UP_TASK:"):
+            continue
+        _, _, title = stripped.partition(":")
+        title = title.strip()
+        if not title or "<" in title or ">" in title:
+            continue
+        if title and title not in tasks:
+            tasks.append(title)
+    return tasks
 
 
 def _extract_findings(text: str) -> list[str]:
