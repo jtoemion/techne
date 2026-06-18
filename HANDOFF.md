@@ -33,7 +33,7 @@ techne/
     pipeline_enforcer.py ← phase transition state machine
     reward_log.py       ← composite reward tracking (real signals from enforcement)
     prompt_evolution.py ← prompt variant selection
-    gate_evolution.py   ← auto-gate from patterns
+    gate_evolution.py   ← staged gates from patterns (propose/validate/ratify)
     gate_registry.py    ← extensible gate registry
     gates.py            ← GateViolation, built-in gates
     plugins/            ← gate plugins (builtin, security, pipeline_hooks)
@@ -84,7 +84,7 @@ Per run (after all tasks):
 | orchestrator_loop.py | ✓ solid | Multi-task loop + RL, real gate/SHA signals via enforcement.py |
 | reward_log.py | ✓ solid | Composite scoring, cross-agent, real signals |
 | prompt_evolution.py | ✓ works | Variant selection, basic evolution |
-| gate_evolution.py | ✓ works | Pattern → regex → gate generation |
+| gate_evolution.py | ✓ works | Pattern → regex → gate, staged behind propose/validate/ratify (human ratify writes) |
 | pipeline_hooks.py | ✓ solid | Gate hooks for enforcement |
 
 ### The merge (2026-06-15)

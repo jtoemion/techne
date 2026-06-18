@@ -147,7 +147,9 @@ def test_loop_full_run_records_real_reward(loop):
     loop.submit(task.id, "CONTEXT_GUARD", "1 file changed, in scope")
     loop.submit(task.id, "CRITIQUE", "No critical findings")
     loop.submit(task.id, "REVIEW", "REVIEW RESULT: PASS\nNo findings")
-    outcome = loop.submit(task.id, "VERIFY", GOOD_TEST_OUTPUT)
+    assert loop.submit(task.id, "VERIFY", GOOD_TEST_OUTPUT).action == LoopAction.RUN_PHASE
+    loop.submit(task.id, "EVAL", "")                                # deterministic score
+    outcome = loop.submit(task.id, "RETRO", "retro: clean run")     # reflect, then close
     assert outcome.action == LoopAction.DONE
     # The reward was recorded from real signals, not hardcoded True.
     rows = loop.reward_log._conn.execute(
@@ -238,3 +240,8 @@ def test_synthetic_bootstrap_is_idempotent(tmp_path):
     total = log._conn.execute("SELECT COUNT(*) FROM rewards").fetchone()[0]
     assert total == first["tasks_scored"]
     log.close()
+
+
+if __name__ == "__main__":
+    import pytest as _pt
+    raise SystemExit(_pt.main([__file__, "-q"]))

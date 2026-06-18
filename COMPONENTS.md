@@ -177,9 +177,12 @@ If you are **not** on Next.js + TypeScript, do this before first use:
 2. **Add your own gates** (optional). Drop a `.py` file in `harness/plugins/`
    with a `register(registry)` function. See `plugins/security_gates.py` for
    an example. Add your stack to `active_stacks` in `gate-config.yaml`.
-3. **Replace the always-loaded skills.** In `harness/skill-router.yaml`, change
-   `always_loaded` from `nextjs.md`/`typescript.md` to your stack's rule cards,
-   and rewrite those cards (`skills/writing-skill.md` shows the format).
+3. **Add your stack's rule cards (no manual swap needed).** Framework pattern files
+   load by DETECTION now: `harness/stack_detect.py` reads the target project's
+   `package.json` + config files, and `skill-router.yaml`'s `stack_loaded` map injects
+   the matching cards. To support a new stack, add a `tag: skills/<card>.md` line under
+   `stack_loaded` and write the card (`skills/writing-skill.md` shows the format).
+   `always_loaded` holds only stack-INDEPENDENT globals — leave it alone.
 4. **Update the gate eval cases.** Edit `tests/evals/cases/gate_cases.json` to
    cover your gates, then `python tests/evals/run_evals.py --save-baseline`.
 5. **Keep everything else.** The router, intent reasoning, eval scoring, memory,
@@ -199,7 +202,8 @@ Run through this before wiring Techne in:
 [ ] Installed in its own dir (techne/) OR root-file collisions resolved
     (SKILL.md, CONTEXT.md, docs/adr/, memory/)
 [ ] Stack check: Next.js+TS?  → gates work as-is
-                  other stack? → replaced gates + always_loaded (see above)
+                  other stack? → replaced gates + added stack_loaded card (see above)
+                  framework cards auto-load by detection (harness/stack_detect.py)
 [ ] Skill-name collisions checked against host skills (diagnose/tdd/grill/implementer)
 [ ] Router trigger overlap reviewed (skill-router.yaml conditions)
 [ ] memory/mistakes.md present with the insert marker

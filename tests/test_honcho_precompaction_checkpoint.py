@@ -23,17 +23,19 @@ def test_honcho_checkpoint_skill_exists_and_compact():
 
 
 def test_honcho_checkpoint_routes_and_is_always_loaded():
+    # always_loaded now holds only the stack-INDEPENDENT globals; framework files
+    # (nextjs/typescript) moved to stack_loaded and load on detection instead.
     assert get_always_loaded() == [
+        "skills/karpathy-guidelines.md",
         "skills/context-amortization.md",
         "skills/honcho-precompaction-checkpoint.md",
-        "skills/nextjs.md",
-        "skills/typescript.md",
     ]
 
+    # route() returns a plain dict, and router ids are bare (no "techne/" prefix).
     match = route("checkpoint honcho before compaction")
     assert match is not None
-    assert match.id == "techne/honcho-precompaction-checkpoint"
-    assert match.skill_path == "skills/honcho-precompaction-checkpoint.md"
+    assert match["id"] == "honcho-precompaction-checkpoint"
+    assert match["skill_path"] == "skills/honcho-precompaction-checkpoint.md"
 
 
 def test_orchestrator_mentions_precompaction_checkpoint():
@@ -44,5 +46,10 @@ def test_orchestrator_mentions_precompaction_checkpoint():
 
 def test_skill_router_yaml_mentions_precompaction_checkpoint():
     text = (ROOT / "harness" / "skill-router.yaml").read_text(encoding="utf-8")
-    assert "techne/honcho-precompaction-checkpoint" in text
+    assert "honcho-precompaction-checkpoint" in text
     assert "skills/honcho-precompaction-checkpoint.md" in text
+
+
+if __name__ == "__main__":
+    import pytest as _pt
+    raise SystemExit(_pt.main([__file__, "-q"]))

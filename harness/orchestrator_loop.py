@@ -151,8 +151,29 @@ class OrchestratorLoop:
         return True
 
     def next_phase(self, task_id: str) -> str:
-        """Determine the next phase for a task."""
-        return self.enforcer.get_phase(task_id) or "IMPLEMENT"
+        """The next phase to RUN for a task.
+
+        enforcer.get_phase() returns the last COMPLETED phase, so the next phase is the
+        one after it in PHASES (not that phase again — that bug made the loop re-submit
+        IMPLEMENT forever). EVAL runs inside VERIFY's handler, so the host never runs it.
+        """
+        from pipeline_enforcer import PHASES
+
+        # A reset task (PENDING, e.g. after a debugger/re-implement unblock) resumes at
+        # IMPLEMENT even though stale completed-phase events linger in history.
+        task = self.db.get_task(task_id)
+        if task and task.status == "PENDING":
+            return "IMPLEMENT"
+
+        last = self.enforcer.get_phase(task_id)
+        if last is None:
+            return "IMPLEMENT"
+        if last in ("DONE", "FAILED"):
+            return last
+        try:
+            return PHASES[PHASES.index(last) + 1]
+        except (ValueError, IndexError):
+            return "DONE"
 
     def get_prompt(self, task_id: str, phase: str) -> dict:
         """
@@ -191,6 +212,12 @@ class OrchestratorLoop:
             return self._submit_review(task_id, result)
         elif phase == "VERIFY":
             return self._submit_verify(task_id, result)
+        elif phase == "EVAL":
+            return self._submit_eval(task_id, result)
+        elif phase == "RETRO":
+            return self._submit_retro(task_id, result)
+        elif phase == "DEBUG":
+            return self._submit_debug(task_id, result)
         else:
             return LoopOutcome(
                 action=LoopAction.DONE, phase=phase, task_id=task_id,
@@ -281,6 +308,15 @@ class OrchestratorLoop:
             action=LoopAction.RUN_PHASE, phase="CRITIQUE", task_id=task_id,
             message="Audit complete — advancing to critique",
         )
+
+    def _submit_debug(self, task_id: str, diff: str) -> LoopOutcome:
+        """A debugger session produced a corrected implementation. Reset to a fresh
+        state and re-enter the pipeline as a new IMPLEMENT, so CONTEXT_GUARD / CRITIQUE /
+        REVIEW / VERIFY all re-run on the FIXED code (the prior audits are now stale).
+        This is the clean BLOCKED→DEBUG→IMPLEMENT re-entry the TRANSITIONS table promises.
+        """
+        self.db.reset_task(task_id, to_status="PENDING")
+        return self._submit_implement(task_id, diff)
 
     def _submit_critique(self, task_id: str, critique: str) -> LoopOutcome:
         """Process critique output. Block for HITL if CRITICAL, else advance."""
@@ -424,20 +460,42 @@ class OrchestratorLoop:
             test_output_hash=hash(test_output).__repr__(),
         )
 
-        # ── EVAL phase: the original 100-point deterministic eval ───
-        report = self._run_eval(task_id)
-
-        self.enforcer.mark_complete(
-            task_id, "DONE",
-            agent="orchestrator",
+        # Tests passed — score the run (EVAL) before reflecting (RETRO).
+        return LoopOutcome(
+            action=LoopAction.RUN_PHASE, phase="EVAL", task_id=task_id,
+            message="Verified — advancing to eval (deterministic score)",
         )
 
-        # ── RECORD REWARD (the RL signal) — a win ───────────────────
+    def _submit_eval(self, task_id: str, _ignored: str = "") -> LoopOutcome:
+        """EVAL phase — the deterministic 100-point score. No model: computed from the
+        real signals captured during the run (_run_eval also records the phase).
+        Advances to RETRO so reflection has the objective score to reason about."""
+        report = self._run_eval(task_id)   # computes the score AND marks EVAL complete
+        return LoopOutcome(
+            action=LoopAction.RUN_PHASE, phase="RETRO", task_id=task_id,
+            message=f"Scored {report.total}/100 ({report.grade}) — advancing to retro",
+        )
+
+    def _submit_retro(self, task_id: str, reflection: str) -> LoopOutcome:
+        """RETRO phase — record the run's reflection, then close.
+
+        The retro agent (agents/retro.md) answers the structured questions, reflects on
+        the EVAL score + per-skill recurrence, and STAGES skill-edit proposals
+        (ratify-gated, never auto-applied). Here we record it, mark DONE, and record the
+        RL reward — so reflection + learning happen on EVERY run, not never.
+        """
+        self.enforcer.mark_complete(
+            task_id, "RETRO", agent="retro",
+            summary=reflection[:200], findings=reflection,
+        )
+        self.enforcer.mark_complete(task_id, "DONE", agent="orchestrator")
         self._record_reward(task_id)
 
+        report = self._eval.get(task_id)
+        total = report.total if report else 0
         return LoopOutcome(
             action=LoopAction.DONE, phase="DONE", task_id=task_id,
-            message=f"All phases complete — eval {report.total}/100 ({report.grade})",
+            message=f"All phases complete — eval {total}/100",
         )
 
     # ── Reward recording ─────────────────────────────────────────────────
@@ -642,16 +700,17 @@ class OrchestratorLoop:
 
     def post_run_evolve(self) -> dict:
         """
-        Run after all tasks complete. Stages prompt proposals and evolves gates.
-        Returns summary of what was proposed/generated.
+        Run after all tasks complete. Stages prompt AND gate proposals.
+        Returns summary of what was proposed.
 
-        Prompt proposals are staged only — they do not change which prompt is
-        used until a human ratifies them (propose → validate → ratify). The loop
-        never auto-promotes a prompt rewrite.
+        Both are staged only (propose → validate → ratify); neither a prompt
+        rewrite nor a new gate is promoted until a human ratifies it. A gate is
+        part of the grader, so the loop must never auto-write one — same firewall
+        as prompts, applied to the grader.
         """
         result = {
             "prompts_proposed": [],
-            "gates_generated": [],
+            "gates_proposed": [],
             "dashboard": "",
         }
 
@@ -666,9 +725,14 @@ class OrchestratorLoop:
                     "status": proposal.status,
                 })
 
-        # Auto-evolve gates
-        new_gates = self.gate_evolution.auto_evolve(min_count=3)
-        result["gates_generated"] = [str(p) for p in new_gates]
+        # Stage gate proposals (recurrence gate). A gate is part of the grader,
+        # so it is NOT written until validate() + ratify() — never auto-written.
+        gate_proposals = self.gate_evolution.propose(min_count=3)
+        result["gates_proposed"] = [
+            {"gate_name": gp.gate_name, "proposal_id": gp.id,
+             "source_count": gp.source_count, "status": gp.status}
+            for gp in gate_proposals
+        ]
 
         # Dashboard
         result["dashboard"] = self.rl_dashboard()

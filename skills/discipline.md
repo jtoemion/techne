@@ -55,6 +55,7 @@ The lanes load the SAME three. They differ only in whether gates enforce them.
 
 ## Next Steps
 
+- The default code behavior (assume/simplify/surgical/verify) → `skills/karpathy-guidelines.md` (always-loaded)
 - Code-change task → the gated pipeline (`skills/implementer.md`, gates apply)
 - Dispatched in Kanban / any non-code job → `skills/kanban.md` (gate-free lane)
 - Isolated-worker context + report-back → `skills/kanban/isolation.md`

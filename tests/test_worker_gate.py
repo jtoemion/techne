@@ -122,10 +122,17 @@ def test_enforce_and_full_pass():
 
 
 def _cleanup():
+    if not WORK.exists():
+        return
     for p in WORK.glob("*"):
         p.unlink()
-    if WORK.exists():
-        WORK.rmdir()
+    WORK.rmdir()
+
+
+def teardown_module(module):
+    """pytest path: remove the scratch dir after the module's tests run, mirroring
+    the __main__ `finally`. Without this, pytest left tests/_wg_tmp/ behind each run."""
+    _cleanup()
 
 
 if __name__ == "__main__":

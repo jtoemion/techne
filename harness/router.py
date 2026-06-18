@@ -96,9 +96,37 @@ def route(task_input: str) -> Optional[dict]:
 
 
 def get_always_loaded() -> list[str]:
-    """Return list of skill paths that should always be loaded."""
+    """Return skill paths loaded for EVERY task, regardless of stack (the
+    stack-independent globals: default behavior + context + checkpoint rules)."""
     router = _load_router()
     return router.get("always_loaded", [])
+
+
+def get_stack_loaded() -> dict[str, str]:
+    """Return the stack-tag → skill-path map. These framework pattern files load
+    ONLY when stack_detect.detect_stack() finds the tag in the target project."""
+    router = _load_router()
+    mapping = router.get("stack_loaded", {})
+    return mapping if isinstance(mapping, dict) else {}
+
+
+def resolve_stack_skills(root=ROOT) -> list[str]:
+    """Skill paths to inject for the stack detected at `root` (deduped, ordered
+    by the yaml mapping for determinism). Empty when no framework is detected."""
+    from stack_detect import detect_stack
+
+    tags = detect_stack(root)
+    out: list[str] = []
+    for tag, path in get_stack_loaded().items():
+        if tag in tags and path not in out:
+            out.append(path)
+    return out
+
+
+def stack_gated_paths() -> set[str]:
+    """Every skill path that is stack-gated. The conductor's catch-all fallback
+    must NOT load these — they load only when their stack is detected."""
+    return set(get_stack_loaded().values())
 
 
 def get_common_loaded() -> list[str]:
