@@ -235,7 +235,26 @@ disambiguation:
       tdd            = write tests FIRST for code you are building (unit/integration).
       webapp-testing = drive a RUNNING app in a real browser (Playwright) to verify UI behavior.
 
-# ALWAYS-LOADED — these skills are injected as context for every task
+# ALWAYS-LOADED — stack-INDEPENDENT globals, injected for every task on any codebase.
+# Framework pattern files are NOT here anymore (see stack_loaded) — they were dead
+# weight on projects that don't use them.
 always_loaded:
-  - "skills/nextjs.md"
-  - "skills/typescript.md"
+  # The default behavior on any code task (assume/simplify/surgical/verify).
+  # Loaded FIRST so it frames the routed skill as the CONSTANT beneath it.
+  - "skills/karpathy-guidelines.md"
+  - "skills/context-amortization.md"
+  - "skills/honcho-precompaction-checkpoint.md"
+
+# STACK-LOADED — framework pattern files injected ONLY when stack_detect.detect_stack()
+# finds the tag in the TARGET project (package.json deps + config files). A SvelteKit
+# project pulls svelte.md + the firestore/netlify diagnose patterns; a pure-Python repo
+# (like Techne itself) pulls none of them. This is what makes diagnose framework-aware
+# without bloating every other codebase.
+stack_loaded:
+  nextjs:     "skills/nextjs.md"
+  react:      "skills/react.md"
+  svelte:     "skills/svelte.md"
+  sveltekit:  "skills/svelte.md"
+  typescript: "skills/typescript.md"
+  firestore:  "skills/diagnose/firestore.md"
+  netlify:    "skills/diagnose/netlify.md"

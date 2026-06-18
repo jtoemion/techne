@@ -52,7 +52,7 @@ from checkpoint import (
     check_verification,
     get_summary,
 )
-from router import route, get_always_loaded
+from router import route, get_always_loaded, resolve_stack_skills, stack_gated_paths
 from session import new_session
 from store import state_dir
 from reward import log_clean, log_solved, net_by_skill, total_points as reward_points
@@ -89,16 +89,27 @@ class PhaseResult:
 
 # ─── Prompt-assembly helpers (no model calls) ────────────────────────────────
 
-def _read_skill_files(task: str = "") -> str:
-    """Read skill files — always-loaded + task-relevant via router."""
+def _read_skill_files(task: str = "", project_root: Path = ROOT) -> str:
+    """Read skill files — stack-independent globals + the detected stack's framework
+    patterns + the task-routed skill. Framework pattern files load ONLY when the
+    project's stack is detected (see stack_detect.py); they are kept out of the
+    catch-all so they don't become dead weight on codebases that don't use them.
+    `project_root` is the repo being worked on (where package.json lives)."""
     loaded = set()
     parts = []
 
-    # Always-loaded skills (nextjs.md, typescript.md)
+    # Stack-independent globals (default behavior, context, checkpoint rules).
     for rel_path in get_always_loaded():
         full = ROOT / rel_path
         if full.exists() and full.name not in loaded:
             parts.append(f"=== {full.name} [always-loaded] ===\n{full.read_text(encoding='utf-8')}")
+            loaded.add(full.name)
+
+    # Framework patterns for the detected stack only (svelte.md, firestore.md, …).
+    for rel_path in resolve_stack_skills(project_root):
+        full = ROOT / rel_path
+        if full.exists() and full.name not in loaded:
+            parts.append(f"=== {full.name} [stack-loaded] ===\n{full.read_text(encoding='utf-8')}")
             loaded.add(full.name)
 
     # Task-routed skill
@@ -110,9 +121,11 @@ def _read_skill_files(task: str = "") -> str:
                 parts.append(f"=== {skill_path.name} [routed: {matched['id']}] ===\n{skill_path.read_text(encoding='utf-8')}")
                 loaded.add(skill_path.name)
 
-    # Fallback: load any remaining skill files not yet included
+    # Fallback: remaining top-level skills, EXCLUDING stack-gated files — those load
+    # above only when their stack is detected, never unconditionally here.
+    gated_names = {Path(p).name for p in stack_gated_paths()}
     for md in sorted(SKILLS_DIR.glob("*.md")):
-        if md.name not in loaded:
+        if md.name not in loaded and md.name not in gated_names:
             parts.append(f"=== {md.name} ===\n{md.read_text(encoding='utf-8')}")
 
     return "\n\n".join(parts)
@@ -482,6 +495,10 @@ class Pipeline:
         else:
             lines.append("  SKILL ACTIVATED : none (no specific match — all rules loaded)")
         loaded = [Path(p).name for p in get_always_loaded()]
+        for p in resolve_stack_skills():
+            name = Path(p).name
+            if name not in loaded:
+                loaded.append(name)
         if self.matched_skill:
             rp = self.matched_skill.get("skill_path", "")
             if rp and Path(rp).name not in loaded:

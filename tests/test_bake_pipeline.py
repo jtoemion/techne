@@ -72,7 +72,12 @@ def _drive_to_done(loop, diff, test_output, *, task_type="api", variant="v1"):
     loop.submit(t.id, "CONTEXT_GUARD", "1 file changed, in scope")
     loop.submit(t.id, "CRITIQUE", "No critical findings")
     loop.submit(t.id, "REVIEW", "REVIEW RESULT: PASS")
-    return t, loop.submit(t.id, "VERIFY", test_output)
+    verify = loop.submit(t.id, "VERIFY", test_output)
+    # VERIFY now advances to EVAL (score) → RETRO (reflect) → DONE; carry it through.
+    if verify.action == LoopAction.RUN_PHASE and verify.phase == "EVAL":
+        loop.submit(t.id, "EVAL", "")  # deterministic score
+        return t, loop.submit(t.id, "RETRO", "retro: clean run, no recurring issues")
+    return t, verify  # VERIFY blocked/failed — return as-is
 
 
 # ── Layer 1: GateRegistry ────────────────────────────────────────────────────
@@ -217,6 +222,7 @@ def test_bake_eval_reflects_gate_violation(loop):
     loop.submit(t.id, "CRITIQUE", "No critical findings")
     loop.submit(t.id, "REVIEW", "REVIEW RESULT: PASS")
     loop.submit(t.id, "VERIFY", GOOD_TESTS)
+    loop.submit(t.id, "EVAL", "")  # deterministic score runs here now
     report = loop.get_eval(t.id)
     assert report.scores["Gate Compliance"][0] < 20     # not a perfect gate run
     assert report.total < 100

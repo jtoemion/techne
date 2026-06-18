@@ -15,13 +15,21 @@ triggers:
 
 ## Mandatory Rule
 
-No agent starts with a blank repo. Every Techne task begins with `CONTEXT_PREFLIGHT` and receives a fresh context pack before `IMPLEMENT`.
+No agent starts with a blank repo, and no run leaves the docs stale. Context is a
+BOOKEND: **recall** a hot pack before `IMPLEMENT`, **conclude** by updating the docs the
+change invalidated so the next recall is true.
 
 ```
-CONTEXT_PREFLIGHT → IMPLEMENT → CONTEXT_GUARD → CRITIQUE → REVIEW → VERIFY → DONE
+RECALL → IMPLEMENT → CONTEXT_GUARD → CRITIQUE → REVIEW → VERIFY → EVAL → RETRO → CONCLUDE → DONE
+   recall + conclude = amortized bookends; EVAL = deterministic score; RETRO reflects on
+   that score + feeds the knowledge graph
 ```
 
-The context role pays the broad-read cost once. Worker roles consume targeted packs.
+The context role pays the broad-read cost once (recall). At conclude, `context-guard`
+keeps `docs/` + `.techne/context` HOT: deterministic summary via
+`harness/context_build.conclude_context()`, prose `docs/` (ARCHITECTURE, data-model,
+CONTRACTS, adr/, domain) updated by the agent. Docs never drift because every run ends
+by refreshing them.
 
 ## Required Context Files
 

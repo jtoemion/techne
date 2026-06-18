@@ -45,6 +45,7 @@ PHASES = [
     "REVIEW",
     "VERIFY",
     "EVAL",
+    "RETRO",
     "DONE",
 ]
 
@@ -59,8 +60,9 @@ TRANSITIONS = {
     "CONTEXT_GUARD":["CRITIQUE", "BLOCKED", "FAILED"],     # audit done → critique, or fail
     "CRITIQUE":     ["REVIEW", "BLOCKED", "FAILED"],       # critique done → review, or fail
     "REVIEW":       ["VERIFY", "BLOCKED", "IMPLEMENT", "FAILED"],  # review: pass→verify, hardfail→re-implement
-    "VERIFY":       ["EVAL", "DONE", "BLOCKED", "IMPLEMENT", "FAILED"],  # verify: pass→eval(→done), fail→re-implement
-    "EVAL":         ["DONE", "FAILED"],                     # deterministic 100-pt score → done
+    "VERIFY":       ["EVAL", "BLOCKED", "IMPLEMENT", "FAILED"],  # verify: pass→eval(score), fail→re-implement
+    "EVAL":         ["RETRO", "FAILED"],                   # deterministic 100-pt score → reflect
+    "RETRO":        ["DONE", "FAILED"],                    # reflect on the score → done
     "DONE":         [],                                      # terminal
     "FAILED":       [],                                      # terminal
 }
@@ -72,6 +74,7 @@ PHASE_DESCRIPTIONS = {
     "CRITIQUE": "Predict emergent bugs from the implementation diff",
     "REVIEW": "Security/correctness/gate compliance review",
     "VERIFY": "Run tests, capture real output",
+    "RETRO": "Reflect on the run — lessons, recurrence, skill-edit proposals",
     "EVAL": "Score the run deterministically (100-point eval report)",
     "DONE": "Task complete",
     "BLOCKED": "Task blocked — needs human input or debugger",
@@ -128,6 +131,13 @@ class PipelineEnforcer:
             )
 
         current = self.get_phase(task_id)
+
+        # A reset/fresh task (status PENDING) may (re)start at IMPLEMENT even if older
+        # completed-phase events still linger in history. Without this, an unblock that
+        # resets to PENDING stayed "stuck" at the last completed phase (e.g. CONTEXT_GUARD)
+        # and could never re-enter IMPLEMENT — the live HITL→debugger deadlock.
+        if task.status == "PENDING":
+            current = None
 
         # Check if we're in a terminal state
         if current in ("DONE", "FAILED"):
@@ -229,6 +239,11 @@ class PipelineEnforcer:
                 test_output_hash=test_output_hash, summary=summary,
             )
             self._overwrite_last_action(task_id, "VERIFY")
+        elif phase == "RETRO":
+            self.db._log_event(
+                task_id, agent, "RETRO", summary[:200],
+                findings=findings, verdict=verdict,
+            )
         elif phase == "EVAL":
             self.db._log_event(
                 task_id, agent, "EVAL", summary[:200],
@@ -263,10 +278,23 @@ class PipelineEnforcer:
             allowed=True, current_phase=self.get_phase(task_id),
             target_phase="BLOCKED", task=task,
         )
+    def _next_after_completed(self, task_id: str) -> str | None:
+        """The phase that WOULD run next (i.e. the one that blocked), from history."""
+        last = self.get_phase(task_id)
+        if last is None:
+            return "IMPLEMENT"
+        try:
+            return PHASES[PHASES.index(last) + 1]
+        except (ValueError, IndexError):
+            return None
+
     def unblock(self, task_id: str, *, decision: str = "proceed") -> PhaseTransition:
         """
-        Unblock a task after human decision.
-        Returns to PENDING so the orchestrator can re-dispatch.
+        Unblock a task, ROUTING on the human decision (not a blind reset):
+          - "proceed"/"override" → soft-pass the phase that blocked and move forward
+          - anything else (debugger / re-implement / retry) → back to PENDING so the host
+            re-implements (a debugger fix is re-submitted as a fresh IMPLEMENT, which
+            re-runs the downstream phases on the corrected code)
         """
         task = self.db.get_task(task_id)
         if not task:
@@ -280,14 +308,27 @@ class PipelineEnforcer:
                 reason=f"Task is not BLOCKED (status: {task.status})",
                 task=task,
             )
-        self.db._log_event(
-            task_id, "human", "unblock",
-            f"Human decision: {decision}",
-        )
+        self.db._log_event(task_id, "human", "unblock", f"Human decision: {decision}")
+
+        d = decision.lower()
+        if "proceed" in d or "override" in d:
+            blocked = self._next_after_completed(task_id)
+            if blocked in PHASES:
+                # Record the blocked phase as soft-passed so get_phase advances past it.
+                self.db._log_event(
+                    task_id, "human", blocked,
+                    f"HITL override: proceed past {blocked}", verdict="SOFT_FAIL",
+                )
+            self.db.reset_task(task_id, to_status="IN_PROGRESS")
+            return PhaseTransition(
+                allowed=True, current_phase=self.get_phase(task_id),
+                target_phase="IN_PROGRESS", task=task,
+            )
+
+        # debugger / re-implement / retry / default → re-implement from a fresh diff
         self.db.reset_task(task_id, to_status="PENDING")
         return PhaseTransition(
-            allowed=True, current_phase="PENDING",
-            target_phase="PENDING", task=task,
+            allowed=True, current_phase="PENDING", target_phase="PENDING", task=task,
         )
 
     def block_for_hitl(

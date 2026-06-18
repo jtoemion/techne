@@ -41,6 +41,20 @@ Parent Agent (you)
 └─ loop.summary() → dashboard
 ```
 
+## Step 0: Pre-Compaction Honcho Checkpoint
+
+Before a long run that may hit session compaction, preserve durable facts FIRST —
+raw context is discarded on compact, so checkpoint to Honcho before you lose it.
+
+```python
+# extract durable facts → honcho_conclude → verify recall → then proceed
+honcho_conclude(conclusion="<one durable fact>", peer="user")
+```
+
+Checkpoint: user preferences, project conventions, architecture decisions, HITL
+boundaries. Skip transient state (TODOs, command output, SHAs). Full rules +
+fallback (Hermes memory if Honcho is down) → `skills/honcho-precompaction-checkpoint.md`.
+
 ## Step 1: Decompose
 
 Break the plan into atomic tasks. Each task:

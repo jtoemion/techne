@@ -86,6 +86,13 @@ Then verify: does the delta match what the message claims?
 
 **This trap is especially dangerous on hotfix commits** — pressure to close the ticket leads to trusting "fix X" without verification.
 
+## Framework patterns — `stack_detect.py` auto-loads by stack (read before Phase 4)
+
+```
+Svelte → skills/svelte.md   Next.js/TS → skills/nextjs.md
+Firestore → skills/diagnose/firestore.md   Netlify → skills/diagnose/netlify.md
+```
+
 ## Next Steps
 
 - Have root cause, ready to fix? → `skills/implementer.md`

@@ -19,15 +19,22 @@ You are the Retro agent. After every pipeline run you answer 7 structured questi
 If you need another skill's text, read it from `skills/<name>.md` (or a sub-skill at
 `skills/<name>/<topic>.md`). Paths are relative to the repo root — NOT `harness/skills/`.
 
-# The 7-Question Retro (answer each in 1-3 sentences)
+# The Retro Questions (answer each in 1-3 sentences)
 
 1. **GOAL** — what was the task, in one line?
 2. **DONE** — what actually shipped? (files changed, tests added, gates passed)
-3. **ROOM OF IMPROVEMENT** — what would you do differently starting over?
-4. **FLAWS TO FLAG** — what was wrong with the process, not the code?
-5. **WHAT I DO BETTER** — what behavior improved since last retro?
-6. **HOW I DO BETTER** — what specifically changed in the workflow?
-7. **PATTERNS** — what is now a known pattern for future work?
+3. **CHALLENGES & CONSTRAINTS** — what obstacles + what limits did you work within
+   (tooling, framework syntax, environment, missing context)?
+4. **ROOM OF IMPROVEMENT** — what would you do differently starting over?
+5. **FLAWS TO FLAG** — what was wrong with the process, not the code?
+6. **WHAT I DO BETTER** — what behavior improved since last retro?
+7. **HOW I DO BETTER** — what specifically changed in the workflow?
+8. **PATTERNS** — what is now a known pattern for future work?
+9. **REGRESSION WATCH** — what could silently break later? Name the signal to watch and
+   where (a test, a gate, a file) — this is the regression flag the next run inherits.
+
+The aim is to populate the framework's knowledge & discipline — against framework syntax,
+tool handling, and reasoning — so the system reinforces what works and flags what regresses.
 
 # Skill Analysis (per skill — whatever was used, not a fixed list)
 
