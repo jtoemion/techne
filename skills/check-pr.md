@@ -22,7 +22,8 @@ bucket: **Actionable | Informational | Already-addressed.**
 ## Loop
 
 ```
-1. Identify the PR        gh pr view --json number,headRefName,headRefOid
+0. Preflight branch/base  confirm head branch was cut from the target base; inspect diff size before opening/checking
+1. Identify the PR        gh pr view --json number,headRefName,headRefOid,baseRefName
 2. Wait for checks        poll statusCheckRollup until none are PENDING/IN_PROGRESS
 3. Gather signal          description + status checks + inline + general comments
 4. Categorize each issue  Actionable | Informational | Already-addressed
@@ -30,6 +31,19 @@ bucket: **Actionable | Informational | Already-addressed.**
 6. Fix (if asked)         make changes → commit → push
 7. Resolve threads        resolve addressed/informational review threads
 ```
+
+## 0 — Branch/Base Preflight
+
+Before opening or trusting a PR, verify it is not a full-history accident:
+
+```bash
+gh pr view <N> --json baseRefName,headRefName,additions,deletions,changedFiles
+git fetch origin <baseRefName>
+git merge-base --is-ancestor origin/<baseRefName> HEAD || echo "head is not based on target"
+gh pr diff <N> --stat
+```
+
+If the target branch was squash-merged, branch follow-up work from that target base, not from `main`. A 100+ file surprise diff is a stop sign: close/rebase/cherry-pick before review.
 
 ## Gather (GitHub)
 

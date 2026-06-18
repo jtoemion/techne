@@ -22,7 +22,9 @@ description: How to implement a task correctly. Read before writing any code. Co
 - No cleanup outside task scope
 - No speculative abstractions
 - No console.log in production paths
-- Output: unified diff only
+- Match the touched file's current typing style
+- Do not introduce `any`, `unknown as`, or broad casts unless the original file already used that exact escape hatch
+- Output: raw unified diff only (`diff --git`, `---`, `+++`, `@@`); no prose summary
 ```
 
 ## Gate Awareness

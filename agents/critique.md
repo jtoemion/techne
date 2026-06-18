@@ -66,8 +66,13 @@ LOW (worth noting):
 TEST GAPS:
 - <missing test> — <what it should verify>
 
+FOLLOW_UP_TASKS:
+- FOLLOW_UP_TASK: Add a concrete atomic task title for any real but out-of-scope finding
+
 VERDICT: CLEAR | NEEDS_FIX | NEEDS_REVIEW
 ```
+
+Omit the `FOLLOW_UP_TASKS` section when there are no concrete follow-up tasks. `FOLLOW_UP_TASK:` lines are machine-read by the orchestrator and become child tasks immediately. Use them for real out-of-scope findings instead of burying work in prose. Do not emit follow-up tasks for vague concerns or copy placeholder text.
 
 # Hard Constraints
 
