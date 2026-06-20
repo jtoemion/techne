@@ -42,7 +42,14 @@ from pathlib import Path
 from gates import GateViolation, run_all_gates, run_all_gates_report, format_gate_report
 from sha_gate import gate_test_output
 from mistakes import log_mistake, check_relevant, count_active, count_by_skill
-from ledger import check_relevant as ledger_check_relevant, count_by_kind as ledger_by_kind, validate as ledger_validate
+from ledger import (
+    check_relevant as ledger_check_relevant,
+    count_by_kind as ledger_by_kind,
+    validate as ledger_validate,
+    log_decision,
+    log_lesson,
+    log_discipline,
+)
 from evaluator import evaluate_pipeline_run, EvalReport, load_eval_history as _load_eval_history, _trend
 from checkpoint import (
     increment_pipeline_run,
@@ -155,6 +162,49 @@ def _surface_relevant_ledger(task: str) -> str:
     for e in relevant[:3]:
         lines.append(f"  - {e['kind']}: {e['what'][:80]}")
     return "\n".join(lines)
+
+
+# ── Retro marker parsing ────────────────────────────────────────────────────
+# The retro agent emits durable method-layer entries as one-line markers.
+# Format: KIND: <what> [| WHY: <why>] [| SKILL: <skill>]
+#
+# Example:
+#   DECISION: Use line-prefix validation in CONCLUDE | WHY: keyword-match too loose | SKILL: orchestrator
+#   LESSON: SHA must be scoped to CONTEXT line | WHY: bypass via HONCHO line was possible
+#   DISCIPLINE: Gate self-improvement on recurrence, not scores | SKILL: writing-skill
+#
+# Parsing is permissive: WHY and SKILL are optional (defaults applied in log_*).
+# Each line is independent — agent can emit any number of any kind.
+
+import re
+
+_RETRO_MARKER_RE = re.compile(
+    r"^\s*(?P<kind>DECISION|LESSON|DISCIPLINE)\s*:\s*"
+    r"(?P<what>.+?)"
+    r"(?:\s*\|\s*WHY\s*:\s*(?P<why>.+?))?"
+    r"(?:\s*\|\s*SKILL\s*:\s*(?P<skill>[^\n|]+?))?"
+    r"\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def parse_retro_markers(output: str) -> list[tuple[str, str, str]]:
+    """Extract (kind, what, why) tuples from retro output.
+
+    SKILL field is parsed but NOT returned — caller applies the routed skill_id
+    so attribution stays consistent (a retro mentioning a different skill could
+    otherwise misattribute the entry).
+    """
+    if not output:
+        return []
+    found: list[tuple[str, str, str]] = []
+    for m in _RETRO_MARKER_RE.finditer(output):
+        kind = m.group("kind").upper()
+        what = m.group("what").strip()
+        why = (m.group("why") or "").strip()
+        if what:
+            found.append((kind, what, why))
+    return found
 
 
 def _read_agent_prompt(agent_name: str) -> str:
@@ -290,7 +340,7 @@ class Pipeline:
         until MAX_RETRIES, then HALT. On pass: measure focus/scope + intent L1/L2
         (optional host semantic_verdict), enforce the intent gate.
         """
-        (state_dir() / "implementer_output.txt").write_text(diff, encoding="utf-8")
+        (state_dir() / f"implementer_output_{self.run_number}.txt").write_text(diff, encoding="utf-8")
         # Full gate board for visibility (does not stop on first failure)
         self.gate_report = run_all_gates_report(diff)
         print(format_gate_report(self.gate_report))
@@ -476,11 +526,49 @@ class Pipeline:
 
     def submit_retro(self, output: str = "", questions_answered: int = 7,
                      produced_proposals: bool = False) -> PhaseResult:
-        """Record retro completion."""
+        """Record retro completion AND write durable method-layer entries to ledger.
+
+        Parses the retro output for structured markers and writes them to
+        memory/ledger.md. The retro agent emits lines like:
+
+          DECISION: <what> | WHY: <why> | SKILL: <skill>
+          LESSON: <what> | WHY: <why> | SKILL: <skill>
+          DISCIPLINE: <what> | WHY: <why> | SKILL: <skill>
+
+        Anything the host passes via `output` gets parsed; nothing in `output`
+        means no durable entries (the gate still records completion). This
+        closes the docs-skill wiring gap: lessons used to print and vanish.
+        """
         self.eval_metrics["retro_ran"] = True
         self.eval_metrics["retro_questions"] = questions_answered
         self.eval_metrics["retro_proposals"] = produced_proposals
-        print("[CONDUCTOR] RETRO complete")
+
+        # ── Write durable method-layer entries to ledger.md ──
+        if output:
+            entries = parse_retro_markers(output)
+            skill_id = self.skill_id if self.skill_id else "none"
+            written = {"DECISION": 0, "LESSON": 0, "DISCIPLINE": 0}
+            for kind, what, why in entries:
+                try:
+                    if kind == "DECISION":
+                        log_decision(what, why, skill=skill_id, source="retro")
+                    elif kind == "LESSON":
+                        log_lesson(what, why, skill=skill_id, source="retro")
+                    elif kind == "DISCIPLINE":
+                        log_discipline(what, why, skill=skill_id, source="retro")
+                    written[kind] += 1
+                except Exception as e:
+                    print(f"[CONDUCTOR] (!) failed to log {kind}: {e}")
+            total = sum(written.values())
+            if total > 0:
+                summary = ", ".join(f"{k.lower()}s {n}" for k, n in written.items() if n)
+                print(f"[CONDUCTOR] RETRO wrote {total} ledger entr(y/ies) ({summary})")
+                self.eval_metrics["retro_ledger_entries"] = written
+            else:
+                print("[CONDUCTOR] RETRO complete (no ledger markers in output)")
+        else:
+            print("[CONDUCTOR] RETRO complete")
+
         return PhaseResult("DONE")
 
     # ── STATUS (show after every phase) ─────────────────────────────────────────

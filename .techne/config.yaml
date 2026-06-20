@@ -1,0 +1,8 @@
+project_name: techne
+context_glob: '*.CONTEXT.md'
+generated_dir: .techne/generated
+memory_dir: .techne/memory
+search_max_results: 8
+policy_generated: [.techne/generated/**, .techne/memory/wikilinks.*, .techne/memory/task_history.jsonl]
+policy_proposed: [.techne/context/*.CONTEXT.md, docs/architecture/**]
+policy_manual: [docs/adr/**, README.md, SKILL.md]

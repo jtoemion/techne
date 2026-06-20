@@ -50,6 +50,8 @@ Usage:
 
 from __future__ import annotations
 
+import json
+import subprocess
 import textwrap
 from dataclasses import dataclass
 from enum import Enum
@@ -156,20 +158,40 @@ class OrchestratorLoop:
         enforcer.get_phase() returns the last COMPLETED phase, so the next phase is the
         one after it in PHASES (not that phase again — that bug made the loop re-submit
         IMPLEMENT forever). EVAL runs inside VERIFY's handler, so the host never runs it.
+
+        phase_mode controls the starting phase:
+          - "full" (default): starts at RECALL (10-phase pipeline)
+          - "fast": starts at IMPLEMENT (skip RECALL+CONCLUDE, for review-only tasks)
+
+        The PENDING short-circuit only fires when no phase has been completed yet for
+        this run. The earlier code returned RECALL whenever status==PENDING, which
+        trapped the loop after RECALL mark_complete (RECALL's mark_complete only logs
+        an event, it doesn't change status, so the short-circuit fired forever and the
+        pipeline could never advance to IMPLEMENT). Trust the enforcer's last-completed
+        phase if one exists.
         """
         from pipeline_enforcer import PHASES
 
-        # A reset task (PENDING, e.g. after a debugger/re-implement unblock) resumes at
-        # IMPLEMENT even though stale completed-phase events linger in history.
         task = self.db.get_task(task_id)
-        if task and task.status == "PENDING":
-            return "IMPLEMENT"
+        phase_mode = task.phase_mode if task else "full"
 
+        # A reset task (PENDING, e.g. after a debugger/re-implement unblock) resumes at
+        # RECALL (or IMPLEMENT for fast mode) even though stale completed-phase events linger in history.
+        # BUT: only treat PENDING as "reset" if no phase has been completed for this run.
         last = self.enforcer.get_phase(task_id)
+        if last is None and task and task.status == "PENDING":
+            return "IMPLEMENT" if phase_mode == "fast" else "RECALL"
         if last is None:
-            return "IMPLEMENT"
+            return "IMPLEMENT" if phase_mode == "fast" else "RECALL"
         if last in ("DONE", "FAILED"):
             return last
+
+        # For fast mode, skip RECALL and CONCLUDE phases
+        if phase_mode == "fast":
+            next_phase = PHASES[PHASES.index(last) + 1] if last in PHASES else "IMPLEMENT"
+            if next_phase in ("RECALL", "CONCLUDE"):
+                return PHASES[PHASES.index(next_phase) + 1] if next_phase in PHASES else "DONE"
+
         try:
             return PHASES[PHASES.index(last) + 1]
         except (ValueError, IndexError):
@@ -202,7 +224,9 @@ class OrchestratorLoop:
                 message=f"Task {task_id} not found",
             )
 
-        if phase == "IMPLEMENT":
+        if phase == "RECALL":
+            return self._submit_recall(task_id, result)
+        elif phase == "IMPLEMENT":
             return self._submit_implement(task_id, result)
         elif phase == "CONTEXT_GUARD":
             return self._submit_context_guard(task_id, result)
@@ -216,6 +240,8 @@ class OrchestratorLoop:
             return self._submit_eval(task_id, result)
         elif phase == "RETRO":
             return self._submit_retro(task_id, result)
+        elif phase == "CONCLUDE":
+            return self._submit_conclude(task_id, result)
         elif phase == "DEBUG":
             return self._submit_debug(task_id, result)
         else:
@@ -251,9 +277,78 @@ class OrchestratorLoop:
 
     # ── Phase submission handlers ────────────────────────────────────────
 
+    def _submit_recall(self, task_id: str, result: str) -> LoopOutcome:
+        """Process RECALL phase output.
+
+        Full-mode recall must name both the durable Honcho context and the
+        workshop retrieval artifact used to ground IMPLEMENT.
+        """
+        task = self.db.get_task(task_id)
+        if not result or len(result.strip()) < 20:
+            return LoopOutcome(
+                action=LoopAction.RETRY, phase="RECALL", task_id=task_id,
+                message=(
+                    "RECALL produced no usable context. Include HONCHO_CONTEXT and "
+                    "WORKSHOP_CONTEXT lines backed by real recall output."
+                ),
+            )
+
+        recall_lower = result.lower()
+        has_honcho = "honcho_context:" in recall_lower or "honcho context:" in recall_lower
+        has_workshop = "workshop_context:" in recall_lower
+        if not has_honcho:
+            return LoopOutcome(
+                action=LoopAction.RETRY, phase="RECALL", task_id=task_id,
+                message=(
+                    "RECALL missing HONCHO_CONTEXT line. Return structured proof like "
+                    "'HONCHO_CONTEXT: <durable context>'."
+                ),
+            )
+        if task and task.phase_mode != "fast" and not has_workshop:
+            return LoopOutcome(
+                action=LoopAction.RETRY, phase="RECALL", task_id=task_id,
+                message=(
+                    "RECALL missing WORKSHOP_CONTEXT line. Run the workshop retrieval "
+                    "packet and name the context docs/files you used."
+                ),
+            )
+
+        self.enforcer.mark_complete(
+            task_id, "RECALL",
+            agent="recaller",
+            summary=f"Recall artifact: {result[:150]}",
+            findings=result,
+        )
+
+        return LoopOutcome(
+            action=LoopAction.RUN_PHASE, phase="IMPLEMENT", task_id=task_id,
+            message="Context recalled — advancing to implement",
+        )
+
     def _submit_implement(self, task_id: str, diff: str) -> LoopOutcome:
         """Process implementer output. Check gates, retry or advance."""
         task = self.db.get_task(task_id)
+
+        # Enforce Honcho recall contract: IMPLEMENT requires a prior RECALL phase
+        # Skip for fast-mode tasks (review-only, no RECALL/CONCLUDE)
+        history = self.db.get_task_history(task_id)
+        has_recall = any(e.action == "RECALL" for e in history)
+        if not has_recall and (task and task.phase_mode != "fast"):
+            return LoopOutcome(
+                action=LoopAction.RETRY, phase="IMPLEMENT", task_id=task_id,
+                message="RECALL phase required: run honcho_search or honcho_context first to recall durable context.",
+            )
+        if task and task.phase_mode != "fast":
+            latest_recall = next((e for e in reversed(history) if e.action == "RECALL"), None)
+            recall_findings = (latest_recall.findings if latest_recall else "") or ""
+            if "workshop_context:" not in recall_findings.lower():
+                return LoopOutcome(
+                    action=LoopAction.RETRY, phase="IMPLEMENT", task_id=task_id,
+                    message=(
+                        "IMPLEMENT blocked: latest RECALL artifact does not reference "
+                        "WORKSHOP_CONTEXT. Re-run RECALL with the workshop retrieval packet first."
+                    ),
+                )
 
         # Check if the result looks like a valid diff
         has_diff = bool(diff.strip()) and ("@@ " in diff or "--- " in diff)
@@ -297,7 +392,30 @@ class OrchestratorLoop:
         )
 
     def _submit_context_guard(self, task_id: str, audit: str) -> LoopOutcome:
-        """Process context-guard output. Record and advance."""
+        """Process context-guard output. Validate punch list, then advance.
+
+        The context-guard agent MUST emit a CONCLUDE PUNCH LIST with at least
+        DOCS, CONTEXT, and HONCHO entries. A lazy agent that skips it produces
+        no guidance for CONCLOSE — the gate catches this.
+        """
+        # Validate punch list presence
+        audit_lower = audit.lower()
+        has_punch_list = (
+            "conclude punch list" in audit_lower
+            or ("punch list" in audit_lower)
+            or ("docs:" in audit_lower and ("context" in audit_lower or "not_needed" in audit_lower))
+        )
+        if not has_punch_list:
+            return LoopOutcome(
+                action=LoopAction.RETRY, phase="CONTEXT_GUARD", task_id=task_id,
+                message=(
+                    "CONTEXT_GUARD output missing CONCLUDE PUNCH LIST. "
+                    "Include a section with DOCS, CONTEXT, and HONCHO entries "
+                    "(each with updated path or NOT_NEEDED reason). "
+                    "This is required — CONCLOSE cannot close without it."
+                ),
+            )
+
         self.enforcer.mark_complete(
             task_id, "CONTEXT_GUARD",
             agent="context-guard",
@@ -426,7 +544,10 @@ class OrchestratorLoop:
         """Process test output. Done if the SHA gate passes, retry/escalate if not."""
         # Real verification — the SHA gate confirms tests actually ran (no fakes,
         # unique hash, pass indicators present), the same gate conductor uses.
-        verify = verify_tests(test_output)
+        # Review-only tasks skip the pass-indicator check (no real test output).
+        task = self.db.get_task(task_id)
+        review_only = bool(task and "review-only" in (task.tags or []))
+        verify = verify_tests(test_output, review_only=review_only)
         self._test_pass[task_id] = verify.passed
 
         if not verify.passed:
@@ -480,19 +601,98 @@ class OrchestratorLoop:
         )
 
     def _submit_retro(self, task_id: str, reflection: str) -> LoopOutcome:
-        """RETRO phase — record the run's reflection, then close.
+        """RETRO phase — record the run's reflection, then advance to CONCLUDE.
 
         The retro agent (agents/retro.md) answers the structured questions, reflects on
         the EVAL score + per-skill recurrence, and STAGES skill-edit proposals
-        (ratify-gated, never auto-applied). Here we record it, mark DONE, and record the
-        RL reward — so reflection + learning happen on EVERY run, not never.
+        (ratify-gated, never auto-applied). Here we record it and advance to CONCLUDE.
+
+        Gate: retro must be substantive, not a checkbox.
         """
+        # Gate: reject checkbox retros
+        if len(reflection.strip()) < 100:
+            return LoopOutcome(
+                action=LoopAction.RETRY, phase="RETRO", task_id=task_id,
+                message=(
+                    "RETRO too short (< 100 chars). Answer the 7 questions, reference "
+                    "completed phases, and record lessons learned. This is not a checkbox."
+                ),
+            )
+
+        # Gate: must reference at least one completed phase (shows it looked at the run)
+        history = self.db.get_task_history(task_id)
+        completed_phases = [e.action for e in history if e.action in PHASE_DESCRIPTIONS]
+        reflection_lower = reflection.lower()
+        referenced = [p for p in completed_phases if p.lower() in reflection_lower]
+        if not referenced:
+            return LoopOutcome(
+                action=LoopAction.RETRY, phase="RETRO", task_id=task_id,
+                message=(
+                    "RETRO doesn't reference any completed phase. "
+                    f"Phases this run: {', '.join(completed_phases)}. "
+                    "Reference what happened — what went well, what broke, what to change."
+                ),
+            )
+
         self.enforcer.mark_complete(
             task_id, "RETRO", agent="retro",
             summary=reflection[:200], findings=reflection,
         )
+
+        report = self._eval.get(task_id)
+        total = report.total if report else 0
+
+        # Fast-mode tasks skip CONCLUDE — advance directly to DONE
+        task = self.db.get_task(task_id)
+        if task and task.phase_mode == "fast":
+            self.enforcer.mark_complete(
+                task_id, "DONE", agent="retro",
+                summary=f"Fast-mode pipeline complete (eval {total}/100)",
+            )
+            return LoopOutcome(
+                action=LoopAction.DONE, phase="DONE", task_id=task_id,
+                message=f"Reflection recorded (eval {total}/100) — pipeline complete (fast mode)",
+            )
+
+        return LoopOutcome(
+            action=LoopAction.RUN_PHASE, phase="CONCLUDE", task_id=task_id,
+            message=f"Reflection recorded (eval {total}/100) — advancing to conclude",
+        )
+
+    def _submit_conclude(self, task_id: str, result: str) -> LoopOutcome:
+        """CONCLUDE phase — durable write-back and context/doc closure.
+
+        The host must write durable facts back to Honcho and close the context-guard
+        punch list: docs updated or explicitly not needed, .techne/context refreshed
+        or explicitly not needed. Then we mark DONE and record the RL reward.
+        """
+        validation_error = self._validate_conclude_proof(result)
+        if validation_error:
+            return LoopOutcome(
+                action=LoopAction.RETRY, phase="CONCLUDE", task_id=task_id,
+                message=validation_error,
+            )
+
+        self.enforcer.mark_complete(
+            task_id, "CONCLUDE", agent="concluder",
+            summary=f"Closure proof: {result[:150]}",
+            findings=result,
+        )
         self.enforcer.mark_complete(task_id, "DONE", agent="orchestrator")
         self._record_reward(task_id)
+
+        # ── Retro-learn trigger ──
+        # After every DONE, snapshot the per-skill mistake counts so retro-learn
+        # can decide whether to propose a skill edit (>=2 ACTIVE on one skill) or
+        # a new gate (>=4). The host reads the snapshot — no LLM call here.
+        try:
+            from mistakes import count_by_skill
+            from ledger import count_by_kind as ledger_by_kind
+            recurrence = count_by_skill()
+            if any(n >= 2 for n in recurrence.values()):
+                self._log_retro_learn_trigger(task_id, recurrence, ledger_by_kind())
+        except Exception:
+            pass  # retro-learn is best-effort — don't block DONE on a snapshot error
 
         report = self._eval.get(task_id)
         total = report.total if report else 0
@@ -500,6 +700,162 @@ class OrchestratorLoop:
             action=LoopAction.DONE, phase="DONE", task_id=task_id,
             message=f"All phases complete — eval {total}/100",
         )
+
+    def _log_retro_learn_trigger(self, task_id: str, recurrence: dict,
+                                 ledger_counts: dict) -> None:
+        """Write a retro-learn trigger line + rebuild wikilink index.
+
+        Two outputs:
+        1. memory/retro_learn_triggers.md — append-only log of "this task should be retro'd"
+        2. memory/wikilinks.{md,json} — rebuilt index of all mistakes + ledger entries
+           (refreshed every DONE so the wikilinks never go stale)
+
+        The retro-learn skill (or host) reads trigger lines and acts on them.
+        The wikilink index is bidirectional: each entry links to its skill,
+        each skill links back to its entries. Tools consume the JSON, humans
+        read the Markdown.
+        """
+        from datetime import datetime, timezone
+        from pathlib import Path
+
+        memory_dir = Path(__file__).parent.parent / "memory"
+        memory_dir.mkdir(parents=True, exist_ok=True)
+        triggers = memory_dir / "retro_learn_triggers.md"
+
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        recurring = ", ".join(f"{s}:{n}" for s, n in sorted(recurrence.items(), key=lambda x: -x[1]) if n >= 2)
+        if not recurring and not ledger_counts:
+            return  # nothing to retro-learn
+        line = f"- [{now}] task {task_id} | recurrence: {recurring or '(none)'} | ledger: {ledger_counts or '(empty)'}\n"
+        if not triggers.exists():
+            triggers.write_text(
+                "# Retro-Learn Triggers\n"
+                "# Auto-written when a task completes with recurring mistakes or new ledger entries.\n"
+                "# Read by retro-learn to decide what to propose (skill edit / new gate / nothing).\n\n",
+                encoding="utf-8",
+            )
+        with triggers.open("a", encoding="utf-8") as f:
+            f.write(line)
+
+        # Rebuild wikilink index — cheap and keeps the registry current
+        try:
+            from wikilink import build_graph, format_markdown as wl_md
+            import json as _json
+            graph = build_graph()
+            (memory_dir / "wikilinks.md").write_text(wl_md(graph), encoding="utf-8")
+            (memory_dir / "wikilinks.json").write_text(
+                _json.dumps(graph, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass  # wikilink build is best-effort — never block DONE
+
+    def _validate_conclude_proof(self, result: str) -> str:
+        """Validate CONCLUDE proof: Honcho + docs closure + context closure.
+
+        Parses the proof line-by-line looking for structured prefixes:
+          HONCHO: <proof text>
+          DOCS: <path> updated OR NOT_NEEDED: <reason>
+          CONTEXT: <path> refreshed OR NOT_NEEDED: <reason> [sha:<hex>]
+
+        Rejects if any required section is missing, if the CONTEXT line claims
+        an update without a commit SHA, or if .techne/context has uncommitted
+        changes in the working tree.
+        """
+        import re
+
+        if not result or len(result.strip()) < 40:
+            return (
+                "CONCLUDE proof too short. Provide HONCHO conclusion proof plus DOCS "
+                "and CONTEXT closure proof (updated path or NOT_NEEDED reason)."
+            )
+
+        # Parse structured lines: prefix must start a non-blank line
+        has_honcho = False
+        context_line = None  # the raw CONTEXT line (if any)
+        for line in result.splitlines():
+            stripped = line.strip()
+            lower = stripped.lower()
+            if lower.startswith("honcho"):
+                has_honcho = True
+            elif lower.startswith("context"):
+                context_line = stripped
+            # DOCS: detected by prefix — but we only need to know it exists
+            # (too many valid formats: "DOCS: NOT_NEEDED: ...", "DOCS: docs/X.md updated")
+
+        has_docs = any(l.strip().lower().startswith("docs") for l in result.splitlines())
+        has_context = context_line is not None
+
+        missing = []
+        if not has_honcho:
+            missing.append("HONCHO line (start a line with 'HONCHO: <proof>')")
+        if not has_docs:
+            missing.append("DOCS line (start a line with 'DOCS: <path> updated' or 'DOCS: NOT_NEEDED: <reason>')")
+        if not has_context:
+            missing.append("CONTEXT line (start a line with 'CONTEXT: <path> refreshed' or 'CONTEXT: NOT_NEEDED: <reason>')")
+        if missing:
+            return "CONCLUDE missing proof: " + "; ".join(missing)
+
+        # ── Hard gate: .techne/context must be committed if modified ──
+        uncommitted = self._get_uncommitted_context_files()
+        if uncommitted:
+            return (
+                f"CONCLUDE blocked: .techne/context has uncommitted changes. "
+                f"Stage and commit before concluding. Files: {', '.join(uncommitted)}"
+            )
+
+        # ── Hard gate: SHA required when context was updated (not NOT_NEEDED) ──
+        if context_line is None:
+            return ""  # already checked above, but pyright needs the guard
+        ctx_lower = context_line.lower()
+        context_updated = ".techne/context" in ctx_lower and "not_needed" not in ctx_lower
+        if context_updated:
+            # SHA must appear ON THE CONTEXT LINE specifically
+            has_sha = bool(re.search(r"sha[:\s]+[0-9a-f]{7,40}", ctx_lower))
+            if not has_sha:
+                return (
+                    "CONCLUDE missing SHA proof. The CONTEXT line claims .techne/context "
+                    "was updated but no commit SHA was found on that line. "
+                    "Format: CONTEXT: .techne/context/<path> refreshed sha:<full-sha>"
+                )
+
+        return ""
+
+    def _get_uncommitted_context_files(self) -> list[str]:
+        """Return list of uncommitted .techne/context files, or [] if clean.
+
+        Walks up from CWD (where scripts are always cd'd to project root) to find
+        .git, then checks .techne/context for uncommitted changes. Falls back to
+        walking up from db_path if CWD approach fails.
+        """
+        import subprocess, os
+
+        def find_repo_root(start: Path) -> Path | None:
+            cursor = start
+            while cursor != cursor.parent:
+                if (cursor / ".git").is_dir():
+                    return cursor
+                cursor = cursor.parent
+            return None
+
+        try:
+            # Primary: walk up from CWD (script always cd'd to project root)
+            repo_root = find_repo_root(Path.cwd())
+            if repo_root is None:
+                # Fallback: walk up from db_path
+                repo_root = find_repo_root(Path(self.db.db_path).parent)
+            if repo_root is None:
+                return []  # non-git — skip gate
+
+            # Check full status then filter — glob misses nested paths like stage/app/.techne/context/
+            result = subprocess.run(
+                ["git", "status", "--porcelain", "--", "."],
+                capture_output=True, text=True, cwd=str(repo_root),
+            )
+            uncommitted = [l.split(None, 1)[1] for l in result.stdout.strip().split("\n") if l.strip()]
+            return [f for f in uncommitted if ".techne/context" in f]
+        except Exception:
+            return []  # error — skip gate rather than block
 
     # ── Reward recording ─────────────────────────────────────────────────
 
@@ -629,11 +985,13 @@ class OrchestratorLoop:
     def _read_agent_body(self, phase: str) -> str:
         """Read the agent .md file for a phase, return body (frontmatter stripped)."""
         agent_map = {
+            "RECALL": "recaller",
             "IMPLEMENT": "implementer",
             "CONTEXT_GUARD": "context-guard",
             "CRITIQUE": "critique",
             "REVIEW": "reviewer",
             "VERIFY": "verifier",
+            "CONCLUDE": "concluder",
             "DEBUG": "debugger",
         }
         agent_name = agent_map.get(phase, phase.lower())
@@ -663,6 +1021,52 @@ class OrchestratorLoop:
             f"INSTRUCTIONS: {PHASE_DESCRIPTIONS.get(phase, phase)}",
         ]
 
+        # RECALL: host needs task title + tags to search Honcho
+        if phase == "RECALL" and task:
+            tags = ", ".join(task.tags) if task.tags else "none"
+            lines.extend([
+                "",
+                f"TAGS: {tags}",
+                "",
+                "Run both recall sources before IMPLEMENT:",
+                "- Honcho: recall durable user/workflow context relevant to the task.",
+                "- Workshop: use the project workshop retrieval packet below.",
+                "",
+                "Required output format:",
+                "HONCHO_CONTEXT: <durable context you recalled>",
+                "WORKSHOP_CONTEXT: <comma-separated .techne/context docs used, or none>",
+                "WORKSHOP_FILES: <comma-separated files surfaced by retrieval, or none>",
+                "LESSONS: <relevant lessons/mistakes/decisions, or none>",
+                "FOCUS: <2-4 lines on what IMPLEMENT should touch/avoid>",
+            ])
+            lines.extend(self._build_workshop_recall_lines(task))
+
+        # RETRO: inject mistakes.md, per-skill recurrence, routed skill content
+        if phase == "RETRO" and task:
+            lines.extend(self._build_retro_context(task))
+
+        # CONCLUDE: host must close context-guard's punch list with proof
+        if phase == "CONCLUDE":
+            context_guard = next((e for e in reversed(history) if e.action == "CONTEXT_GUARD"), None)
+            lines.extend([
+                "",
+                "CONCLUDE PROOF REQUIRED:",
+                "  HONCHO: honcho://conclusion/<id> or conclusion id from honcho_conclude",
+                "  DOCS: docs/<file>.md updated OR NOT_NEEDED: <specific reason>",
+                "  CONTEXT: .techne/context/<path> refreshed OR NOT_NEEDED: <specific reason>",
+                "",
+                "When CONTEXT is updated: commit .techne/context first, then include",
+                "  sha:<full-commit-sha> in the CONTEXT line (the gate rejects without it).",
+                "",
+                "Close the Context-Guard punch list. Do not return a generic summary.",
+            ])
+            if context_guard:
+                lines.extend([
+                    "",
+                    "LATEST CONTEXT_GUARD REPORT:",
+                    context_guard.findings or context_guard.summary,
+                ])
+
         if prior:
             lines.append("")
             lines.append("COMPLETED PHASES:")
@@ -670,6 +1074,100 @@ class OrchestratorLoop:
                 lines.append(f"  {e.action}: {e.summary[:100]}")
 
         return "\n".join(lines)
+
+    def _build_workshop_recall_lines(self, task) -> list[str]:
+        """Best-effort workshop retrieval packet for RECALL."""
+        lines = ["", "WORKSHOP RETRIEVAL PACKET:"]
+        try:
+            from workshop import find_workshop_paths
+
+            paths = find_workshop_paths(Path.cwd())
+            if paths is None:
+                lines.append("WORKSHOP_STATUS: no .techne/config.yaml found from current cwd upward")
+                lines.append("WORKSHOP_QUERY: unavailable")
+                return lines
+
+            query_parts = [task.title or "", task.description or ""]
+            if task.tags:
+                query_parts.append(" ".join(task.tags))
+            query = " ".join(part.strip() for part in query_parts if part and part.strip())
+            script = paths.scripts_dir / "context_search.py"
+            if not script.exists():
+                lines.append(f"WORKSHOP_STATUS: missing script {script}")
+                lines.append(f"WORKSHOP_QUERY: {query or task.title}")
+                return lines
+
+            proc = subprocess.run(
+                ["python3", str(script), query or task.title, "--json"],
+                cwd=str(paths.repo_root),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if proc.returncode != 0:
+                stderr = (proc.stderr or proc.stdout or "context_search failed").strip()
+                lines.append(f"WORKSHOP_STATUS: retrieval failed: {stderr[:240]}")
+                lines.append(f"WORKSHOP_QUERY: {query or task.title}")
+                return lines
+
+            payload = json.loads(proc.stdout)
+            docs = [row.get("path", "") for row in payload.get("context_docs", [])[:5] if row.get("path")]
+            files = [row.get("path", "") for row in payload.get("files", [])[:8] if row.get("path")]
+            subsystems = [row.get("name", "") for row in payload.get("subsystems", [])[:5] if row.get("name")]
+            memories = []
+            for bucket in ("lessons", "mistakes", "decisions"):
+                for row in payload.get(bucket, [])[:2]:
+                    what = row.get("what")
+                    if what:
+                        memories.append(what)
+
+            lines.extend([
+                "WORKSHOP_STATUS: ok",
+                f"WORKSHOP_QUERY: {payload.get('query', query or task.title)}",
+                f"LIKELY_SUBSYSTEMS: {', '.join(subsystems) if subsystems else 'none'}",
+                f"CONTEXT_DOC_CANDIDATES: {', '.join(docs) if docs else 'none'}",
+                f"FILE_CANDIDATES: {', '.join(files) if files else 'none'}",
+                f"MEMORY_CANDIDATES: {' | '.join(memories) if memories else 'none'}",
+            ])
+            return lines
+        except Exception as exc:
+            lines.append(f"WORKSHOP_STATUS: retrieval exception: {str(exc)[:240]}")
+            return lines
+
+    def _build_retro_context(self, task) -> list[str]:
+        """Build the rich context RETRO needs: mistakes.md, recurrence, routed skill."""
+        from mistakes import count_by_skill, MISTAKES_FILE
+        from router import route
+
+        lines = []
+
+        # 1. Per-skill recurrence counts
+        by_skill = count_by_skill()
+        if by_skill:
+            lines.extend(["", "ACTIVE MISTAKES BY SKILL (recurrence → retro proposals):"])
+            for s, n in sorted(by_skill.items(), key=lambda x: -x[1]):
+                rec = "   <- RECURRING (>=2): propose an edit to this skill" if n >= 2 else ""
+                lines.append(f"  {s}: {n} active{rec}")
+        else:
+            lines.extend(["", "ACTIVE MISTAKES BY SKILL: (none)"])
+
+        # 2. Routed skill's current content
+        matched = route(task.title)
+        if matched:
+            skill_path = ROOT / matched.get("skill_path", "")
+            if skill_path.exists():
+                lines.extend([
+                    "",
+                    f"--- {matched.get('skill_path', '')} (current content) ---",
+                    skill_path.read_text(encoding="utf-8"),
+                ])
+
+        # 3. Full mistakes.md
+        if MISTAKES_FILE.exists():
+            mistakes = MISTAKES_FILE.read_text(encoding="utf-8")
+            lines.extend(["", f"mistakes.md content:", mistakes])
+
+        return lines
 
     def _extract_files(self, diff: str) -> list[str]:
         """Extract changed file paths from a unified diff."""

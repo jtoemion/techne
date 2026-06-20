@@ -88,6 +88,15 @@ Then verify: does the delta match what the message claims?
 
 ## Framework patterns — `stack_detect.py` auto-loads by stack (read before Phase 4)
 
+Before Phase 4 (Instrument), detect the stack and load its specific subskill:
+
+```bash
+python3 skills/diagnose/scripts/stack_detect.py <repo_root>
+# → Markdown list of skills to load. Always load diagnose/feedback-loop too.
+```
+
+Then load each via `skill_view(name=...)`:
+
 ```
 Svelte → skills/svelte.md   Next.js/TS → skills/nextjs.md
 Firestore → skills/diagnose/firestore.md   Netlify → skills/diagnose/netlify.md

@@ -15,3 +15,15 @@ memory/tasks.db
 memory/rewards.db
 memory/test_baseline.json
 memory/prompt_proposals.json
+
+# Generated workshop artifacts
+.techne/generated/
+.techne/memory/
+.techne/tasks/
+harness/memory/
+
+# RL runtime logs (regenerated each run)
+memory/eval_history.json
+memory/run_log.json
+memory/wikilinks.json
+memory/wikilinks.md

@@ -68,9 +68,22 @@ not run-specific trivia. Use these kinds:
 This is NOT a skill edit (that's a proposal) and NOT a code-architecture decision
 (that's `docs/adr/`). It is how the work was done. Skip if nothing generalizes.
 
-# Output Format
+# Output Format (use BOTH structures — markers parsed by host, prose for humans)
 
-Write to `harness/memory/retro_proposals.md`:
+You emit **two** outputs that get combined:
+
+1. **Inline markers** (parsed by conductor.submit_retro and written to `memory/ledger.md`):
+
+```
+DECISION: <what> | WHY: <why> | SKILL: <skill>
+LESSON: <what> | WHY: <why> | SKILL: <skill>
+DISCIPLINE: <what> | WHY: <why> | SKILL: <skill>
+```
+
+Each marker becomes a durable ledger entry. SKILL field is overridden by the routed
+skill_id (so attribution stays consistent). Emit one marker per thing learned.
+
+2. **Full prose** written to `harness/memory/retro_proposals.md` (for humans):
 
 ```
 ## Retro — <ISO date>

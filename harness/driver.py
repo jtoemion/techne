@@ -212,7 +212,15 @@ def run_plan(
         if isinstance(spec, str):
             task = db.create_task(spec)
         else:
-            task = db.create_task(spec["title"], description=spec.get("description", ""))
+            task = db.create_task(
+                spec["title"],
+                description=spec.get("description", ""),
+                parent_id=spec.get("parent_id"),
+                discipline=spec.get("discipline", "tdd"),
+                priority=spec.get("priority", 0),
+                tags=spec.get("tags"),
+                phase_mode=spec.get("phase_mode", "full"),
+            )
         runs.append(_drive_task(loop, task, model, run_tests, on_hitl,
                                 max_steps_per_task, on_submit=on_submit))
 
@@ -231,7 +239,7 @@ if __name__ == "__main__":
     import argparse
     import sys
 
-    from model_backends import make_model, providers, command_test_runner
+    from model_backends import make_model, make_phase_router, providers, command_test_runner
 
     ap = argparse.ArgumentParser(
         description="Drive a Techne pipeline run end-to-end with any model provider.",
@@ -245,15 +253,38 @@ if __name__ == "__main__":
                     help="model id (provider default if omitted)")
     ap.add_argument("--base-url", default=None,
                     help="OpenAI-compatible endpoint for --provider openai "
-                         "(OpenRouter/Groq/Together/Ollama/…) — reaches any model")
+                         "(OpenRouter/Groq/Together/Ollama/…)")
     ap.add_argument("--test-cmd", default="python -m pytest -q",
                     help="REAL command run for VERIFY (its stdout is SHA-gated)")
+    ap.add_argument("--subagent-model", default=None,
+                    help="model id for subagent phases (default: same as --model). "
+                         "Use this to route CRITIQUE/REVIEW/RETRO to a different model.")
+    ap.add_argument("--subagent-provider", default=None,
+                    help="provider for subagent phases (default: same as --provider)")
     args = ap.parse_args()
 
     if not args.task and not args.plan:
         ap.error("provide a task or --plan FILE")
 
-    model = make_model(args.provider, model=args.model, base_url=args.base_url)
+    if args.subagent_model or args.subagent_provider:
+        # Phase routing: default model for IMPLEMENT, subagent model for other phases
+        sub_provider = args.subagent_provider or args.provider
+        sub_model = args.subagent_model or args.model
+        router = make_phase_router(
+            default=args.provider,
+            default_model=args.model,
+            routes={
+                "critique": (sub_provider, sub_model),
+                "review":   (sub_provider, sub_model),
+                "retro":    (sub_provider, sub_model),
+                "conclude": (sub_provider, sub_model),
+                "recall":   (sub_provider, sub_model),
+                "context_guard": (sub_provider, sub_model),
+            },
+        )
+        model = router
+    else:
+        model = make_model(args.provider, model=args.model, base_url=args.base_url)
     run_tests = command_test_runner(args.test_cmd)
 
     if args.plan:

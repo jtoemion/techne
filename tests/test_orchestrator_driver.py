@@ -24,6 +24,12 @@ sys.path.insert(0, str(TESTS_DIR)); import _mem_guard  # noqa: snapshots memory/
 from driver import run_plan
 from task_db import TaskDB
 from reward_log import RewardLog
+from orchestrator_loop import OrchestratorLoop
+
+# Module-level mock: suppress the real .techne/context git-state check during unit tests.
+# The check is integration-level (requires a real repo); here we test SHA-gate logic in isolation.
+import unittest.mock as _mock
+_mock.patch.object(OrchestratorLoop, "_get_uncommitted_context_files", return_value=[]).start()
 
 PASS = "\033[92mPASS\033[0m"
 FAIL = "\033[91mFAIL\033[0m"
@@ -61,14 +67,47 @@ class FakeModel:
 
     def __call__(self, system, user, phase):
         self.phases.append(phase)
+        if phase == "RECALL":
+            return (
+                "HONCHO_CONTEXT: relevant prior work on product pages and badge components. "
+                "User prefers minimal, focused changes.\n"
+                "WORKSHOP_CONTEXT: none (unit test)\n"
+                "WORKSHOP_FILES: none\n"
+                "LESSONS: none\n"
+                "FOCUS: add SaleBadge component, keep it minimal, one file change"
+            )
         if phase == "IMPLEMENT":
             return CLEAN_DIFF
         if phase == "CONTEXT_GUARD":
-            return "Context audit: change is scoped to the product page. No drift."
+            return (
+                "Context audit: change is scoped to the product page. No drift.\n\n"
+                "CONCLUDE PUNCH LIST\n"
+                "DOCS: NOT_NEEDED: trivial UI change\n"
+                "CONTEXT: NOT_NEEDED: no .techne/context files affected\n"
+                "HONCHO: saved badge component pattern"
+            )
         if phase == "CRITIQUE":
             return self.critique
         if phase == "REVIEW":
             return "REVIEW RESULT: PASS\n\nSHADOW GATE CHECK: clean"
+        if phase == "CONCLUDE":
+            return (
+                "HONCHO: honcho://conclusion/abc123 — Saved badge component pattern.\n"
+                "DOCS: NOT_NEEDED: trivial UI component addition does not change architecture/API/workflow.\n"
+                "CONTEXT: NOT_NEEDED: project fingerprint unchanged beyond local component diff."
+            )
+        if phase == "RETRO":
+            return (
+                "GOAL: add sale badge to product page.\n"
+                "DONE: created SaleBadge.tsx, updated page.tsx. IMPLEMENT passed gates, REVIEW passed.\n"
+                "CHALLENGES: none — clean diff.\n"
+                "ROOM: could have added a test for the badge rendering.\n"
+                "FLAWS: no VERIFY test output was needed since the diff was trivial.\n"
+                "BETTER: scope was tight, no drift.\n"
+                "HOW: focused on the single file change.\n"
+                "PATTERNS: component addition pattern — new file + import in parent.\n"
+                "REGRESSION WATCH: if SaleBadge import breaks, page.tsx will fail at build."
+            )
         return "ok"
 
 
@@ -87,16 +126,18 @@ def test_single_task_runs_all_phases_to_done():
                     prepare_context=False)
     t = plan.tasks[0]
     check("task reached DONE", t.status == "DONE")
-    for ph in ("IMPLEMENT", "CONTEXT_GUARD", "CRITIQUE", "REVIEW", "RETRO"):
+    for ph in ("RECALL", "IMPLEMENT", "CONTEXT_GUARD", "CRITIQUE", "REVIEW", "RETRO", "CONCLUDE"):
         check(f"model drove {ph}", ph in model.phases)
     check("VERIFY ran real tests (model NOT asked for VERIFY)", "VERIFY" not in model.phases)
     check("EVAL is deterministic (model NOT asked for EVAL)", "EVAL" not in model.phases)
-    # VERIFY → EVAL (score) → RETRO (reflect) → DONE, all recorded in history.
+    # VERIFY → EVAL (score) → RETRO (reflect) → CONCLUDE → DONE, all recorded in history.
     hist = [e.action for e in db.get_task_history(plan.tasks[0].task_id)]
+    check("RECALL recorded in history", "RECALL" in hist)
     check("EVAL recorded in history", "EVAL" in hist)
     check("RETRO recorded in history", "RETRO" in hist)
-    check("order is VERIFY < EVAL < RETRO",
-          hist.index("VERIFY") < hist.index("EVAL") < hist.index("RETRO"))
+    check("CONCLUDE recorded in history", "CONCLUDE" in hist)
+    check("order is RECALL < IMPLEMENT < EVAL < RETRO < CONCLUDE",
+          hist.index("RECALL") < hist.index("IMPLEMENT") < hist.index("EVAL") < hist.index("RETRO") < hist.index("CONCLUDE"))
 
 
 def test_reward_log_and_evolution_fed():
@@ -132,10 +173,12 @@ def test_on_submit_hook_runs_after_every_phase_submit():
              prepare_context=False,
              on_submit=lambda task, phase, outcome: seen.append((phase, outcome.action.value)))
     phases = [phase for phase, _ in seen]
+    check("hook saw RECALL", "RECALL" in phases)
     check("hook saw IMPLEMENT", "IMPLEMENT" in phases)
     check("hook saw CRITIQUE", "CRITIQUE" in phases)
     check("hook saw VERIFY", "VERIFY" in phases)
     check("hook saw RETRO close", "RETRO" in phases)
+    check("hook saw CONCLUDE close", "CONCLUDE" in phases)
 
 
 def test_critique_follow_up_tasks_become_children_immediately():
@@ -234,6 +277,136 @@ def test_prepare_context_invokes_amortization():
         context_build.ensure_context = orig
 
 
+def test_retro_gate_rejects_checkbox():
+    print("\n[plan — RETRO gate rejects checkbox retros]")
+    db, rl = _fresh()
+
+    class CheckboxRetroModel:
+        def __init__(self):
+            self.phases = []
+
+        def __call__(self, system, user, phase):
+            self.phases.append(phase)
+            if phase == "RECALL":
+                return "Honcho context: relevant prior work on product pages and badge components."
+            if phase == "IMPLEMENT":
+                return CLEAN_DIFF
+            if phase == "CONTEXT_GUARD":
+                return "Context audit: change is scoped to the product page. No drift."
+            if phase == "CRITIQUE":
+                return "No critical issues found. Looks clean."
+            if phase == "REVIEW":
+                return "REVIEW RESULT: PASS\n\nSHADOW GATE CHECK: clean"
+            if phase == "CONCLUDE":
+                return (
+                    "HONCHO: honcho://conclusion/abc123\n"
+                    "DOCS: NOT_NEEDED: checkbox retro test changes no docs.\n"
+                    "CONTEXT: NOT_NEEDED: checkbox retro test changes no context."
+                )
+            if phase == "RETRO":
+                return "Clean. Fix is minimal."
+            return "ok"
+
+    plan = run_plan(["add sale badge to product page"], model=CheckboxRetroModel(),
+                    run_tests=lambda: PASSING_TESTS, db=db, reward_log=rl,
+                    prepare_context=False, max_steps_per_task=15)
+    # Task should NOT reach DONE — it halts because RETRO keeps failing the gate
+    t = plan.tasks[0]
+    check("task did NOT reach DONE with checkbox retro", t.status != "DONE")
+    check("task halted or blocked", t.status in ("HALTED", "BLOCKED", "INCOMPLETE"))
+
+
+def test_retro_gate_accepts_substantive():
+    print("\n[plan — RETRO gate accepts substantive retros]")
+    db, rl = _fresh()
+    plan = run_plan(["add sale badge to product page"], model=FakeModel(),
+                    run_tests=lambda: PASSING_TESTS, db=db, reward_log=rl,
+                    prepare_context=False)
+    t = plan.tasks[0]
+    check("task reached DONE with substantive retro", t.status == "DONE")
+
+
+def test_conclude_gate_requires_context_and_docs_proof():
+    print("\n[plan — CONCLUDE gate requires Honcho + docs/context proof]")
+    db, rl = _fresh()
+
+    class WeakConcludeModel(FakeModel):
+        def __call__(self, system, user, phase):
+            if phase == "CONCLUDE":
+                return "honcho://conclusion/abc123"
+            return super().__call__(system, user, phase)
+
+    plan = run_plan(["add sale badge to product page"], model=WeakConcludeModel(),
+                    run_tests=lambda: PASSING_TESTS, db=db, reward_log=rl,
+                    prepare_context=False, max_steps_per_task=20)
+    t = plan.tasks[0]
+    check("task did NOT reach DONE with weak conclude", t.status != "DONE")
+    check("task halted when conclude proof missing", t.status == "HALTED")
+
+
+def test_conclude_prompt_includes_context_guard_punch_list():
+    print("\n[loop — CONCLUDE prompt includes context-guard punch list]")
+    db, rl = _fresh()
+    plan = run_plan(["add sale badge to product page"], model=FakeModel(),
+                    run_tests=lambda: PASSING_TESTS, db=db, reward_log=rl,
+                    prepare_context=False)
+    # Build prompt from completed task history; even after DONE it should expose the proof contract.
+    from orchestrator_loop import OrchestratorLoop
+    loop = OrchestratorLoop(db, reward_log=rl)
+    prompt = loop.get_prompt(plan.tasks[0].task_id, "CONCLUDE")["user"]
+    check("CONCLUDE prompt asks for Honcho proof", "HONCHO" in prompt)
+    check("CONCLUDE prompt asks for docs proof", "DOCS" in prompt)
+    check("CONCLUDE prompt asks for context proof", ".techne/context" in prompt)
+    check("CONCLUDE prompt includes context-guard report", "LATEST CONTEXT_GUARD REPORT" in prompt)
+    check("CONCLUDE prompt mentions SHA requirement", "sha:" in prompt.lower())
+
+
+def test_conclude_rejects_context_update_without_sha():
+    print("\n[loop — CONCLUDE rejects context update without SHA]")
+    from orchestrator_loop import LoopAction
+    db, rl = _fresh()
+    loop = OrchestratorLoop(db, reward_log=rl)
+
+    task = db.create_task("add sale badge", description="add badge", discipline="frontend", tags=["test"])
+    task_id = task.id
+    # Mark all phases up to CONCLUDE as done
+    for ph in ("RECALL", "IMPLEMENT", "CONTEXT_GUARD", "CRITIQUE", "REVIEW", "VERIFY", "EVAL", "RETRO"):
+        loop.enforcer.mark_complete(task_id, ph, agent="test", summary="ok", findings="ok")
+
+    # _get_uncommitted_context_files is mocked module-wide; SHA gate tested in isolation
+    # Proof with context updated but no SHA
+    bad_proof = (
+        "HONCHO: honcho://conclusion/abc123 — saved badge pattern\n"
+        "DOCS: docs/ARCHITECTURE.md updated with badge component\n"
+        "CONTEXT: .techne/context/project_digest.md refreshed"
+    )
+    outcome = loop.submit(task_id, "CONCLUDE", bad_proof)
+    check("rejects context update without SHA", outcome.action == LoopAction.RETRY)
+    check("message mentions SHA", "sha" in outcome.message.lower())
+
+    # Proof with context updated AND SHA
+    good_proof = (
+        "HONCHO: honcho://conclusion/abc123 — saved badge pattern\n"
+        "DOCS: docs/ARCHITECTURE.md updated with badge component\n"
+        "CONTEXT: .techne/context/project_digest.md refreshed sha: f87d411ce52bbf9ca3b4e12f89a5c2d1e0b6f3a7"
+    )
+    outcome2 = loop.submit(task_id, "CONCLUDE", good_proof)
+    check("accepts context update with SHA", outcome2.action == LoopAction.DONE)
+
+    # Proof with NOT_NEEDED (no SHA required)
+    task2 = db.create_task("add sale badge 2", description="add badge 2", discipline="frontend", tags=["test"])
+    task_id2 = task2.id
+    for ph in ("RECALL", "IMPLEMENT", "CONTEXT_GUARD", "CRITIQUE", "REVIEW", "VERIFY", "EVAL", "RETRO"):
+        loop.enforcer.mark_complete(task_id2, ph, agent="test", summary="ok", findings="ok")
+    not_needed_proof = (
+        "HONCHO: honcho://conclusion/def456 — trivial change\n"
+        "DOCS: NOT_NEEDED: no architecture changes\n"
+        "CONTEXT: NOT_NEEDED: no context changes"
+    )
+    outcome3 = loop.submit(task_id2, "CONCLUDE", not_needed_proof)
+    check("NOT_NEEDED context does not require SHA", outcome3.action == LoopAction.DONE)
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("ORCHESTRATOR DRIVER — run_plan drives the full RL pipeline")
@@ -247,6 +420,11 @@ if __name__ == "__main__":
     test_critical_critique_still_creates_follow_up_tasks_before_hitl()
     test_critical_blocks_then_resumes_with_hitl()
     test_prepare_context_invokes_amortization()
+    test_retro_gate_rejects_checkbox()
+    test_retro_gate_accepts_substantive()
+    test_conclude_gate_requires_context_and_docs_proof()
+    test_conclude_prompt_includes_context_guard_punch_list()
+    test_conclude_rejects_context_update_without_sha()
     passed = sum(1 for r in results if r)
     total = len(results)
     print("\n" + "=" * 60)

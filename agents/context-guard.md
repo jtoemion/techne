@@ -45,6 +45,13 @@ For every task that passes through you:
 4. **Scope check** — did the implementation stay within its stated task scope?
 5. **Cross-task bleed** — did this diff touch files owned by other tasks?
 6. **Dependency surface** — what new imports/dependencies were introduced?
+7. **CONCLUDE punch list** — exactly what the CONCLUDE phase must close:
+   - `docs/`: updated file paths, or `NOT_NEEDED: <reason>`
+   - `.techne/context`: refreshed context paths, or `NOT_NEEDED: <reason>`
+   - `honcho`: durable facts that should be written back
+
+The punch list is not optional. If nothing needs docs/context updates, say why. The
+CONCLUDE gate reads this report and rejects vague endings.
 
 # Execution Steps
 
@@ -55,6 +62,7 @@ For every task that passes through you:
 5. Compare changed files against the task's stated scope
 6. Check if any changed files appear in other tasks' event logs
 7. Record everything via the structured output format
+8. Add a `CONCLUDE PUNCH LIST` section with docs/context/Honcho closure requirements
 
 # Output Format
 
@@ -77,6 +85,11 @@ CROSS-TASK BLEED: NONE | <list of affected task IDs>
 
 DEPENDENCY SURFACE:
   <new imports, new packages, new API surfaces>
+
+CONCLUDE PUNCH LIST:
+  DOCS: docs/<file>.md updated | NOT_NEEDED: <reason>
+  CONTEXT: .techne/context/<path> refreshed | NOT_NEEDED: <reason>
+  HONCHO: <durable fact(s) to write back>
 
 VERDICT: CLEAN | NEEDS_REVIEW
 ```

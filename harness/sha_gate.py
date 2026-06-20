@@ -24,6 +24,7 @@ def sha256_file(path: str) -> str:
 def gate_test_output(
     test_output_path: str = "test_output.txt",
     run_log_path: str = "memory/run_log.json",
+    review_only: bool = False,
 ) -> str:
     """
     Gate: verify the verifier agent ran real tests.
@@ -31,7 +32,7 @@ def gate_test_output(
     Checks:
     1. File exists and is non-trivial (>50 chars)
     2. No FAILED / ERROR / 'error TS' lines present
-    3. At least one pass indicator present
+    3. At least one pass indicator present (skipped for review-only tasks)
     4. Hashes and logs the output — identical hashes across runs = agent faking
 
     Returns the SHA-256 hex digest on success.
@@ -61,12 +62,14 @@ def gate_test_output(
                 f"Preview: {preview}"
             )
 
-    pass_patterns = ["compiled successfully", "no issues found", "✓", "passed", " 0 errors"]
-    if not any(p in lower for p in pass_patterns):
-        raise GateViolation(
-            "SHA GATE FAIL: no pass indicator found in test_output.txt. "
-            f"Expected one of: {pass_patterns}"
-        )
+    # Review-only tasks skip the pass-indicator check (no real test output)
+    if not review_only:
+        pass_patterns = ["compiled successfully", "no issues found", "✓", "passed", " 0 errors"]
+        if not any(p in lower for p in pass_patterns):
+            raise GateViolation(
+                "SHA GATE FAIL: no pass indicator found in test_output.txt. "
+                f"Expected one of: {pass_patterns}"
+            )
 
     file_hash = sha256_file(test_output_path)
 
@@ -90,6 +93,7 @@ def gate_test_output(
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "test_output_hash": file_hash,
             "status": "PASSED",
+            "review_only": review_only,
         }
     )
 

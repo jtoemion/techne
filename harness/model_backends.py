@@ -27,6 +27,7 @@ import inspect
 import os
 import shutil
 import subprocess
+from dataclasses import dataclass
 from typing import Callable, Optional, Sequence, Union
 
 # A model call for one agent phase: (system, user, phase) -> raw text artifact.
@@ -161,6 +162,50 @@ def minimax_model(*, model: str = MINIMAX_DEFAULT_MODEL,
     )
 
 
+# ── PhaseRouter — per-phase model routing ──────────────────────────────────
+# A ModelFn that delegates to different backends based on the phase string.
+# This lets the pipeline use, e.g., a cheap/fast model for CRITIQUE/REVIEW
+# and a stronger model for IMPLEMENT, without changing the driver code.
+
+@dataclass
+class _PhaseRoute:
+    """One route: phase prefix → ModelFn."""
+    phase_prefix: str   # case-insensitive prefix to match (e.g. "implement", "review")
+    model: ModelFn
+
+class PhaseRouter:
+    """ModelFn that dispatches to different backends per phase.
+
+    Usage:
+        router = PhaseRouter(default=mimo_model)
+        router.route("implement", claude_model)   # stronger model for code
+        router.route("review",    gemini_model)   # different reviewer
+        # all other phases → mimo_model
+
+    The first matching route wins (longest prefix). Case-insensitive.
+    The `default` model handles any phase with no matching route.
+    """
+    def __init__(self, *, default: ModelFn):
+        self._default = default
+        self._routes: list[_PhaseRoute] = []
+
+    def route(self, phase_prefix: str, model: ModelFn) -> "PhaseRouter":
+        """Register a model for phases whose name starts with `phase_prefix`."""
+        self._routes.append(_PhaseRoute(phase_prefix.lower(), model))
+        return self  # chainable
+
+    def __call__(self, system: str, user: str, phase: str) -> str:
+        phase_lower = phase.lower()
+        # Longest-prefix match
+        best: _PhaseRoute | None = None
+        for r in self._routes:
+            if phase_lower.startswith(r.phase_prefix):
+                if best is None or len(r.phase_prefix) > len(best.phase_prefix):
+                    best = r
+        model = best.model if best else self._default
+        return model(system, user, phase)
+
+
 # ── registry / factory ───────────────────────────────────────────────────────
 
 _BACKENDS: dict[str, Callable[..., ModelFn]] = {
@@ -193,6 +238,28 @@ def make_model(provider: str, **opts) -> ModelFn:
     accepted = inspect.signature(factory).parameters
     kwargs = {k: v for k, v in opts.items() if k in accepted and v is not None}
     return factory(**kwargs)
+
+
+def make_phase_router(
+    *,
+    default: str = "minimax",
+    default_model: str | None = None,
+    routes: dict[str, tuple[str, str | None]] | None = None,
+) -> PhaseRouter:
+    """Build a PhaseRouter from provider names.
+
+    `default` is the fallback provider. `routes` maps phase prefixes to
+    (provider, model_id) tuples. Example:
+        make_phase_router(
+            default="minimax",
+            default_model="MiniMax-M2.7",
+            routes={"implement": ("anthropic", "claude-sonnet-4-6")},
+        )
+    """
+    router = PhaseRouter(default=make_model(default, model=default_model))
+    for prefix, (provider, model_id) in (routes or {}).items():
+        router.route(prefix, make_model(provider, model=model_id))
+    return router
 
 
 # ── real test runner (VERIFY) ────────────────────────────────────────────────

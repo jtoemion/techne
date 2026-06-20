@@ -59,6 +59,7 @@ class Task:
     assigned_agent: Optional[str] = None
     priority: int = 0                 # higher = more urgent
     tags: list[str] = field(default_factory=list)
+    phase_mode: str = "full"          # full (10 phases) | fast (skip RECALL+CONCLUDE)
     created_at: str = ""
     updated_at: str = ""
     attempt: int = 0                  # how many times an agent has tried this
@@ -116,6 +117,7 @@ class TaskDB:
                 assigned_agent TEXT,
                 priority INTEGER DEFAULT 0,
                 tags TEXT DEFAULT '[]',
+                phase_mode TEXT DEFAULT 'full',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 attempt INTEGER DEFAULT 0,
@@ -157,6 +159,7 @@ class TaskDB:
         discipline: str = "tdd",
         priority: int = 0,
         tags: list[str] | None = None,
+        phase_mode: str = "full",
     ) -> Task:
         """Create a new atomic task. Returns the Task with a generated ID."""
         task = Task(
@@ -167,15 +170,16 @@ class TaskDB:
             discipline=discipline,
             priority=priority,
             tags=tags or [],
+            phase_mode=phase_mode,
         )
         self._conn.execute(
             """INSERT INTO tasks (id, title, description, parent_id, discipline,
-               status, assigned_agent, priority, tags, created_at, updated_at,
+               status, assigned_agent, priority, tags, phase_mode, created_at, updated_at,
                attempt, max_attempts)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (task.id, task.title, task.description, task.parent_id,
              task.discipline, task.status, task.assigned_agent, task.priority,
-             json.dumps(task.tags), task.created_at, task.updated_at,
+             json.dumps(task.tags), task.phase_mode, task.created_at, task.updated_at,
              task.attempt, task.max_attempts),
         )
         self._conn.commit()
@@ -563,6 +567,7 @@ def _row_to_task(row: sqlite3.Row) -> Task:
         assigned_agent=row["assigned_agent"],
         priority=row["priority"] or 0,
         tags=json.loads(row["tags"]) if row["tags"] else [],
+        phase_mode=row["phase_mode"] if "phase_mode" in row.keys() else "full",
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         attempt=row["attempt"] or 0,

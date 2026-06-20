@@ -2,7 +2,7 @@
 pipeline_enforcer.py — State machine that enforces the multi-agent pipeline order.
 
 The pipeline phases are:
-  IMPLEMENT → CONTEXT_GUARD → CRITIQUE → REVIEW → VERIFY → DONE
+  RECALL → IMPLEMENT → CONTEXT_GUARD → CRITIQUE → REVIEW → VERIFY → EVAL → RETRO → CONCLUDE → DONE
                                                   ↘ BLOCKED → DEBUG → IMPLEMENT (retry)
 
 The enforcer:
@@ -17,10 +17,12 @@ Usage:
     enforcer = PipelineEnforcer(db)
 
     # Before each phase:
-    enforcer.can_enter(task_id, "IMPLEMENT")    # True if task is PENDING or BLOCKED
+    enforcer.can_enter(task_id, "RECALL")       # True if task is PENDING or BLOCKED
+    enforcer.can_enter(task_id, "IMPLEMENT")    # True if RECALL is complete
     enforcer.can_enter(task_id, "REVIEW")       # False — context-guard hasn't run yet
 
     # After each phase:
+    enforcer.mark_complete(task_id, "RECALL", agent="recaller", summary="...")
     enforcer.mark_complete(task_id, "IMPLEMENT", agent="implementer", summary="...")
     enforcer.mark_complete(task_id, "CONTEXT_GUARD", agent="context-guard", summary="...")
 
@@ -39,6 +41,7 @@ from task_db import TaskDB, Task
 # ── Phase definitions ────────────────────────────────────────────────────
 
 PHASES = [
+    "RECALL",
     "IMPLEMENT",
     "CONTEXT_GUARD",
     "CRITIQUE",
@@ -46,36 +49,41 @@ PHASES = [
     "VERIFY",
     "EVAL",
     "RETRO",
+    "CONCLUDE",
     "DONE",
 ]
 
 # Valid transitions: from_state -> allowed next states
 # The pipeline is strict: you can only go forward, or to BLOCKED/DEBUG from any point.
 TRANSITIONS = {
-    None:           ["IMPLEMENT"],                          # fresh task
-    "PENDING":      ["IMPLEMENT"],                          # ready to start
-    "BLOCKED":      ["IMPLEMENT", "DEBUG"],                 # retry after block
-    "DEBUG":        ["IMPLEMENT"],                          # debug fixes, then re-implement
-    "IMPLEMENT":    ["CONTEXT_GUARD", "BLOCKED", "FAILED"], # impl done → audit, or fail
-    "CONTEXT_GUARD":["CRITIQUE", "BLOCKED", "FAILED"],     # audit done → critique, or fail
-    "CRITIQUE":     ["REVIEW", "BLOCKED", "FAILED"],       # critique done → review, or fail
+    None:           ["RECALL"],                              # fresh task → recall context
+    "PENDING":      ["RECALL"],                              # ready to start → recall first
+    "BLOCKED":      ["IMPLEMENT", "DEBUG"],                  # retry after block
+    "DEBUG":        ["IMPLEMENT"],                           # debug fixes, then re-implement
+    "RECALL":       ["IMPLEMENT", "BLOCKED", "FAILED"],      # recall done → implement
+    "IMPLEMENT":    ["CONTEXT_GUARD", "BLOCKED", "FAILED"],  # impl done → audit, or fail
+    "CONTEXT_GUARD":["CRITIQUE", "BLOCKED", "FAILED"],       # audit done → critique, or fail
+    "CRITIQUE":     ["REVIEW", "BLOCKED", "FAILED"],         # critique done → review, or fail
     "REVIEW":       ["VERIFY", "BLOCKED", "IMPLEMENT", "FAILED"],  # review: pass→verify, hardfail→re-implement
-    "VERIFY":       ["EVAL", "BLOCKED", "IMPLEMENT", "FAILED"],  # verify: pass→eval(score), fail→re-implement
-    "EVAL":         ["RETRO", "FAILED"],                   # deterministic 100-pt score → reflect
-    "RETRO":        ["DONE", "FAILED"],                    # reflect on the score → done
+    "VERIFY":       ["EVAL", "BLOCKED", "IMPLEMENT", "FAILED"],    # verify: pass→eval(score), fail→re-implement
+    "EVAL":         ["RETRO", "FAILED"],                     # deterministic 100-pt score → reflect
+    "RETRO":        ["CONCLUDE", "FAILED"],                  # reflect on the score → conclude
+    "CONCLUDE":     ["DONE", "FAILED"],                      # durable write-back → done
     "DONE":         [],                                      # terminal
     "FAILED":       [],                                      # terminal
 }
 
 # Human-readable phase descriptions (for subagent prompts)
 PHASE_DESCRIPTIONS = {
+    "RECALL": "Recall durable context from Honcho for this task title and tags. Run honcho_search or honcho_context and return the excerpts.",
     "IMPLEMENT": "Write code (TDD: test first, minimal diff)",
     "CONTEXT_GUARD": "Scan changes, record audit trail (file inventory, scope check)",
     "CRITIQUE": "Predict emergent bugs from the implementation diff",
     "REVIEW": "Security/correctness/gate compliance review",
     "VERIFY": "Run tests, capture real output",
-    "RETRO": "Reflect on the run — lessons, recurrence, skill-edit proposals",
     "EVAL": "Score the run deterministically (100-point eval report)",
+    "RETRO": "Reflect on the run — lessons, recurrence, skill-edit proposals",
+    "CONCLUDE": "Write durable facts back to Honcho (conclusion IDs as proof)",
     "DONE": "Task complete",
     "BLOCKED": "Task blocked — needs human input or debugger",
     "FAILED": "Task terminal failure",
@@ -132,11 +140,12 @@ class PipelineEnforcer:
 
         current = self.get_phase(task_id)
 
-        # A reset/fresh task (status PENDING) may (re)start at IMPLEMENT even if older
+        # A reset/fresh task (status PENDING) may (re)start at RECALL even if older
         # completed-phase events still linger in history. Without this, an unblock that
         # resets to PENDING stayed "stuck" at the last completed phase (e.g. CONTEXT_GUARD)
-        # and could never re-enter IMPLEMENT — the live HITL→debugger deadlock.
-        if task.status == "PENDING":
+        # and could never re-enter RECALL — the live HITL→debugger deadlock.
+        # Exception: if RECALL is already completed, don't reset to None.
+        if task.status == "PENDING" and current != "RECALL":
             current = None
 
         # Check if we're in a terminal state
@@ -163,7 +172,14 @@ class PipelineEnforcer:
             )
 
         # Check transition validity
+        # Fast-mode tasks skip RECALL/CONCLUDE — allow IMPLEMENT directly from start,
+        # and DONE directly from RETRO (skipping CONCLUDE)
         allowed_next = TRANSITIONS.get(current, [])
+        if task.phase_mode == "fast":
+            if current is None:
+                allowed_next = ["IMPLEMENT"]
+            elif current == "RETRO":
+                allowed_next = ["DONE", "FAILED"]
         if target_phase not in allowed_next:
             expected = " or ".join(allowed_next) if allowed_next else "none (terminal)"
             return PhaseTransition(
@@ -209,7 +225,12 @@ class PipelineEnforcer:
         # We log directly to get the correct action name in the event trail.
         # complete_task/review_task/verify_task use generic action names,
         # but we need the phase name for get_phase() to work.
-        if phase == "IMPLEMENT":
+        if phase == "RECALL":
+            self.db._log_event(
+                task_id, agent, "RECALL", summary[:200],
+                findings=findings, verdict=verdict,
+            )
+        elif phase == "IMPLEMENT":
             self.db.complete_task(
                 task_id, agent=agent, summary=summary,
                 changed_files=changed_files, diff_summary=diff_summary,
@@ -249,6 +270,11 @@ class PipelineEnforcer:
                 task_id, agent, "EVAL", summary[:200],
                 findings=findings, verdict=verdict,
             )
+        elif phase == "CONCLUDE":
+            self.db._log_event(
+                task_id, agent, "CONCLUDE", summary[:200],
+                findings=findings, verdict=verdict,
+            )
         elif phase == "DONE":
             self.db.done_task(task_id, agent=agent)
             self._overwrite_last_action(task_id, "DONE")
@@ -282,7 +308,7 @@ class PipelineEnforcer:
         """The phase that WOULD run next (i.e. the one that blocked), from history."""
         last = self.get_phase(task_id)
         if last is None:
-            return "IMPLEMENT"
+            return "RECALL"
         try:
             return PHASES[PHASES.index(last) + 1]
         except (ValueError, IndexError):

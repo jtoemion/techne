@@ -122,7 +122,7 @@ def measure_scope(task: str, diff: str, semantic_verdict=None) -> ScopeResult:
     )
 
 
-def verify_tests(test_output: str, *, memory_dir: Path | None = None) -> VerifyResult:
+def verify_tests(test_output: str, *, memory_dir: Path | None = None, review_only: bool = False) -> VerifyResult:
     """
     Persist test output and run the SHA gate (real tests ran, no fakes, unique
     hash). Returns a VerifyResult — never raises.
@@ -135,6 +135,7 @@ def verify_tests(test_output: str, *, memory_dir: Path | None = None) -> VerifyR
         sha = gate_test_output(
             test_output_path=str(out_path),
             run_log_path=str(mdir / "run_log.json"),
+            review_only=review_only,
         )
         return VerifyResult(passed=True, sha=sha)
     except Exception as e:
