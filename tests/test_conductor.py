@@ -149,7 +149,7 @@ def test_full_pipeline_pass():
 
     drive_pipeline("add sale badge to product page", CLEAN_DIFF)
 
-    eval_history_path = ROOT / "memory" / "eval_history.json"
+    eval_history_path = ROOT / ".techne" / "memory" / "eval_history.json"
     if eval_history_path.exists():
         history = json.loads(eval_history_path.read_text(encoding="utf-8"))
         entry = next((h for h in reversed(history) if "sale badge" in h.get("task", "")), None)
@@ -186,7 +186,7 @@ def test_gate_retry():
     else:
         fail("retry not triggered", f"retries_used={p.retries_used}")
 
-    mistakes_path = ROOT / "memory" / "mistakes.md"
+    mistakes_path = ROOT / ".techne" / "memory" / "mistakes.md"
     if mistakes_path.exists():
         content = mistakes_path.read_text(encoding="utf-8")
         if "IMPLEMENT" in content or "nextjs/redirect" in content:

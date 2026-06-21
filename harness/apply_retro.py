@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-MEMORY_DIR = ROOT / "memory"
+MEMORY_DIR = ROOT / ".techne" / "memory"
 PROPOSALS_FILE = MEMORY_DIR / "retro_proposals.md"
 SKILLS_DIR = ROOT / "skills"
 
@@ -356,10 +356,15 @@ def has_pending_proposals() -> int:
 
 def auto_apply_pending() -> dict:
     """
-    Apply all pending proposals without confirmation.
-    Returns summary dict. Used by the conductor's retro phase.
+    DISABLED — do not use.
+
+    This function was intended to auto-apply retro proposals without human
+    confirmation. It is deliberately disabled to prevent accidental silent
+    skill writes. Use review_and_apply() with human confirmation instead.
     """
-    return review_and_apply(auto=True)
+    raise RuntimeError(
+        "auto_apply_pending is disabled — use review_and_apply() with human confirmation"
+    )
 
 
 if __name__ == "__main__":

@@ -114,7 +114,7 @@ def test_defensive_init():
 
 def test_seed_file_wellformed():
     print("\n[reward — committed memory/reward.md is well-formed]")
-    seed = ROOT / "memory" / "reward.md"
+    seed = ROOT / ".techne" / "memory" / "reward.md"
     check("memory/reward.md exists", seed.exists())
     if seed.exists():
         text = seed.read_text(encoding="utf-8")

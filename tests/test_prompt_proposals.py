@@ -32,11 +32,13 @@ def check(label, cond):
 
 
 def _fresh_evo(with_winner=True):
-    """A PromptEvolution over a temp reward log + temp proposals file."""
+    """A PromptEvolution over a temp reward log + temp proposals/variants files."""
     db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     db.close()
     proposals = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
     proposals.close()
+    variants = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+    variants.close()
     log = RewardLog(db.name)
     if with_winner:
         # 3 clean runs on v1_strict → it becomes the best_variant for "auth"
@@ -47,7 +49,7 @@ def _fresh_evo(with_winner=True):
                 review_findings=[], critique_predictions=[],
                 scope_clean=True, attempt_count=1,
             )
-    evo = PromptEvolution(log, proposals_path=proposals.name)
+    evo = PromptEvolution(log, proposals_path=proposals.name, variants_path=variants.name)
     return evo, log, Path(db.name), Path(proposals.name)
 
 
@@ -161,6 +163,29 @@ def test_ratify_reject_path():
     log.close(); db.unlink(); pf.unlink()
 
 
+def test_ratify_writes_to_isolated_variants_path():
+    """Two instances with different variants_path stay isolated — P2 fix."""
+    print("\n[ratify — variants_path isolation: ratifying one doesn't touch the other]")
+    # Setup: two evo instances, each with its own temp proposals + variants file.
+    evo1, log1, db1, pf1 = _fresh_evo()
+    evo2, log2, db2, pf2 = _fresh_evo()
+
+    # Ratify a proposal in evo1.
+    p1 = evo1.propose("auth", "implementer")
+    evo1.validate(p1, scorer=lambda cfg: 1.0)
+    ok = evo1.ratify(p1.id, approved=True)
+    check("ratify succeeded for evo1", ok is True)
+    check("evo1's ratified variant is in evo1 pool",
+          p1.variant_name in evo1.variants.get("implementer", {}))
+
+    # evo2 should NOT see evo1's ratified variant.
+    check("evo2's pool is unchanged (no cross-contamination)",
+          p1.variant_name not in evo2.variants.get("implementer", {}))
+
+    log1.close(); db1.unlink(); pf1.unlink()
+    log2.close(); db2.unlink(); pf2.unlink()
+
+
 def test_evolve_no_longer_auto_activates():
     print("\n[evolve — back-compat shim now stages instead of auto-activating]")
     evo, log, db, pf = _fresh_evo()
@@ -186,6 +211,7 @@ if __name__ == "__main__":
     test_ratify_refuses_unvalidated()
     test_ratify_reject_path()
     test_evolve_no_longer_auto_activates()
+    test_ratify_writes_to_isolated_variants_path()
     passed = sum(1 for r in results if r)
     total = len(results)
     print("\n" + "=" * 60)

@@ -12,7 +12,7 @@ from pathlib import Path
 
 HARNESS_DIR = Path(__file__).parent
 ROOT = HARNESS_DIR.parent
-MISTAKES_FILE = ROOT / "memory" / "mistakes.md"
+MISTAKES_FILE = ROOT / ".techne" / "memory" / "mistakes.md"
 INSERT_MARKER = "<!-- New entries go below this line -->"
 
 ENTRY_TEMPLATE = """## [{date}] {phase} | {source}

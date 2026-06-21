@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-MEMORY_DIR = ROOT / "memory"
+MEMORY_DIR = ROOT / ".techne" / "memory"
 SESSION_FILE = MEMORY_DIR / "SESSION.md"
 SESSIONS_DIR = MEMORY_DIR / "sessions"
 

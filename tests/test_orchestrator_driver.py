@@ -11,6 +11,8 @@ Run from tests/:  python test_orchestrator_driver.py
 
 from __future__ import annotations
 
+import json
+import subprocess
 import sys
 import tempfile
 import textwrap
@@ -25,11 +27,40 @@ from driver import run_plan
 from task_db import TaskDB
 from reward_log import RewardLog
 from orchestrator_loop import OrchestratorLoop
+from checkpoint import mark_honcho_concluded
 
 # Module-level mock: suppress the real .techne/context git-state check during unit tests.
 # The check is integration-level (requires a real repo); here we test SHA-gate logic in isolation.
 import unittest.mock as _mock
+
+# Module-level mock: suppress the real .techne/context git-state check during unit tests.
+# The check is integration-level (requires a real repo); here we test SHA-gate logic in isolation.
 _mock.patch.object(OrchestratorLoop, "_get_uncommitted_context_files", return_value=[]).start()
+
+# Module-level mock: intercept refresh_generated_docs.py subprocess calls during unit tests.
+# The script requires a real .techne repo at CWD; unit tests run in temp directories.
+_real_subprocess_run = subprocess.run
+def _mock_subprocess_run(*args, **kwargs):
+    cmd = args[0] if args else kwargs.get('args', [])
+    cmd_str = ' '.join(cmd) if isinstance(cmd, list) else str(cmd)
+    if 'refresh_generated_docs.py' in cmd_str:
+        task_id_arg = 'test'
+        if '--task' in cmd:
+            idx = cmd.index('--task')
+            if idx + 1 < len(cmd):
+                task_id_arg = cmd[idx + 1]
+        return subprocess.CompletedProcess(
+            args=cmd, returncode=0,
+            stdout=json.dumps({
+                "generated_updated": [".techne/generated/context_index.json", ".techne/generated/subsystem_map.json"],
+                "stale_docs": [],
+                "touched": [],
+                "task_id": task_id_arg,
+            }),
+            stderr='',
+        )
+    return _real_subprocess_run(*args, **kwargs)
+_mock.patch('subprocess.run', side_effect=_mock_subprocess_run).start()
 
 PASS = "\033[92mPASS\033[0m"
 FAIL = "\033[91mFAIL\033[0m"
@@ -68,6 +99,7 @@ class FakeModel:
     def __call__(self, system, user, phase):
         self.phases.append(phase)
         if phase == "RECALL":
+            mark_honcho_concluded("honcho://conclusion/abc123")
             return (
                 "HONCHO_CONTEXT: relevant prior work on product pages and badge components. "
                 "User prefers minimal, focused changes.\n"
@@ -366,6 +398,7 @@ def test_conclude_rejects_context_update_without_sha():
     from orchestrator_loop import LoopAction
     db, rl = _fresh()
     loop = OrchestratorLoop(db, reward_log=rl)
+    mark_honcho_concluded("honcho://conclusion/abc123")
 
     task = db.create_task("add sale badge", description="add badge", discipline="frontend", tags=["test"])
     task_id = task.id
@@ -391,7 +424,8 @@ def test_conclude_rejects_context_update_without_sha():
         "CONTEXT: .techne/context/project_digest.md refreshed sha: f87d411ce52bbf9ca3b4e12f89a5c2d1e0b6f3a7"
     )
     outcome2 = loop.submit(task_id, "CONCLUDE", good_proof)
-    check("accepts context update with SHA", outcome2.action == LoopAction.DONE)
+    check("accepts context update with SHA",
+          outcome2.action == LoopAction.RUN_PHASE and outcome2.phase == "REFRESH_CONTEXT")
 
     # Proof with NOT_NEEDED (no SHA required)
     task2 = db.create_task("add sale badge 2", description="add badge 2", discipline="frontend", tags=["test"])
@@ -404,7 +438,60 @@ def test_conclude_rejects_context_update_without_sha():
         "CONTEXT: NOT_NEEDED: no context changes"
     )
     outcome3 = loop.submit(task_id2, "CONCLUDE", not_needed_proof)
-    check("NOT_NEEDED context does not require SHA", outcome3.action == LoopAction.DONE)
+    check("NOT_NEEDED context does not require SHA",
+          outcome3.action == LoopAction.RUN_PHASE and outcome3.phase == "REFRESH_CONTEXT")
+
+
+def test_a2_refresh_context_retry_on_fail():
+    """A failing script run produces a RETRY, not a silent pass."""
+    from unittest.mock import patch
+    from orchestrator_loop import LoopAction
+
+    outcomes = []  # (phase, action, message)
+
+    def capture(task, phase, outcome):
+        outcomes.append((phase, outcome.action, outcome.message))
+
+    # Mock subprocess.run to fail for refresh_generated_docs.py
+    real_run = _real_subprocess_run
+
+    def fail_mock(*args, **kwargs):
+        cmd = args[0] if args else kwargs.get("args", [])
+        cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+        if "refresh_generated_docs.py" in cmd_str:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=1,
+                stdout="", stderr="Refresh script crashed: disk full",
+            )
+        return real_run(*args, **kwargs)
+
+    with patch("subprocess.run", side_effect=fail_mock):
+        db, rl = _fresh()
+        plan = run_plan(
+            ["add sale badge to product page"],
+            model=FakeModel(),
+            run_tests=lambda: PASSING_TESTS,
+            db=db, reward_log=rl,
+            prepare_context=False,
+            max_steps_per_task=15,
+            on_submit=capture,
+        )
+
+        t = plan.tasks[0]
+        # Task should NOT silently reach DONE
+        check("task did not silently reach DONE", t.status != "DONE")
+
+        # At least one RETRY was produced for REFRESH_CONTEXT
+        refresh_retries = [
+            (p, m) for p, a, m in outcomes
+            if p == "REFRESH_CONTEXT" and a == LoopAction.RETRY
+        ]
+        check("at least one REFRESH_CONTEXT RETRY produced", len(refresh_retries) > 0)
+
+        # The RETRY message contains the failure reason
+        msg = refresh_retries[0][1] if refresh_retries else ""
+        check("RETRY message mentions failure reason",
+              "failed" in msg.lower() or "crashed" in msg.lower() or "disk" in msg.lower())
 
 
 if __name__ == "__main__":
@@ -425,6 +512,7 @@ if __name__ == "__main__":
     test_conclude_gate_requires_context_and_docs_proof()
     test_conclude_prompt_includes_context_guard_punch_list()
     test_conclude_rejects_context_update_without_sha()
+    test_a2_refresh_context_retry_on_fail()
     passed = sum(1 for r in results if r)
     total = len(results)
     print("\n" + "=" * 60)

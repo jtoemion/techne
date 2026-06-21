@@ -17,7 +17,7 @@ import os
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-MEMORY_DIR = ROOT / "memory"
+MEMORY_DIR = ROOT / ".techne" / "memory"
 
 # Env var a host (e.g. a Hermes Kanban dispatcher) sets per isolated worker so that
 # parallel Techne runs do not share single-writer run state. Mirrors how Hermes

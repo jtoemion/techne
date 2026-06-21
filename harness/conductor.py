@@ -71,7 +71,7 @@ HARNESS_DIR = Path(__file__).parent        # techne/harness/
 ROOT = HARNESS_DIR.parent                  # techne/
 SKILLS_DIR = ROOT / "skills"
 AGENTS_DIR = ROOT / "agents"
-MEMORY_DIR = ROOT / "memory"
+MEMORY_DIR = ROOT / ".techne" / "memory"
 MEMORY_DIR.mkdir(exist_ok=True)
 
 MAX_RETRIES = 3

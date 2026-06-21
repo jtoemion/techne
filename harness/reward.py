@@ -23,7 +23,7 @@ from pathlib import Path
 
 HARNESS_DIR = Path(__file__).parent
 ROOT = HARNESS_DIR.parent
-REWARD_FILE = ROOT / "memory" / "reward.md"
+REWARD_FILE = ROOT / ".techne" / "memory" / "reward.md"
 INSERT_MARKER = "<!-- New entries go below this line -->"
 
 # Net-quality weights: not erring (CLEAN) beats recovering (SOLVED). Signal, not money.

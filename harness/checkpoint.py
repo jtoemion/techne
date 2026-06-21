@@ -17,12 +17,12 @@ ROOT = HARNESS_DIR.parent
 # The DEFAULT checkpoint location (no override). Kept for external callers that
 # back up / restore the real state file. Internal reads/writes go through
 # _state_file(), which honors a per-worker TECHNE_STATE_DIR (Kanban isolation).
-STATE_FILE = ROOT / "memory" / "harness-state.json"
+STATE_FILE = ROOT / ".techne" / "memory" / "harness-state.json"
 
 
 def _state_file() -> Path:
     """Per-run checkpoint file. Resolved each call so a host's TECHNE_STATE_DIR
-    override isolates parallel workers (Kanban compatibility). Default: memory/."""
+    override isolates parallel workers (Kanban compatibility). Default: .techne/memory/."""
     return state_dir() / "harness-state.json"
 
 
@@ -72,6 +72,37 @@ def log_gate_fail(gate_name: str, reason: str) -> None:
     write_state(state)
 
 
+def mark_honcho_concluded(conclusion_id: str, peer: str = "user") -> None:
+    """Mark that Hermes completed a real Honcho call for this phase.
+
+    Called by Hermes (the host) after a genuine honcho_search or honcho_conclude.
+    Mirrors mark_verified()'s pattern: the gate trusts this file, not prose.
+    """
+    state = read_state()
+    if not state:
+        state = init_state()
+    state["honcho_conclusion_id"] = conclusion_id
+    state["honcho_peer"] = peer
+    state["honcho_logged_at"] = datetime.now(timezone.utc).isoformat()
+    write_state(state)
+
+
+def check_honcho_logged() -> str | None:
+    """Returns the conclusion ID if a real Honcho call was logged this session, else None."""
+    state = read_state()
+    return state.get("honcho_conclusion_id")
+
+
+def clear_honcho_flag() -> None:
+    """Clear Honcho flag so subsequent gates will not see a logged Honcho call."""
+    state = read_state()
+    if state:
+        state.pop("honcho_conclusion_id", None)
+        state.pop("honcho_peer", None)
+        state.pop("honcho_logged_at", None)
+        write_state(state)
+
+
 def mark_verified(sha_hash: str) -> None:
     """Mark pipeline as verified — only the SHA gate should call this."""
     state = read_state()
@@ -95,6 +126,10 @@ def increment_pipeline_run() -> int:
         state = init_state()
     state["pipeline_runs"] = state.get("pipeline_runs", 0) + 1
     state["verification_logged"] = False  # Reset on new run
+    # Clear honcho flag on new run
+    state.pop("honcho_conclusion_id", None)
+    state.pop("honcho_peer", None)
+    state.pop("honcho_logged_at", None)
     write_state(state)
     return state["pipeline_runs"]
 

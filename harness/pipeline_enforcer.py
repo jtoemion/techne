@@ -2,7 +2,7 @@
 pipeline_enforcer.py — State machine that enforces the multi-agent pipeline order.
 
 The pipeline phases are:
-  RECALL → IMPLEMENT → CONTEXT_GUARD → CRITIQUE → REVIEW → VERIFY → EVAL → RETRO → CONCLUDE → DONE
+  RECALL → IMPLEMENT → CONTEXT_GUARD → CRITIQUE → REVIEW → VERIFY → EVAL → RETRO → CONCLUDE → REFRESH_CONTEXT → DONE
                                                   ↘ BLOCKED → DEBUG → IMPLEMENT (retry)
 
 The enforcer:
@@ -50,6 +50,7 @@ PHASES = [
     "EVAL",
     "RETRO",
     "CONCLUDE",
+    "REFRESH_CONTEXT",
     "DONE",
 ]
 
@@ -68,7 +69,8 @@ TRANSITIONS = {
     "VERIFY":       ["EVAL", "BLOCKED", "IMPLEMENT", "FAILED"],    # verify: pass→eval(score), fail→re-implement
     "EVAL":         ["RETRO", "FAILED"],                     # deterministic 100-pt score → reflect
     "RETRO":        ["CONCLUDE", "FAILED"],                  # reflect on the score → conclude
-    "CONCLUDE":     ["DONE", "FAILED"],                      # durable write-back → done
+    "CONCLUDE":     ["REFRESH_CONTEXT", "FAILED"],           # durable write-back → refresh context
+    "REFRESH_CONTEXT": ["DONE", "FAILED"],                   # refresh complete → done
     "DONE":         [],                                      # terminal
     "FAILED":       [],                                      # terminal
 }
@@ -84,6 +86,7 @@ PHASE_DESCRIPTIONS = {
     "EVAL": "Score the run deterministically (100-point eval report)",
     "RETRO": "Reflect on the run — lessons, recurrence, skill-edit proposals",
     "CONCLUDE": "Write durable facts back to Honcho (conclusion IDs as proof)",
+    "REFRESH_CONTEXT": "Rebuild generated workshop artifacts and flag stale authored docs for the touched subsystems.",
     "DONE": "Task complete",
     "BLOCKED": "Task blocked — needs human input or debugger",
     "FAILED": "Task terminal failure",
@@ -140,12 +143,37 @@ class PipelineEnforcer:
 
         current = self.get_phase(task_id)
 
-        # A reset/fresh task (status PENDING) may (re)start at RECALL even if older
-        # completed-phase events still linger in history. Without this, an unblock that
-        # resets to PENDING stayed "stuck" at the last completed phase (e.g. CONTEXT_GUARD)
-        # and could never re-enter RECALL — the live HITL→debugger deadlock.
-        # Exception: if RECALL is already completed, don't reset to None.
-        if task.status == "PENDING" and current != "RECALL":
+        # When a task is reset to PENDING (e.g. after unblock(debugger)), the phase
+        # state machine needs to allow re-entry.  The old bandaid (PENDING + not RECALL
+        # → reset to None) worked for one case but was fragile: it would reset even
+        # when CONTEXT_GUARD or other phases had been genuinely completed, losing that
+        # information.
+        #
+        # General fix: check whether the *target* phase has already been completed in
+        # history.  RECALL and IMPLEMENT are always valid re-entry points for a reset
+        # pipeline; every other completed phase is blocked from re-entry.
+        if task.status == "PENDING":
+            history = self.db.get_task_history(task_id)
+            completed = {
+                e.action for e in history
+                if e.action in PHASES and e.verdict not in ("HARD_FAIL",)
+            }
+            if target_phase in ("RECALL", "IMPLEMENT"):
+                # RECALL and IMPLEMENT are the only valid re-entry points after a
+                # debugger-unblock → PENDING reset.  Allow them unconditionally.
+                return PhaseTransition(
+                    allowed=True, current_phase=current,
+                    target_phase=target_phase, task=task,
+                )
+            if target_phase in completed:
+                return PhaseTransition(
+                    allowed=False, current_phase=current,
+                    target_phase=target_phase,
+                    reason=f"Phase {target_phase} already completed",
+                    task=task,
+                )
+            # For any other uncompleted phase, reset current so the normal
+            # transition logic below can find the correct chain.
             current = None
 
         # Check if we're in a terminal state
@@ -273,6 +301,11 @@ class PipelineEnforcer:
         elif phase == "CONCLUDE":
             self.db._log_event(
                 task_id, agent, "CONCLUDE", summary[:200],
+                findings=findings, verdict=verdict,
+            )
+        elif phase == "REFRESH_CONTEXT":
+            self.db._log_event(
+                task_id, agent, "REFRESH_CONTEXT", summary[:200],
                 findings=findings, verdict=verdict,
             )
         elif phase == "DONE":

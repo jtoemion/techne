@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Optional
 
 HARNESS_DIR = Path(__file__).parent
-MEMORY_DIR = HARNESS_DIR.parent / "memory"
+MEMORY_DIR = HARNESS_DIR.parent / ".techne" / "memory"
 MEMORY_DIR.mkdir(exist_ok=True)
 
 DEFAULT_DB = MEMORY_DIR / "tasks.db"

@@ -46,7 +46,7 @@ from pathlib import Path
 from typing import Optional
 
 HARNESS_DIR = Path(__file__).parent
-MEMORY_DIR = HARNESS_DIR.parent / "memory"
+MEMORY_DIR = HARNESS_DIR.parent / ".techne" / "memory"
 MEMORY_DIR.mkdir(exist_ok=True)
 
 DEFAULT_DB = MEMORY_DIR / "rewards.db"
@@ -83,6 +83,13 @@ class Reward:
     composite_score: float = 0.0
     critique_accuracy: float = 0.0    # how well critique predicted review findings
     reviewer_coverage: float = 0.0    # how well reviewer covered critique predictions
+
+    # GRPO group-based scoring (B2)
+    group: str = ""                   # group label for comparative scoring
+    advantage: float = 0.0            # score - mean(scores_in_group)
+
+    # P4 — skill-based GRPO: which skill was targeted by this reward
+    skill: str = ""
 
     def __post_init__(self):
         if not self.timestamp:
@@ -124,6 +131,20 @@ class RewardLog:
             CREATE INDEX IF NOT EXISTS idx_rewards_task ON rewards(task_id);
         """)
         self._conn.commit()
+        self._migrate_schema()
+
+    def _migrate_schema(self):
+        """Add columns added after initial schema (B2: group, advantage; P4: skill)."""
+        for col_sql in [
+            'ALTER TABLE rewards ADD COLUMN "group" TEXT DEFAULT \'\'',
+            "ALTER TABLE rewards ADD COLUMN advantage REAL DEFAULT 0.0",
+            "ALTER TABLE rewards ADD COLUMN skill TEXT DEFAULT ''",
+        ]:
+            try:
+                self._conn.execute(col_sql)
+            except sqlite3.OperationalError:
+                pass  # column already exists
+        self._conn.commit()
 
     def record(
         self,
@@ -137,6 +158,7 @@ class RewardLog:
         critique_predictions: list[str],
         scope_clean: bool,
         attempt_count: int,
+        skill: str = "",
     ) -> Reward:
         """Record a reward. Computes composite score and cross-agent scores."""
         reward_id = _new_id()
@@ -169,6 +191,7 @@ class RewardLog:
             composite_score=composite,
             critique_accuracy=critique_acc,
             reviewer_coverage=reviewer_cov,
+            skill=skill,
         )
 
         self._conn.execute(
@@ -176,15 +199,15 @@ class RewardLog:
                (id, task_id, task_type, prompt_variant, timestamp,
                 gate_pass, test_pass, review_findings, critique_predictions,
                 scope_clean, attempt_count, composite_score,
-                critique_accuracy, reviewer_coverage)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                critique_accuracy, reviewer_coverage, skill)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (reward.id, reward.task_id, reward.task_type, reward.prompt_variant,
              reward.timestamp, int(reward.gate_pass), int(reward.test_pass),
              json.dumps(reward.review_findings),
              json.dumps(reward.critique_predictions),
              int(reward.scope_clean), reward.attempt_count,
              reward.composite_score, reward.critique_accuracy,
-             reward.reviewer_coverage),
+             reward.reviewer_coverage, reward.skill),
         )
         self._conn.commit()
         return reward
@@ -356,6 +379,158 @@ class RewardLog:
 
         lines.append("=" * 55)
         return "\n".join(lines)
+
+    # ── Queries for GRPO advantage-based proposals (B3) ─────────────────
+
+    def high_advantage_variants(self, threshold: float = 0.2) -> list[dict]:
+        """Return prompt variants with average advantage > *threshold*.
+
+        Aggregates by (task_type, prompt_variant), computing the mean
+        advantage across all tasks in that variant's group. Only returns
+        variants with at least 2 runs to filter noise.
+
+        Returns a list of dicts:
+          {"task_type": str, "prompt_variant": str,
+           "avg_advantage": float, "count": int,
+           "avg_score": float}
+        """
+        rows = self._conn.execute("""
+            SELECT task_type,
+                   prompt_variant,
+                   AVG(advantage) as avg_advantage,
+                   COUNT(*) as cnt,
+                   AVG(composite_score) as avg_score
+            FROM rewards
+            WHERE "group" != ''
+            GROUP BY task_type, prompt_variant
+            HAVING cnt >= 2 AND AVG(advantage) > ?
+            ORDER BY avg_advantage DESC
+        """, (threshold,)).fetchall()
+        return [dict(r) for r in rows]
+
+    # ── P4: Skill-based GRPO queries ──────────────────────────────────────
+
+    def high_advantage_skills(self, threshold: float = 0.2) -> list[dict]:
+        """Return (task_type, skill) pairs with high group-relative advantage.
+
+        Aggregates by (task_type, skill), computing mean advantage across
+        all rewards in that pair. Only returns pairs with at least 2 runs
+        to filter noise.
+
+        This is the P4 counterpart to ``high_advantage_variants()`` — it
+        identifies skill files that are worth improving rather than
+        prompt variants.
+
+        Returns a list of dicts:
+          {"task_type": str, "skill": str,
+           "avg_advantage": float, "count": int,
+           "avg_score": float}
+        """
+        rows = self._conn.execute("""
+            SELECT task_type,
+                   skill,
+                   AVG(advantage) as avg_advantage,
+                   COUNT(*) as cnt,
+                   AVG(composite_score) as avg_score
+            FROM rewards
+            WHERE skill != '' AND "group" != ''
+            GROUP BY task_type, skill
+            HAVING cnt >= 2 AND AVG(advantage) > ?
+            ORDER BY avg_advantage DESC
+        """, (threshold,)).fetchall()
+        return [dict(r) for r in rows]
+
+    # ── GRPO group-based scoring (B2) ────────────────────────────────────
+
+    def compute_advantage(
+        self,
+        task_id: str,
+        score: float,
+        task_group: str,
+    ) -> float:
+        """Compute and store the group-relative advantage for *task_id*.
+
+        Sets the task's ``group`` label and computes:
+            advantage = score - mean(composite_score of all tasks in the group)
+
+        Edge cases
+        ----------
+        - Single record in group → advantage = 0.0
+        - No records in group → advantage = 0.0
+        - Repeated call recalculates using the latest group composition.
+
+        Returns
+        -------
+        float
+            The computed advantage value.
+        """
+        # Update group label on the task's reward record
+        self._conn.execute(
+            'UPDATE rewards SET "group" = ? WHERE task_id = ?',
+            (task_group, task_id),
+        )
+
+        # Collect all scores from this group (including this task)
+        rows = self._conn.execute(
+            'SELECT composite_score FROM rewards WHERE "group" = ?',
+            (task_group,),
+        ).fetchall()
+
+        if not rows:
+            advantage = 0.0
+        else:
+            scores = [r["composite_score"] for r in rows]
+            mean = sum(scores) / len(scores)
+            advantage = score - mean
+
+        self._conn.execute(
+            "UPDATE rewards SET advantage = ? WHERE task_id = ?",
+            (advantage, task_id),
+        )
+        self._conn.commit()
+        return advantage
+
+    def compute_batch_advantages(self) -> int:
+        """Compute advantages for every task in every non-empty group.
+
+        Processes all rewards that have a non-empty ``group`` and
+        recalculates advantages group by group so that every advantage
+        reflects the current group composition.
+
+        Returns
+        -------
+        int
+            Number of reward records updated.
+        """
+        # Collect distinct non-empty groups
+        rows = self._conn.execute(
+            """SELECT DISTINCT "group" FROM rewards WHERE "group" != ''"""
+        ).fetchall()
+
+        updated = 0
+        for row in rows:
+            group = row["group"]
+            group_rows = self._conn.execute(
+                'SELECT task_id, composite_score FROM rewards WHERE "group" = ?',
+                (group,),
+            ).fetchall()
+
+            scores = [r["composite_score"] for r in group_rows]
+            if not scores:
+                continue
+
+            mean = sum(scores) / len(scores)
+            for gr in group_rows:
+                advantage = gr["composite_score"] - mean
+                self._conn.execute(
+                    "UPDATE rewards SET advantage = ? WHERE task_id = ?",
+                    (advantage, gr["task_id"]),
+                )
+                updated += 1
+
+        if updated:
+            self._conn.commit()
+        return updated
 
     def close(self):
         self._conn.close()

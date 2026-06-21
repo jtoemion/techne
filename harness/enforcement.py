@@ -32,7 +32,7 @@ from intent_reasoner import verdict_to_gate
 from sha_gate import gate_test_output
 
 HARNESS_DIR = Path(__file__).parent
-MEMORY_DIR = HARNESS_DIR.parent / "memory"
+MEMORY_DIR = HARNESS_DIR.parent / ".techne" / "memory"
 
 
 # ─── Result dataclasses ──────────────────────────────────────────────────────

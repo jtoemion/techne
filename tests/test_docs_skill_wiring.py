@@ -310,6 +310,12 @@ def test_orchestrator_writes_retro_learn_trigger_on_done():
             # Patch memory dir
             import unittest.mock as mock
             memory_dir = tmp_path
+            # The _log_retro_learn_trigger constructs:
+            #   Path(__file__).parent.parent / ".techne" / "memory"
+            # Mocking Path.parent so both calls return tmp_path,
+            # so the final path is tmp_path / ".techne" / "memory".
+            # Create that subdir so mkdir doesn't fail.
+            (tmp_path / ".techne" / "memory").mkdir(parents=True, exist_ok=True)
             with mock.patch.object(Path, "parent", new_callable=lambda: tmp_path):
                 # Manually call the trigger
                 from collections import Counter

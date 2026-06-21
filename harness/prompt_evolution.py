@@ -43,8 +43,9 @@ from reward_log import RewardLog, WEIGHTS
 HARNESS_DIR = Path(__file__).parent
 ROOT = HARNESS_DIR.parent
 AGENTS_DIR = ROOT / "agents"
-MEMORY_DIR = ROOT / "memory"
+MEMORY_DIR = ROOT / ".techne" / "memory"
 DEFAULT_PROPOSALS_PATH = MEMORY_DIR / "prompt_proposals.json"
+VARIANTS_FILE = MEMORY_DIR / "prompt_variants.json"
 EVAL_RUNNER = ROOT / "tests" / "evals" / "run_evals.py"
 
 # Default prompt variants (the starting point)
@@ -151,12 +152,17 @@ class PromptEvolution:
     6. Losers get retired
     """
 
-    def __init__(self, reward_log: RewardLog, proposals_path: str | Path | None = None):
+    def __init__(self, reward_log: RewardLog, proposals_path: str | Path | None = None,
+                 variants_path: str | Path | None = None):
         self.reward_log = reward_log
         # Deep copy: promotion mutates self.variants, must not leak into the
         # module-level DEFAULT_VARIANTS or bleed across instances.
         self.variants = copy.deepcopy(DEFAULT_VARIANTS)  # agent -> variant_name -> config
         self.proposals_path = Path(proposals_path or DEFAULT_PROPOSALS_PATH)
+        self.variants_path = Path(variants_path or VARIANTS_FILE)
+        # Load any previously-ratified variants on top of defaults so that
+        # ratified prompt variants survive process restart.
+        self._load_variants()
 
     def select(self, task_type: str, agent: str = "implementer") -> dict:
         """
@@ -336,6 +342,7 @@ class PromptEvolution:
         proposal.status = "ratified"
         proposal.ratified_by = by
         self._save_proposal(proposal)
+        self._save_variants()
         return True
 
     def evolve(self, task_type: str, agent: str = "implementer") -> str:
@@ -352,6 +359,30 @@ class PromptEvolution:
         return next(iter(agent_variants)) if agent_variants else "v1"
 
     # ── Proposal persistence + scoring ───────────────────────────────────
+
+    def _save_variants(self) -> None:
+        """Persist the current variant pool to disk so ratified variants survive restart."""
+        self.variants_path.parent.mkdir(parents=True, exist_ok=True)
+        self.variants_path.write_text(
+            json.dumps(self.variants, indent=2, default=str),
+            encoding="utf-8",
+        )
+
+    def _load_variants(self) -> None:
+        """Load previously-ratified variants from disk and merge on top of defaults.
+
+        Per-agent variants loaded from disk override defaults for the same
+        variant name. Variants that only exist on disk (ratified in a prior
+        session) are added. Default variants that were never overridden are kept.
+        """
+        if not self.variants_path.exists():
+            return
+        try:
+            saved = json.loads(self.variants_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return
+        for agent, variants in saved.items():
+            self.variants.setdefault(agent, {}).update(variants)
 
     def _incumbent_score(self, task_type: str, variant: str) -> float:
         """Recorded avg composite score of the incumbent variant (default 0.5)."""

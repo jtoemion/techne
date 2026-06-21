@@ -44,7 +44,7 @@ from reward_log import RewardLog, _normalize_pattern
 
 HARNESS_DIR = Path(__file__).parent
 PLUGINS_DIR = HARNESS_DIR / "plugins"
-MEMORY_DIR = HARNESS_DIR.parent / "memory"
+MEMORY_DIR = HARNESS_DIR.parent / ".techne" / "memory"
 DEFAULT_PROPOSALS_PATH = MEMORY_DIR / "gate_proposals.json"
 
 # Thresholds for auto-approval

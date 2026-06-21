@@ -31,14 +31,16 @@ from pathlib import Path
 
 HARNESS_DIR = Path(__file__).parent
 ROOT = HARNESS_DIR.parent
-MISTAKES_FILE = ROOT / "memory" / "mistakes.md"
-LEDGER_FILE = ROOT / "memory" / "ledger.md"
-WIKILINK_MD = ROOT / "memory" / "wikilinks.md"
-WIKILINK_JSON = ROOT / "memory" / "wikilinks.json"
+MISTAKES_FILE = ROOT / ".techne" / "memory" / "mistakes.md"
+LEDGER_FILE = ROOT / ".techne" / "memory" / "ledger.md"
+WIKILINK_MD = ROOT / ".techne" / "memory" / "wikilinks.md"
+WIKILINK_JSON = ROOT / ".techne" / "memory" / "wikilinks.json"
 WORKSHOP_DIR = ROOT / ".techne"
 WORKSHOP_CONTEXT_INDEX = WORKSHOP_DIR / "generated" / "context_index.json"
-WORKSHOP_WIKILINK_MD = WORKSHOP_DIR / "memory" / "wikilinks.md"
-WORKSHOP_WIKILINK_JSON = WORKSHOP_DIR / "memory" / "wikilinks.json"
+# Mirror to root memory/ for external backward compatibility
+MIRROR_WIKILINK_MD = ROOT / "memory" / "wikilinks.md"
+MIRROR_WIKILINK_JSON = ROOT / "memory" / "wikilinks.json"
+TASK_DB_PATH = ROOT / ".techne" / "memory" / "tasks.db"
 
 
 def _slug(text: str) -> str:
@@ -56,7 +58,7 @@ def parse_mistakes() -> list[dict]:
     content = MISTAKES_FILE.read_text(encoding="utf-8")
     pattern = re.compile(
         r"^\s*## \[(?P<date>[^\]]+)\] (?P<phase>[^\|]+)\| (?P<source>[^\n]+)\n"
-        r"^\s*\*\*Error\*\*\s*: (?P<error>[^\n]+)\n"
+        r"^\s*\*\*Error\*\*\s*: (?P<error>[^\n]+(?:\n(?!\s*\*\*)[^\n]+)*)\n"
         r"^\s*\*\*Cause\*\*\s*: (?P<cause>[^\n]+)\n"
         r"^\s*\*\*Lesson\*\*\s*: (?P<lesson>[^\n]+)\n"
         r"^\s*\*\*Gate\*\*\s*: (?P<gate>[^\n]+)\n"
@@ -70,7 +72,7 @@ def parse_mistakes() -> list[dict]:
             "date": m.group("date").strip(),
             "phase": m.group("phase").strip(),
             "source": m.group("source").strip(),
-            "what": m.group("error").strip(),
+            "what": re.sub(r"\s+", " ", m.group("error").strip()),
             "why": m.group("cause").strip(),
             "lesson": m.group("lesson").strip(),
             "gate": m.group("gate").strip(),
@@ -164,6 +166,8 @@ def build_graph() -> dict:
         "summary": summary,
     }
     _attach_workshop_graph(graph)
+    _attach_entry_edges(graph)
+    _attach_task_nodes(graph)
     return graph
 
 
@@ -277,6 +281,178 @@ def _attach_workshop_graph(graph: dict) -> None:
     graph["summary"]["graph_edges"] = len(edges)
 
 
+def _attach_entry_edges(graph: dict) -> None:
+    """Connect narrative entries (mistakes/decisions/lessons) to subsystem nodes.
+
+    Appends edges between ``graph["entries"]`` and ``graph["nodes"]`` using
+    heuristic field-to-subsystem mapping rules.  Every entry gets at minimum
+    a ``project:root`` edge so nothing is unreachable.
+    """
+    nodes = graph.get("nodes", [])
+    edges = graph.get("edges", [])
+    entries = graph.get("entries", [])
+
+    # Build subsystem title -> node id lookup
+    subsystem_map: dict[str, str] = {}
+    for node in nodes:
+        if node["kind"] == "subsystem":
+            subsystem_map[node["title"]] = node["id"]
+
+    # Edge type by entry kind
+    KIND_EDGE_MAP: dict[str, str] = {
+        "MISTAKE": "mistake_applies_to",
+        "LESSON": "lesson_applies_to",
+        "DECISION": "decision_constrains",
+        "DISCIPLINE": "discipline_guides",
+    }
+
+    # Mapping rules: (field_name, substring_to_match, target_subsystem_name)
+    FIELD_RULES: list[tuple[str, str, str]] = [
+        ("gate", "intent", "harness"),
+        ("gate", "nextjs", "harness"),
+        ("gate", "redirect", "harness"),
+        ("phase", "CONDUCTOR", "harness"),
+        ("phase", "IMPLEMENT", "harness"),
+        ("source", "session", "memory"),
+    ]
+
+    for entry in entries:
+        slug = entry.get("slug", "")
+        if not slug:
+            continue
+        edge_type = KIND_EDGE_MAP.get(entry["kind"], "entry_relates_to")
+        target_id: str | None = None
+
+        # 1. Try field-based heuristic matching
+        for field, substr, subsys_name in FIELD_RULES:
+            val = entry.get(field, "")
+            if substr.lower() in val.lower():
+                target_id = subsystem_map.get(subsys_name)
+                if target_id:
+                    break
+
+        # 2. Try direct skill -> subsystem name match
+        if target_id is None:
+            skill = entry.get("skill", "")
+            if skill in subsystem_map:
+                target_id = subsystem_map[skill]
+
+        # 3. Fallback to project root
+        if target_id is None:
+            target_id = "project:root"
+
+        edges.append({
+            "from": slug,
+            "type": edge_type,
+            "to": target_id,
+            "weight": 1.0,
+            "source": "wikilink_heuristic",
+        })
+
+    graph["edges"] = edges
+
+
+def _attach_task_nodes(graph: dict) -> None:
+    """Augment the graph with task nodes and task-triggered edges from completed tasks.
+
+    For every DONE task in task_db:
+      - Creates a node with ``kind: "task"`` and slug ``task:<id>``
+      - Creates ``task_touched → file`` edges by parsing task history ``changed_files``
+      - Creates ``task_triggered → entry`` edges by matching task tags/phases
+        against entry fields (gate, phase, skill)
+    """
+    task_db_path = TASK_DB_PATH
+    if not task_db_path.exists():
+        return
+
+    try:
+        from task_db import TaskDB  # noqa: E402  — same-package, safe import
+        db = TaskDB(str(task_db_path))
+    except Exception:
+        return
+
+    nodes = graph.get("nodes", [])
+    edges = graph.get("edges", [])
+    entries = graph.get("entries", [])
+
+    done_tasks = [t for t in db.get_all_tasks() if t.status == "DONE"]
+    if not done_tasks:
+        return
+
+    for task in done_tasks:
+        task_slug = f"task:{task.id}"
+        nodes.append({
+            "id": task_slug,
+            "kind": "task",
+            "title": task.title,
+            "slug": task_slug,
+            "description": task.description,
+            "tags": task.tags,
+            "metadata": {
+                "discipline": task.discipline,
+                "phase_mode": task.phase_mode,
+                "status": task.status,
+                "created_at": task.created_at,
+                "updated_at": task.updated_at,
+            },
+        })
+
+        # ── task_touched → file edges ──
+        try:
+            history = db.get_task_history(task.id)
+            for event in history:
+                for filepath in (event.changed_files or []):
+                    file_id = f"file:{filepath}"
+                    edges.append({
+                        "from": task_slug,
+                        "type": "task_touched",
+                        "to": file_id,
+                        "weight": 1.0,
+                        "source": "task_db",
+                    })
+        except Exception:
+            pass
+
+        # ── task_triggered → entry edges (gate / phase / skill matching) ──
+        for entry in entries:
+            entry_slug = entry.get("slug", "")
+            if not entry_slug:
+                continue
+
+            matched = False
+            for tag in task.tags:
+                for field in ("gate", "phase", "skill"):
+                    val = entry.get(field, "")
+                    if val and tag.lower() in val.lower():
+                        edges.append({
+                            "from": task_slug,
+                            "type": "task_triggered",
+                            "to": entry_slug,
+                            "weight": 0.8,
+                            "source": "task_db",
+                        })
+                        matched = True
+                        break
+                if matched:
+                    break
+
+            if not matched and task.phase_mode:
+                entry_phase = entry.get("phase", "")
+                if entry_phase and task.phase_mode.lower() in entry_phase.lower():
+                    edges.append({
+                        "from": task_slug,
+                        "type": "task_triggered",
+                        "to": entry_slug,
+                        "weight": 0.7,
+                        "source": "task_db",
+                    })
+
+    graph["nodes"] = nodes
+    graph["edges"] = edges
+    graph["summary"]["graph_nodes"] = len(nodes)
+    graph["summary"]["graph_edges"] = len(edges)
+
+
 # ── markdown formatter ──
 
 def format_markdown(graph: dict) -> str:
@@ -347,10 +523,10 @@ def main() -> int:
         WIKILINK_MD.parent.mkdir(parents=True, exist_ok=True)
         WIKILINK_MD.write_text(format_markdown(graph), encoding="utf-8")
         print(f"[wikilink] wrote {WIKILINK_MD}")
-        if WORKSHOP_DIR.exists():
-            WORKSHOP_WIKILINK_MD.parent.mkdir(parents=True, exist_ok=True)
-            WORKSHOP_WIKILINK_MD.write_text(format_markdown(graph), encoding="utf-8")
-            print(f"[wikilink] wrote {WORKSHOP_WIKILINK_MD}")
+        # Mirror to root memory/ for external backward compatibility
+        MIRROR_WIKILINK_MD.parent.mkdir(parents=True, exist_ok=True)
+        MIRROR_WIKILINK_MD.write_text(format_markdown(graph), encoding="utf-8")
+        print(f"[wikilink] wrote {MIRROR_WIKILINK_MD}")
 
     if not args.md_only:
         WIKILINK_JSON.parent.mkdir(parents=True, exist_ok=True)
@@ -360,13 +536,13 @@ def main() -> int:
             encoding="utf-8",
         )
         print(f"[wikilink] wrote {WIKILINK_JSON}")
-        if WORKSHOP_DIR.exists():
-            WORKSHOP_WIKILINK_JSON.parent.mkdir(parents=True, exist_ok=True)
-            WORKSHOP_WIKILINK_JSON.write_text(
-                json.dumps(graph, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
-            print(f"[wikilink] wrote {WORKSHOP_WIKILINK_JSON}")
+        # Mirror to root memory/ for external backward compatibility
+        MIRROR_WIKILINK_JSON.parent.mkdir(parents=True, exist_ok=True)
+        MIRROR_WIKILINK_JSON.write_text(
+            json.dumps(graph, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        print(f"[wikilink] wrote {MIRROR_WIKILINK_JSON}")
 
     summary = graph["summary"]
     print(f"[wikilink] {summary['total']} entries ({summary['by_kind']}) "

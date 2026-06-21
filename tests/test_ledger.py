@@ -68,7 +68,7 @@ def test_round_trip():
 
 def test_seed_file_wellformed():
     print("\n[ledger — committed memory/ledger.md is well-formed]")
-    seed = ROOT / "memory" / "ledger.md"
+    seed = ROOT / ".techne" / "memory" / "ledger.md"
     check("memory/ledger.md exists", seed.exists())
     if seed.exists():
         text = seed.read_text(encoding="utf-8")

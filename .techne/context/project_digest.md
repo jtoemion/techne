@@ -17,8 +17,12 @@ A harness engineering environment for disciplined AI agent pipelines. Compact, c
 ## Canonical docs (kept HOT — recall reads, conclude updates)
 
   docs/adr/ADR-FORMAT.md
+  docs/host-integration-guide.md
   docs/plans/2026-06-14-gate-plugins-and-hardening.md
   docs/plans/2026-06-20-techne-project-workshop-redesign.md
+  docs/plans/techne-build-guide-patch-001.md
+  docs/plans/techne-workshop-build-guide.md
+  docs/plans/techne-workshop-garage.md
 
 ## Top-level layout
 
@@ -33,6 +37,7 @@ A harness engineering environment for disciplined AI agent pipelines. Compact, c
   docs/
   harness/
   memory/
+  receptionist/
   references/
   skills/
   tests/

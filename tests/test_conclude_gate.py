@@ -19,6 +19,7 @@ sys.path.insert(0, str(HARNESS_DIR))
 from task_db import TaskDB
 from orchestrator_loop import OrchestratorLoop, LoopAction
 from reward_log import RewardLog
+from checkpoint import mark_honcho_concluded, clear_honcho_flag
 
 
 def _make_loop():
@@ -46,6 +47,89 @@ def _setup_for_conclude(loop: OrchestratorLoop, task_id: str):
         loop.enforcer.mark_complete(task_id, phase, agent="test", summary=f"{phase} done")
 
 
+# ── A5: false-block scenario — dirty file in different subsystem ─────────
+
+def test_a5_false_block_scenario_passes():
+    """CONCLUDE passes when touched files differ from dirty files (different subsystems)."""
+    import json
+    import subprocess as _sp
+    import tempfile
+    from unittest.mock import patch
+    from pathlib import Path
+
+    tmpdir = tempfile.mkdtemp()
+    try:
+        repo_root = Path(tmpdir)
+
+        # Init git repo
+        _sp.run(["git", "init"], cwd=repo_root, capture_output=True)
+        _sp.run(["git", "config", "user.email", "test@test.com"], cwd=repo_root, capture_output=True)
+        _sp.run(["git", "config", "user.name", "Test"], cwd=repo_root, capture_output=True)
+
+        # Create .techne/context dir with both files
+        context_dir = repo_root / ".techne" / "context"
+        context_dir.mkdir(parents=True)
+        (context_dir / "auth.CONTEXT.md").write_text("# Auth subsystem\n")
+        (context_dir / "billing.CONTEXT.md").write_text("# Billing subsystem\n")
+
+        # Create context_index.json with subsystem info
+        generated_dir = repo_root / ".techne" / "generated"
+        generated_dir.mkdir(parents=True)
+        index = {
+            "files": [
+                {"path": ".techne/context/auth.CONTEXT.md", "subsystem": "auth"},
+                {"path": ".techne/context/billing.CONTEXT.md", "subsystem": "billing"},
+            ]
+        }
+        (generated_dir / "context_index.json").write_text(json.dumps(index))
+
+        # Stage and commit both files
+        _sp.run(["git", "add", "-A"], cwd=repo_root, capture_output=True)
+        _sp.run(["git", "commit", "-m", "initial"], cwd=repo_root, capture_output=True)
+
+        # Make billing.CONTEXT.md dirty (uncommitted edit) — different subsystem
+        (context_dir / "billing.CONTEXT.md").write_text("# Billing subsystem (uncommitted modification)\n")
+
+        # Create loop WITHOUT the mock that patches _get_uncommitted_context_files
+        db = TaskDB(":memory:")
+        reward_log = RewardLog()
+        loop = OrchestratorLoop(db, reward_log=reward_log)
+
+        # Mock Path.cwd() to return our repo root so find_repo_root works
+        with patch.object(Path, "cwd", return_value=repo_root):
+            task_id = _make_task(loop)
+            # Set up all phases through RETRO, passing changed_files on CONTEXT_GUARD
+            loop.enforcer.mark_complete(task_id, "RECALL", agent="test", summary="recall ok")
+            loop.enforcer.mark_complete(task_id, "IMPLEMENT", agent="test", summary="diff ok")
+            loop.enforcer.mark_complete(
+                task_id, "CONTEXT_GUARD", agent="test", summary="audit ok",
+                changed_files=[".techne/context/auth.CONTEXT.md"],
+            )
+            loop.enforcer.mark_complete(task_id, "CRITIQUE", agent="test", summary="critique ok")
+            loop.enforcer.mark_complete(task_id, "REVIEW", agent="test", summary="review ok")
+            loop.enforcer.mark_complete(task_id, "VERIFY", agent="test", summary="verify ok")
+            loop.enforcer.mark_complete(task_id, "EVAL", agent="test", summary="eval ok")
+            loop.enforcer.mark_complete(task_id, "RETRO", agent="test", summary="retro ok")
+
+            mark_honcho_concluded("conclusion-id-abc123")
+
+            proof = """HONCHO: conclusion-id-abc123 — saved auth component
+DOCS: NOT_NEEDED: trivial change, no docs affected
+CONTEXT: .techne/context/auth.CONTEXT.md refreshed sha:abc123def456789012345678901234567890abcd"""
+
+            outcome = loop.submit(task_id, "CONCLUDE", proof)
+            assert outcome.action == LoopAction.RUN_PHASE, (
+                f"Expected RUN_PHASE (billing dirty file is different subsystem from auth touched file), "
+                f"got {outcome.action}: {outcome.message}"
+            )
+            assert outcome.phase == "REFRESH_CONTEXT", (
+                f"Expected REFRESH_CONTEXT phase, got {outcome.phase}"
+            )
+    finally:
+        import shutil
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 # ── CONCLUDE proof validation tests ──────────────────────────────────────
 
 def test_valid_proof_passes():
@@ -53,13 +137,15 @@ def test_valid_proof_passes():
     loop = _make_loop()
     task_id = _make_task(loop)
     _setup_for_conclude(loop, task_id)
+    mark_honcho_concluded("conclusion-id-abc123")
 
     proof = """HONCHO: conclusion-id-abc123 — saved badge component pattern
 DOCS: NOT_NEEDED: trivial UI change, no docs affected
 CONTEXT: NOT_NEEDED: no .techne/context files changed"""
 
     outcome = loop.submit(task_id, "CONCLUDE", proof)
-    assert outcome.action == LoopAction.DONE, f"Expected DONE, got {outcome.action}: {outcome.message}"
+    assert outcome.action == LoopAction.RUN_PHASE, f"Expected RUN_PHASE, got {outcome.action}: {outcome.message}"
+    assert outcome.phase == "REFRESH_CONTEXT", f"Expected REFRESH_CONTEXT, got {outcome.phase}"
 
 
 def test_keyword_bypass_rejected():
@@ -67,6 +153,7 @@ def test_keyword_bypass_rejected():
     loop = _make_loop()
     task_id = _make_task(loop)
     _setup_for_conclude(loop, task_id)
+    clear_honcho_flag()
 
     # Contains "conclusion" but not as a HONCHO: line prefix
     proof = """The conclusion is that the diff is clean and well-structured.
@@ -83,6 +170,7 @@ def test_sha_on_wrong_line_rejected():
     loop = _make_loop()
     task_id = _make_task(loop)
     _setup_for_conclude(loop, task_id)
+    mark_honcho_concluded("conclusion-id-abc123")
 
     # SHA is on the HONCHO line, not CONTEXT line
     proof = """HONCHO: conclusion-id-abc123 sha:abc123def456789012345678901234567890abcd
@@ -99,13 +187,15 @@ def test_sha_on_context_line_passes():
     loop = _make_loop()
     task_id = _make_task(loop)
     _setup_for_conclude(loop, task_id)
+    mark_honcho_concluded("conclusion-id-abc123")
 
     proof = """HONCHO: conclusion-id-abc123
 DOCS: docs/api.md updated
 CONTEXT: .techne/context/project.md refreshed sha:abc123def456789012345678901234567890abcd"""
 
     outcome = loop.submit(task_id, "CONCLUDE", proof)
-    assert outcome.action == LoopAction.DONE, f"Expected DONE, got {outcome.action}: {outcome.message}"
+    assert outcome.action == LoopAction.RUN_PHASE, f"Expected RUN_PHASE, got {outcome.action}: {outcome.message}"
+    assert outcome.phase == "REFRESH_CONTEXT", f"Expected REFRESH_CONTEXT, got {outcome.phase}"
 
 
 def test_context_not_needed_skips_sha():
@@ -113,13 +203,15 @@ def test_context_not_needed_skips_sha():
     loop = _make_loop()
     task_id = _make_task(loop)
     _setup_for_conclude(loop, task_id)
+    mark_honcho_concluded("conclusion-id-abc123")
 
     proof = """HONCHO: conclusion-id-abc123
 DOCS: NOT_NEEDED: no doc changes
 CONTEXT: NOT_NEEDED: no context changes"""
 
     outcome = loop.submit(task_id, "CONCLUDE", proof)
-    assert outcome.action == LoopAction.DONE, f"Expected DONE, got {outcome.action}: {outcome.message}"
+    assert outcome.action == LoopAction.RUN_PHASE, f"Expected RUN_PHASE, got {outcome.action}: {outcome.message}"
+    assert outcome.phase == "REFRESH_CONTEXT", f"Expected REFRESH_CONTEXT, got {outcome.phase}"
 
 
 def test_missing_honcho_rejected():
@@ -127,6 +219,7 @@ def test_missing_honcho_rejected():
     loop = _make_loop()
     task_id = _make_task(loop)
     _setup_for_conclude(loop, task_id)
+    clear_honcho_flag()
 
     proof = """DOCS: NOT_NEEDED: no changes
 CONTEXT: NOT_NEEDED: no changes"""
@@ -179,6 +272,7 @@ def test_honcho_keyword_in_body_not_counted():
     loop = _make_loop()
     task_id = _make_task(loop)
     _setup_for_conclude(loop, task_id)
+    clear_honcho_flag()
 
     proof = """DOCS: docs/honcho-integration.md updated
 CONTEXT: NOT_NEEDED: no changes"""
@@ -286,6 +380,7 @@ if __name__ == "__main__":
     import traceback
 
     tests = [
+        test_a5_false_block_scenario_passes,
         test_valid_proof_passes,
         test_keyword_bypass_rejected,
         test_sha_on_wrong_line_rejected,

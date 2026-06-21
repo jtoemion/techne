@@ -13,6 +13,7 @@ SCRIPTS_DIR = REPO_ROOT / ".techne" / "scripts"
 sys.path.insert(0, str(HARNESS_DIR))
 
 import wikilink  # noqa: E402
+from task_db import TaskDB  # noqa: E402
 from workshop import classify_policy, find_workshop_paths, load_workshop_config  # noqa: E402
 
 
@@ -135,39 +136,143 @@ def test_flat_policy_config_normalizes() -> None:
 
 def test_wikilink_graph_attaches_workshop_nodes() -> None:
     with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+
+        # Write fixture context_index with a "harness" subsystem
         context_index = {
             "project_name": "mini",
             "repo_root": tmp,
             "context_docs": [
                 {
-                    "path": ".techne/context/api.CONTEXT.md",
-                    "subsystem": "api",
-                    "tags": ["auth"],
-                    "paths": ["src/api"],
+                    "path": ".techne/context/harness.CONTEXT.md",
+                    "subsystem": "harness",
+                    "tags": ["pipeline", "gates"],
+                    "paths": ["harness"],
                     "refresh_policy": "proposed",
                 }
             ],
             "subsystems": [
                 {
-                    "name": "api",
-                    "paths": ["src/api"],
-                    "context_doc": ".techne/context/api.CONTEXT.md",
-                    "tags": ["auth"],
+                    "name": "harness",
+                    "paths": ["harness"],
+                    "context_doc": ".techne/context/harness.CONTEXT.md",
+                    "tags": ["pipeline", "gates"],
                     "refresh_policy": "proposed",
-                    "file_count": 1,
+                    "file_count": 42,
                 }
             ],
             "files": [
-                {"path": "src/api/handler.py", "subsystem": "api", "ext": ".py"}
+                {"path": "harness/wikilink.py", "subsystem": "harness", "ext": ".py"}
             ],
         }
-        index_path = Path(tmp) / "context_index.json"
+        index_path = tmp_path / "context_index.json"
         index_path.write_text(json.dumps(context_index), encoding="utf-8")
-        with mock.patch.object(wikilink, "WORKSHOP_CONTEXT_INDEX", index_path):
+
+        # Write fixture mistakes.md — one entry with gate="intent" (→ harness)
+        mistakes_content = (
+            "## [2026-06-20T00:00:00Z] IMPLEMENT | AUTO-LOGGED\n"
+            "**Error**     : Intent gate: MISMATCH\n"
+            "**Cause**     : Something went wrong\n"
+            "**Lesson**    : Always check intent\n"
+            "**Gate**      : intent\n"
+            "**Status**    : ACTIVE\n"
+        )
+        mistakes_path = tmp_path / "mistakes.md"
+        mistakes_path.write_text(mistakes_content, encoding="utf-8")
+
+        # Write empty ledger.md
+        ledger_path = tmp_path / "ledger.md"
+        ledger_path.write_text("# LEDGER\n", encoding="utf-8")
+
+        # ── Seed a temporary task_db with DONE tasks ──
+        task_db_path = tmp_path / "tasks.db"
+        db = TaskDB(str(task_db_path))
+        t1 = db.create_task("add wikilink graph v2", discipline="tdd",
+                            tags=["wikilink", "graph", "harness"])
+        db.start_task(t1.id, agent="implementer")
+        db.complete_task(t1.id, agent="implementer", summary="task nodes + edges",
+                         changed_files=["harness/wikilink.py"], diff_summary="+87 -3")
+        db.review_task(t1.id, agent="reviewer", verdict="PASS", findings="clean")
+        db.verify_task(t1.id, agent="verifier", test_output_hash="abc123")
+        db.done_task(t1.id)
+
+        t2 = db.create_task("add rate limiter", discipline="implement",
+                            tags=["rate-limit", "middleware"])
+        db.start_task(t2.id, agent="implementer")
+        db.complete_task(t2.id, agent="implementer", summary="token bucket",
+                         changed_files=["src/middleware/rate.py", "tests/test_rate.py"],
+                         diff_summary="+42 -0")
+        db.review_task(t2.id, agent="reviewer", verdict="PASS", findings="ok")
+        db.verify_task(t2.id, agent="verifier", test_output_hash="def456")
+        db.done_task(t2.id)
+
+        # An IN_PROGRESS task should NOT get a node
+        t3 = db.create_task("incomplete work", discipline="tdd")
+        db.start_task(t3.id, agent="implementer")
+        # intentionally NOT done
+        db.close()
+
+        with mock.patch.object(wikilink, "WORKSHOP_CONTEXT_INDEX", index_path), \
+             mock.patch.object(wikilink, "MISTAKES_FILE", mistakes_path), \
+             mock.patch.object(wikilink, "LEDGER_FILE", ledger_path), \
+             mock.patch.object(wikilink, "TASK_DB_PATH", task_db_path):
             graph = wikilink.build_graph()
+
+        # ── structural graph assertions (unchanged) ──
         assert graph["project"]["name"] == "mini"
         assert any(node["kind"] == "context_doc" for node in graph["nodes"])
         assert any(edge["type"] == "context_describes" for edge in graph["edges"])
+
+        # ── entry-edge assertions (new for A3) ──
+        assert len(graph["entries"]) == 1
+        entry = graph["entries"][0]
+        assert entry["kind"] == "MISTAKE"
+        assert entry["gate"] == "intent"
+        # The heuristic maps gate="intent" → subsystem:harness
+        assert any(
+            e["from"] == entry["slug"]
+            and e["type"] == "mistake_applies_to"
+            and e["to"] == "subsystem:harness"
+            for e in graph["edges"]
+        ), (
+            f"Expected a 'mistake_applies_to' edge from entry "
+            f"slug={entry['slug']!r} to 'subsystem:harness', "
+            f"but edges={graph['edges']}"
+        )
+
+        # ── task-node assertions (new for A4) ──
+        task_nodes = [n for n in graph["nodes"] if n["kind"] == "task"]
+        assert len(task_nodes) == 2, (
+            f"Expected 2 task nodes (DONE), got {len(task_nodes)}: {task_nodes}"
+        )
+        assert task_nodes[0]["slug"].startswith("task:")
+        assert task_nodes[0]["metadata"]["status"] == "DONE"
+        assert task_nodes[1]["slug"].startswith("task:")
+        assert task_nodes[1]["metadata"]["status"] == "DONE"
+
+        # Task→file edges (task_touched)
+        touched_edges = [
+            e for e in graph["edges"]
+            if e["type"] == "task_touched" and e["source"] == "task_db"
+        ]
+        assert len(touched_edges) >= 2, (
+            f"Expected at least 2 task_touched edges, got {len(touched_edges)}"
+        )
+        assert any(e["to"] == "file:harness/wikilink.py" for e in touched_edges)
+        assert any(e["to"] == "file:src/middleware/rate.py" for e in touched_edges)
+
+        # Task→entry edges (task_triggered)
+        triggered_edges = [
+            e for e in graph["edges"]
+            if e["type"] == "task_triggered" and e["source"] == "task_db"
+        ]
+        # t1 has tag "harness" which should match entry fields (no direct match since
+        # the entry has gate="intent", phase="IMPLEMENT", skill="none")
+        # But t1 also has tag "graph" — no match. Task t2 has "middleware" — no match.
+        # Still check the structure is sound
+        for te in triggered_edges:
+            assert te["from"].startswith("task:")
+            assert te["to"].startswith("2026-")  # entry slug pattern
 
 
 if __name__ == "__main__":

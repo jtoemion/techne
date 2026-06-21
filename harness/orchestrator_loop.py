@@ -65,6 +65,8 @@ from prompt_evolution import PromptEvolution
 from gate_evolution import GateEvolution
 from enforcement import build_registry, run_gates, measure_scope, verify_tests
 from evaluator import evaluate_pipeline_run, EvalReport
+from checkpoint import check_honcho_logged
+from grpo import propose_grpo_edits
 
 HARNESS_DIR = Path(__file__).parent
 ROOT = HARNESS_DIR.parent
@@ -175,6 +177,21 @@ class OrchestratorLoop:
         task = self.db.get_task(task_id)
         phase_mode = task.phase_mode if task else "full"
 
+        # A PENDING task that has been reset (e.g. after a debugger/re-implement
+        # unblock) should resume at the correct starting phase, NOT at the phase
+        # after the last completed one — otherwise it gets stuck re-entering the
+        # phase that originally blocked.
+        if task and task.status == "PENDING":
+            completed = {
+                e.action for e in self.db.get_task_history(task_id)
+                if e.action in PHASES and e.verdict not in ("HARD_FAIL",)
+            }
+            if phase_mode == "fast":
+                return "IMPLEMENT"
+            if "RECALL" not in completed:
+                return "RECALL"
+            return "IMPLEMENT"
+
         # A reset task (PENDING, e.g. after a debugger/re-implement unblock) resumes at
         # RECALL (or IMPLEMENT for fast mode) even though stale completed-phase events linger in history.
         # BUT: only treat PENDING as "reset" if no phase has been completed for this run.
@@ -186,10 +203,10 @@ class OrchestratorLoop:
         if last in ("DONE", "FAILED"):
             return last
 
-        # For fast mode, skip RECALL and CONCLUDE phases
+        # For fast mode, skip RECALL, CONCLUDE, and REFRESH_CONTEXT phases
         if phase_mode == "fast":
             next_phase = PHASES[PHASES.index(last) + 1] if last in PHASES else "IMPLEMENT"
-            if next_phase in ("RECALL", "CONCLUDE"):
+            if next_phase in ("RECALL", "CONCLUDE", "REFRESH_CONTEXT"):
                 return PHASES[PHASES.index(next_phase) + 1] if next_phase in PHASES else "DONE"
 
         try:
@@ -242,6 +259,8 @@ class OrchestratorLoop:
             return self._submit_retro(task_id, result)
         elif phase == "CONCLUDE":
             return self._submit_conclude(task_id, result)
+        elif phase == "REFRESH_CONTEXT":
+            return self._submit_refresh_context(task_id, result)
         elif phase == "DEBUG":
             return self._submit_debug(task_id, result)
         else:
@@ -294,7 +313,8 @@ class OrchestratorLoop:
             )
 
         recall_lower = result.lower()
-        has_honcho = "honcho_context:" in recall_lower or "honcho context:" in recall_lower
+        conclusion_id = check_honcho_logged()
+        has_honcho = conclusion_id is not None
         has_workshop = "workshop_context:" in recall_lower
         if not has_honcho:
             return LoopOutcome(
@@ -666,7 +686,7 @@ class OrchestratorLoop:
         punch list: docs updated or explicitly not needed, .techne/context refreshed
         or explicitly not needed. Then we mark DONE and record the RL reward.
         """
-        validation_error = self._validate_conclude_proof(result)
+        validation_error = self._validate_conclude_proof(result, task_id)
         if validation_error:
             return LoopOutcome(
                 action=LoopAction.RETRY, phase="CONCLUDE", task_id=task_id,
@@ -678,11 +698,9 @@ class OrchestratorLoop:
             summary=f"Closure proof: {result[:150]}",
             findings=result,
         )
-        self.enforcer.mark_complete(task_id, "DONE", agent="orchestrator")
-        self._record_reward(task_id)
 
         # ── Retro-learn trigger ──
-        # After every DONE, snapshot the per-skill mistake counts so retro-learn
+        # After every CONCLUDE, snapshot the per-skill mistake counts so retro-learn
         # can decide whether to propose a skill edit (>=2 ACTIVE on one skill) or
         # a new gate (>=4). The host reads the snapshot — no LLM call here.
         try:
@@ -692,13 +710,80 @@ class OrchestratorLoop:
             if any(n >= 2 for n in recurrence.values()):
                 self._log_retro_learn_trigger(task_id, recurrence, ledger_by_kind())
         except Exception:
-            pass  # retro-learn is best-effort — don't block DONE on a snapshot error
+            pass  # retro-learn is best-effort — don't block CONCLUDE on a snapshot error
 
         report = self._eval.get(task_id)
         total = report.total if report else 0
         return LoopOutcome(
+            action=LoopAction.RUN_PHASE, phase="REFRESH_CONTEXT", task_id=task_id,
+            message=f"Conclusion recorded (eval {total}/100) — advancing to context refresh",
+        )
+
+    def _submit_refresh_context(self, task_id: str, result: str = "") -> LoopOutcome:
+        """REFRESH_CONTEXT phase — rebuild generated workshop artifacts.
+
+        Runs refresh_generated_docs.py as a subprocess, passing touched files
+        from the CONTEXT_GUARD phase. On success, marks REFRESH_CONTEXT complete,
+        records the RL reward, and transitions to DONE.
+
+        Fast-mode tasks skip the script execution entirely.
+        """
+        task = self.db.get_task(task_id)
+
+        # Fast-mode: skip the full refresh, just record reward and mark DONE
+        if task and task.phase_mode == "fast":
+            self.enforcer.mark_complete(
+                task_id, "DONE", agent="orchestrator",
+                summary="Fast-mode pipeline complete — context refresh skipped",
+            )
+            self._record_reward(task_id)
+            return LoopOutcome(
+                action=LoopAction.DONE, phase="DONE", task_id=task_id,
+                message="Context refresh skipped (fast mode) — task complete",
+            )
+
+        # Get touched files from CONTEXT_GUARD's punch list
+        history = self.db.get_task_history(task_id)
+        context_guard = next((e for e in reversed(history) if e.action == "CONTEXT_GUARD"), None)
+        touched = []
+        if context_guard and context_guard.changed_files:
+            touched = json.loads(context_guard.changed_files) if isinstance(context_guard.changed_files, str) else context_guard.changed_files
+
+        script = Path(__file__).parent.parent / ".techne" / "scripts" / "refresh_generated_docs.py"
+        cmd = ["python3", str(script), "--task", task_id, "--json"]
+        for f in touched[:10]:
+            cmd.extend(["--files", f])
+
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if proc.returncode != 0:
+            return LoopOutcome(
+                action=LoopAction.RETRY, phase="REFRESH_CONTEXT", task_id=task_id,
+                message=(
+                    f"REFRESH_CONTEXT failed: "
+                    f"{(proc.stderr or proc.stdout or 'unknown error').strip()[:200]}"
+                ),
+            )
+
+        try:
+            payload = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            return LoopOutcome(
+                action=LoopAction.RETRY, phase="REFRESH_CONTEXT", task_id=task_id,
+                message="REFRESH_CONTEXT failed: script output is not valid JSON",
+            )
+
+        self.enforcer.mark_complete(
+            task_id, "REFRESH_CONTEXT", agent="refresh_context",
+            summary=(
+                f"Refreshed: {len(payload.get('generated_updated', []))} files, "
+                f"{len(payload.get('stale_docs', []))} stale docs flagged"
+            ),
+            findings=json.dumps(payload),
+        )
+        self._record_reward(task_id)
+        return LoopOutcome(
             action=LoopAction.DONE, phase="DONE", task_id=task_id,
-            message=f"All phases complete — eval {total}/100",
+            message="Context refreshed — task complete",
         )
 
     def _log_retro_learn_trigger(self, task_id: str, recurrence: dict,
@@ -718,7 +803,7 @@ class OrchestratorLoop:
         from datetime import datetime, timezone
         from pathlib import Path
 
-        memory_dir = Path(__file__).parent.parent / "memory"
+        memory_dir = Path(__file__).parent.parent / ".techne" / "memory"
         memory_dir.mkdir(parents=True, exist_ok=True)
         triggers = memory_dir / "retro_learn_triggers.md"
 
@@ -750,7 +835,7 @@ class OrchestratorLoop:
         except Exception:
             pass  # wikilink build is best-effort — never block DONE
 
-    def _validate_conclude_proof(self, result: str) -> str:
+    def _validate_conclude_proof(self, result: str, task_id: str | None = None) -> str:
         """Validate CONCLUDE proof: Honcho + docs closure + context closure.
 
         Parses the proof line-by-line looking for structured prefixes:
@@ -760,25 +845,23 @@ class OrchestratorLoop:
 
         Rejects if any required section is missing, if the CONTEXT line claims
         an update without a commit SHA, or if .techne/context has uncommitted
-        changes in the working tree.
+        changes in the working tree relevant to the task's touched files.
         """
         import re
 
-        if not result or len(result.strip()) < 40:
+        if not result or len(result.strip()) < 20:
             return (
-                "CONCLUDE proof too short. Provide HONCHO conclusion proof plus DOCS "
-                "and CONTEXT closure proof (updated path or NOT_NEEDED reason)."
+                "Proof is too short or empty — CONCLUDE requires HONCHO/DOCS/CONTEXT proof lines"
             )
 
         # Parse structured lines: prefix must start a non-blank line
-        has_honcho = False
+        conclusion_id = check_honcho_logged()
+        has_honcho = conclusion_id is not None
         context_line = None  # the raw CONTEXT line (if any)
         for line in result.splitlines():
             stripped = line.strip()
             lower = stripped.lower()
-            if lower.startswith("honcho"):
-                has_honcho = True
-            elif lower.startswith("context"):
+            if lower.startswith("context"):
                 context_line = stripped
             # DOCS: detected by prefix — but we only need to know it exists
             # (too many valid formats: "DOCS: NOT_NEEDED: ...", "DOCS: docs/X.md updated")
@@ -797,7 +880,25 @@ class OrchestratorLoop:
             return "CONCLUDE missing proof: " + "; ".join(missing)
 
         # ── Hard gate: .techne/context must be committed if modified ──
-        uncommitted = self._get_uncommitted_context_files()
+        # If task_id is provided, extract changed_files from CONTEXT_GUARD event
+        # to scope the gate to only task-relevant context files.
+        changed_files = None
+        if task_id:
+            try:
+                history = self.db.get_task_history(task_id)
+                context_guard = next(
+                    (e for e in reversed(history) if e.action == "CONTEXT_GUARD"),
+                    None,
+                )
+                if context_guard and context_guard.changed_files:
+                    changed_files = (
+                        json.loads(context_guard.changed_files)
+                        if isinstance(context_guard.changed_files, str)
+                        else context_guard.changed_files
+                    )
+            except Exception:
+                pass  # best-effort — fall through to full check
+        uncommitted = self._get_uncommitted_context_files(touched_files=changed_files)
         if uncommitted:
             return (
                 f"CONCLUDE blocked: .techne/context has uncommitted changes. "
@@ -821,14 +922,20 @@ class OrchestratorLoop:
 
         return ""
 
-    def _get_uncommitted_context_files(self) -> list[str]:
+    def _get_uncommitted_context_files(self, touched_files: list[str] | None = None) -> list[str]:
         """Return list of uncommitted .techne/context files, or [] if clean.
 
         Walks up from CWD (where scripts are always cd'd to project root) to find
         .git, then checks .techne/context for uncommitted changes. Falls back to
         walking up from db_path if CWD approach fails.
+
+        When *touched_files* is provided, the result is filtered to only context
+        files whose subsystem overlaps with the touched files' subsystems, using
+        detect_subsystems_for_files() from the workshop module. This prevents an
+        unrelated dirty context file from blocking the CONCLUDE gate.
         """
         import subprocess, os
+        from workshop import detect_subsystems_for_files
 
         def find_repo_root(start: Path) -> Path | None:
             cursor = start
@@ -853,7 +960,29 @@ class OrchestratorLoop:
                 capture_output=True, text=True, cwd=str(repo_root),
             )
             uncommitted = [l.split(None, 1)[1] for l in result.stdout.strip().split("\n") if l.strip()]
-            return [f for f in uncommitted if ".techne/context" in f]
+            uncommitted = [f for f in uncommitted if ".techne/context" in f]
+
+            # ── Scope gate to task-relevant subsystems ──
+            if touched_files and uncommitted:
+                try:
+                    index_path = repo_root / ".techne" / "generated" / "context_index.json"
+                    if index_path.exists():
+                        index = json.loads(index_path.read_text(encoding="utf-8"))
+                        touched_subsystems = detect_subsystems_for_files(index, touched_files)
+                        if touched_subsystems:
+                            filtered = []
+                            for f in uncommitted:
+                                p = Path(f)
+                                # Subsystem is the filename stem before ".CONTEXT.md"
+                                # e.g. ".techne/context/auth.CONTEXT.md" -> "auth"
+                                subsystem = p.stem.replace(".CONTEXT", "")
+                                if subsystem in touched_subsystems:
+                                    filtered.append(f)
+                            return filtered
+                except Exception:
+                    pass  # best-effort — fall through to return all uncommitted
+
+            return uncommitted
         except Exception:
             return []  # error — skip gate rather than block
 
@@ -1236,6 +1365,7 @@ class OrchestratorLoop:
         result = {
             "prompts_proposed": [],
             "gates_proposed": [],
+            "grpo_proposed": [],
             "dashboard": "",
         }
 
@@ -1258,6 +1388,22 @@ class OrchestratorLoop:
              "source_count": gp.source_count, "status": gp.status}
             for gp in gate_proposals
         ]
+
+        # B3: GRPO advantage-based proposals — write high-advantage variants
+        # as PROPOSE ADD entries in retro_proposals.md for human confirmation.
+        # This is the connector that turns RL advantage scores into real
+        # skill file edits through the apply_retro.py write path.
+        if self.reward_log is not None:
+            try:
+                self.reward_log.compute_batch_advantages()
+                grpo_proposals = propose_grpo_edits(self.reward_log)
+                result["grpo_proposed"] = grpo_proposals
+            except Exception:
+                # GRPO proposals are best-effort — don't let failures block
+                # the rest of post_run_evolve.
+                result["grpo_proposed"] = []
+        else:
+            result["grpo_proposed"] = []
 
         # Dashboard
         result["dashboard"] = self.rl_dashboard()

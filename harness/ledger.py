@@ -23,7 +23,7 @@ from pathlib import Path
 
 HARNESS_DIR = Path(__file__).parent
 ROOT = HARNESS_DIR.parent
-LEDGER_FILE = ROOT / "memory" / "ledger.md"
+LEDGER_FILE = ROOT / ".techne" / "memory" / "ledger.md"
 INSERT_MARKER = "<!-- New entries go below this line -->"
 KINDS = ("DECISION", "LESSON", "DISCIPLINE")
 

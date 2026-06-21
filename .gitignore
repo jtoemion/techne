@@ -27,3 +27,4 @@ memory/eval_history.json
 memory/run_log.json
 memory/wikilinks.json
 memory/wikilinks.md
+.venv/

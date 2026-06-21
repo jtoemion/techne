@@ -17,7 +17,7 @@ from store import read_json, write_json
 
 HARNESS_DIR = Path(__file__).parent
 ROOT = HARNESS_DIR.parent
-MEMORY_DIR = ROOT / "memory"
+MEMORY_DIR = ROOT / ".techne" / "memory"
 EVAL_HISTORY = MEMORY_DIR / "eval_history.json"
 
 GRADES = [

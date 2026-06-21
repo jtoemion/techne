@@ -13,7 +13,7 @@ them) but the tree is clean afterward. Side-effect on import, by design:
 import atexit
 from pathlib import Path
 
-MEM = Path(__file__).resolve().parent.parent / "memory"
+MEM = Path(__file__).resolve().parent.parent / ".techne" / "memory"
 SESSIONS = MEM / "sessions"
 
 # Files an integration run may append to / overwrite.
