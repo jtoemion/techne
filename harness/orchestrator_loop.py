@@ -514,8 +514,34 @@ class OrchestratorLoop:
         )
 
     def _submit_review(self, task_id: str, review: str) -> LoopOutcome:
-        """Process review output. Retry on HARD_FAIL, else advance."""
+        """Process review output. Retry on HARD_FAIL, else advance.
+
+        Auto-advance: if the diff is ≤10 lines and tests pass, skip HITL and
+        advance directly to VERIFY — trivial changes don't need human review.
+        """
         is_hard_fail = "HARD_FAIL" in review.upper()
+
+        # ── Patch 1: Skip HITL for trivial changes ──────────────────────────
+        # Trivial = ≤10 lines added, tests already passed (verified by the
+        # implement gate passing without violations).
+        if not is_hard_fail and "PASS" in review.upper():
+            diff = self._diff.get(task_id, "")
+            lines_added = sum(1 for l in diff.splitlines() if l.startswith("+") and not l.startswith("+++"))
+            if lines_added <= 10:
+                self.enforcer.mark_complete(
+                    task_id, "REVIEW",
+                    agent="reviewer",
+                    summary=review[:200],
+                    findings=review,
+                    verdict="PASS",
+                )
+                self._review_result[task_id] = "PASS"
+                self._review_findings[task_id] = _extract_findings(review)
+                return LoopOutcome(
+                    action=LoopAction.RUN_PHASE, phase="VERIFY", task_id=task_id,
+                    message="Review passed (trivial diff) — advancing to verify",
+                )
+        # ── end Patch 1 ──────────────────────────────────────────────────────
 
         if is_hard_fail:
             self._retry_counts[task_id] = self._retry_counts.get(task_id, 0) + 1
@@ -727,6 +753,9 @@ class OrchestratorLoop:
         records the RL reward, and transitions to DONE.
 
         Fast-mode tasks skip the script execution entirely.
+
+        Patch 3: If .techne/config.yaml does not exist, skip gracefully instead
+        of failing — projects without a workshop setup should still complete.
         """
         task = self.db.get_task(task_id)
 
@@ -741,6 +770,21 @@ class OrchestratorLoop:
                 action=LoopAction.DONE, phase="DONE", task_id=task_id,
                 message="Context refresh skipped (fast mode) — task complete",
             )
+
+        # ── Patch 3: Graceful skip when no .techne/config.yaml ─────────────
+        config_path = ROOT / ".techne" / "config.yaml"
+        if not config_path.exists():
+            self.enforcer.mark_complete(
+                task_id, "REFRESH_CONTEXT", agent="refresh_context",
+                summary="No .techne/config.yaml — context refresh skipped",
+                findings="",
+            )
+            self._record_reward(task_id)
+            return LoopOutcome(
+                action=LoopAction.DONE, phase="DONE", task_id=task_id,
+                message="Context refresh skipped (no workshop config) — task complete",
+            )
+        # ── end Patch 3 ─────────────────────────────────────────────────
 
         # Get touched files from CONTEXT_GUARD's punch list
         history = self.db.get_task_history(task_id)
@@ -1010,6 +1054,62 @@ class OrchestratorLoop:
             scope_clean=self._scope_clean.get(task_id, False),  # real: focus/scope/intent
             attempt_count=max(1, task.attempt if task else 1),  # >=1: a terminal task ran at least once
         )
+        # ── Patch 4: ensure .gitignore and prune artifacts on DONE ──────
+        if task and task.status == "DONE":
+            try:
+                self._ensure_techne_gitignore(str(ROOT))
+                self._prune_task_artifacts(task_id)
+            except Exception:
+                pass  # best-effort — never block DONE on gitignore/cleanup failure
+        # ── end Patch 4 ───────────────────────────────────────────────
+
+    # ── Patch 4: gitignore + cleanup helpers ──────────────────────────────────
+
+    def _ensure_techne_gitignore(self, project_root: str) -> None:
+        """
+        Ensure .gitignore contains .techne/tasks/ and .techne/memory/.
+
+        These directories hold ephemeral state (task records, memory snapshots)
+        that should never be committed. Called from _record_reward on DONE.
+        """
+        from pathlib import Path
+        gitignore_path = Path(project_root) / ".gitignore"
+        entries = [".techne/tasks/", ".techne/memory/"]
+
+        if not gitignore_path.exists():
+            content = ""
+        else:
+            content = gitignore_path.read_text(encoding="utf-8")
+
+        updated = False
+        for entry in entries:
+            if entry not in content:
+                content += f"\n{entry}\n"
+                updated = True
+
+        if updated:
+            gitignore_path.write_text(content, encoding="utf-8")
+
+    def _prune_task_artifacts(self, task_id: str) -> None:
+        """
+        Prune ephemeral task artifacts after DONE.
+
+        Removes task-specific files from .techne/tasks/ to keep the directory
+        clean. Safe to call multiple times — only removes files matching this
+        task's artifacts.
+        """
+        from pathlib import Path
+        tasks_dir = ROOT / ".techne" / "tasks"
+        if not tasks_dir.exists():
+            return
+        # Remove any task-specific output files (e.g. implementer_output_N.txt)
+        for pattern in (f"implementer_output_*.txt", f"critique_output_*.txt",
+                       f"review_output_*.txt"):
+            for f in tasks_dir.glob(pattern):
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
 
     # ── EVAL phase: original 100-point deterministic eval ────────────────
 

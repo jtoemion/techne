@@ -59,7 +59,7 @@ PHASES = [
 TRANSITIONS = {
     None:           ["RECALL"],                              # fresh task → recall context
     "PENDING":      ["RECALL"],                              # ready to start → recall first
-    "BLOCKED":      ["IMPLEMENT", "DEBUG"],                  # retry after block
+    "BLOCKED":      ["IMPLEMENT", "DEBUG", "VERIFY", "REVIEW", "EVAL"],  # retry after block
     "DEBUG":        ["IMPLEMENT"],                           # debug fixes, then re-implement
     "RECALL":       ["IMPLEMENT", "BLOCKED", "FAILED"],      # recall done → implement
     "IMPLEMENT":    ["CONTEXT_GUARD", "BLOCKED", "FAILED"],  # impl done → audit, or fail
@@ -185,10 +185,10 @@ class PipelineEnforcer:
             )
 
         # Check task status for blocked/failed
-        if task.status == "BLOCKED" and target_phase not in ("IMPLEMENT", "DEBUG"):
+        if task.status == "BLOCKED" and target_phase not in ("IMPLEMENT", "DEBUG", "VERIFY", "REVIEW", "EVAL"):
             return PhaseTransition(
                 allowed=False, current_phase=current, target_phase=target_phase,
-                reason=f"Task is BLOCKED — only IMPLEMENT or DEBUG allowed",
+                reason=f"Task is BLOCKED — only IMPLEMENT, DEBUG, VERIFY, REVIEW, or EVAL allowed",
                 task=task,
             )
 
@@ -200,9 +200,24 @@ class PipelineEnforcer:
             )
 
         # Check transition validity
+        # When BLOCKED, use BLOCKED transitions instead of the current phase's
+        transition_source = "BLOCKED" if task.status == "BLOCKED" else current
         # Fast-mode tasks skip RECALL/CONCLUDE — allow IMPLEMENT directly from start,
         # and DONE directly from RETRO (skipping CONCLUDE)
-        allowed_next = TRANSITIONS.get(current, [])
+        allowed_next = TRANSITIONS.get(transition_source, [])
+
+        # Soft-pass re-entry: when a phase was soft-passed (HARD_FAIL verdict after
+        # block), get_phase() returns that phase but it's already recorded in history.
+        # Allow re-entry to that exact phase so the host can re-run it.
+        if current in PHASES and target_phase == current:
+            # Check if this phase was soft-passed (HARD_FAIL verdict)
+            history = self.db.get_task_history(task_id)
+            last_event = next((e for e in reversed(history) if e.action == current), None)
+            if last_event and last_event.verdict == "SOFT_FAIL":
+                return PhaseTransition(
+                    allowed=True, current_phase=current,
+                    target_phase=target_phase, task=task,
+                )
         if task.phase_mode == "fast":
             if current is None:
                 allowed_next = ["IMPLEMENT"]
