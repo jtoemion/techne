@@ -186,7 +186,7 @@ class OrchestratorLoop:
                 e.action for e in self.db.get_task_history(task_id)
                 if e.action in PHASES and e.verdict not in ("HARD_FAIL",)
             }
-            if phase_mode == "fast":
+            if phase_mode in ("fast", "micro"):
                 return "IMPLEMENT"
             if "RECALL" not in completed:
                 return "RECALL"
@@ -197,9 +197,9 @@ class OrchestratorLoop:
         # BUT: only treat PENDING as "reset" if no phase has been completed for this run.
         last = self.enforcer.get_phase(task_id)
         if last is None and task and task.status == "PENDING":
-            return "IMPLEMENT" if phase_mode == "fast" else "RECALL"
+            return "IMPLEMENT" if phase_mode in ("fast", "micro") else "RECALL"
         if last is None:
-            return "IMPLEMENT" if phase_mode == "fast" else "RECALL"
+            return "IMPLEMENT" if phase_mode in ("fast", "micro") else "RECALL"
         if last in ("DONE", "FAILED"):
             return last
 
@@ -208,6 +208,22 @@ class OrchestratorLoop:
             next_phase = PHASES[PHASES.index(last) + 1] if last in PHASES else "IMPLEMENT"
             if next_phase in ("RECALL", "CONCLUDE", "REFRESH_CONTEXT"):
                 return PHASES[PHASES.index(next_phase) + 1] if next_phase in PHASES else "DONE"
+
+        # For micro mode: IMPLEMENT → CONTEXT_GUARD → VERIFY → EVAL → DONE
+        # Skip RECALL, CRITIQUE, REVIEW, RETRO, CONCLUDE, REFRESH_CONTEXT
+        if phase_mode == "micro":
+            if last is None:
+                return "IMPLEMENT"
+            MICRO_NEXT = {
+                "IMPLEMENT": "CONTEXT_GUARD",
+                "CONTEXT_GUARD": "VERIFY",
+                "VERIFY": "EVAL",
+                "EVAL": "DONE",
+            }
+            if last in MICRO_NEXT:
+                return MICRO_NEXT[last]
+            if last in ("DONE", "FAILED"):
+                return last
 
         try:
             return PHASES[PHASES.index(last) + 1]
@@ -353,12 +369,12 @@ class OrchestratorLoop:
         # Skip for fast-mode tasks (review-only, no RECALL/CONCLUDE)
         history = self.db.get_task_history(task_id)
         has_recall = any(e.action == "RECALL" for e in history)
-        if not has_recall and (task and task.phase_mode != "fast"):
+        if not has_recall and (task and task.phase_mode not in ("fast", "micro")):
             return LoopOutcome(
                 action=LoopAction.RETRY, phase="IMPLEMENT", task_id=task_id,
                 message="RECALL phase required: run honcho_search or honcho_context first to recall durable context.",
             )
-        if task and task.phase_mode != "fast":
+        if task and task.phase_mode not in ("fast", "micro"):
             latest_recall = next((e for e in reversed(history) if e.action == "RECALL"), None)
             recall_findings = (latest_recall.findings if latest_recall else "") or ""
             if "workshop_context:" not in recall_findings.lower():
@@ -442,6 +458,13 @@ class OrchestratorLoop:
             summary=audit[:200],
             findings=audit,
         )
+        # Micro mode: skip CRITIQUE and REVIEW — go directly to VERIFY
+        task = self.db.get_task(task_id)
+        if task and task.phase_mode == "micro":
+            return LoopOutcome(
+                action=LoopAction.RUN_PHASE, phase="VERIFY", task_id=task_id,
+                message="Audit complete — advancing to verify (micro mode)",
+            )
         return LoopOutcome(
             action=LoopAction.RUN_PHASE, phase="CRITIQUE", task_id=task_id,
             message="Audit complete — advancing to critique",
@@ -641,6 +664,20 @@ class OrchestratorLoop:
         real signals captured during the run (_run_eval also records the phase).
         Advances to RETRO so reflection has the objective score to reason about."""
         report = self._run_eval(task_id)   # computes the score AND marks EVAL complete
+
+        # Micro mode: skip RETRO, CONCLUDE, REFRESH_CONTEXT — go directly to DONE
+        task = self.db.get_task(task_id)
+        if task and task.phase_mode == "micro":
+            self.enforcer.mark_complete(
+                task_id, "DONE", agent="evaluator",
+                summary=f"Micro-mode pipeline complete (eval {report.total}/100)",
+            )
+            self._record_reward(task_id)
+            return LoopOutcome(
+                action=LoopAction.DONE, phase="DONE", task_id=task_id,
+                message=f"Scored {report.total}/100 ({report.grade}) — micro pipeline complete",
+            )
+
         return LoopOutcome(
             action=LoopAction.RUN_PHASE, phase="RETRO", task_id=task_id,
             message=f"Scored {report.total}/100 ({report.grade}) — advancing to retro",
