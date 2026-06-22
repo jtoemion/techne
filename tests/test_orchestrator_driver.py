@@ -345,7 +345,7 @@ def test_retro_gate_rejects_checkbox():
     # Task should NOT reach DONE — it halts because RETRO keeps failing the gate
     t = plan.tasks[0]
     check("task did NOT reach DONE with checkbox retro", t.status != "DONE")
-    check("task halted or blocked", t.status in ("HALTED", "BLOCKED", "INCOMPLETE"))
+    check("task halted, blocked, or failed", t.status in ("HALTED", "BLOCKED", "INCOMPLETE", "FAILED"))
 
 
 def test_retro_gate_accepts_substantive():
@@ -373,7 +373,7 @@ def test_conclude_gate_requires_context_and_docs_proof():
                     prepare_context=False, max_steps_per_task=20)
     t = plan.tasks[0]
     check("task did NOT reach DONE with weak conclude", t.status != "DONE")
-    check("task halted when conclude proof missing", t.status == "HALTED")
+    check("task halted, blocked, or failed when conclude proof missing", t.status in ("HALTED", "FAILED"))
 
 
 def test_conclude_prompt_includes_context_guard_punch_list():

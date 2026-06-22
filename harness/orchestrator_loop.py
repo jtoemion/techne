@@ -76,6 +76,21 @@ MAX_IMPLEMENT_RETRIES = 3
 MAX_TOTAL_RETRIES = 5
 DEFAULT_VARIANT_COUNT = 1  # number of implement variants to try per task
 
+# Per-phase retry budgets. Phases not listed here use the global MAX_TOTAL_RETRIES
+# or their own existing mechanisms (IMPLEMENT, VERIFY). REVIEW uses MAX_TOTAL_RETRIES
+# via _retry_counts in _submit_review. CONCLUDE and REFRESH_CONTEXT are gated by
+# _impl_retry_or_escalate but also get per-phase counters so IMPLEMENT retries
+# don't consume CONCLUDE's budget.
+MAX_PHASE_RETRIES = {
+    "RECALL": 4,
+    "CONTEXT_GUARD": 4,
+    "CRITIQUE": 4,
+    "REVIEW": 4,
+    "RETRO": 4,
+    "CONCLUDE": 4,
+    "REFRESH_CONTEXT": 4,
+}
+
 
 class LoopAction(Enum):
     """What the host should do next."""
@@ -115,6 +130,8 @@ class OrchestratorLoop:
         self.enforcer = enforcer or PipelineEnforcer(db)
         self._retry_counts: dict[str, int] = {}  # task_id -> total retries
         self._impl_retry_counts: dict[str, int] = {}  # task_id -> impl retries
+        # Per-phase retry counters: {task_id: {phase: count}}
+        self._phase_retry_counts: dict[str, dict[str, int]] = {}
 
         # Deterministic enforcement core — the SAME gates/measure/SHA that
         # conductor runs. Built once; feeds real signals into the reward log.
@@ -367,13 +384,19 @@ class OrchestratorLoop:
         """
         task = self.db.get_task(task_id)
         if not result or len(result.strip()) < 20:
-            outcome = LoopOutcome(
-                action=LoopAction.RETRY, phase="RECALL", task_id=task_id,
-                message=(
-                    "RECALL produced no usable context. Include HONCHO_CONTEXT and "
-                    "WORKSHOP_CONTEXT lines backed by real recall output."
-                ),
-            )
+            if self._bump_retry(task_id, "RECALL"):
+                outcome = LoopOutcome(
+                    action=LoopAction.FAILED, phase="RECALL", task_id=task_id,
+                    message=f"RECALL failed after {MAX_PHASE_RETRIES['RECALL']} attempts. Escalating.",
+                )
+            else:
+                outcome = LoopOutcome(
+                    action=LoopAction.RETRY, phase="RECALL", task_id=task_id,
+                    message=(
+                        "RECALL produced no usable context. Include HONCHO_CONTEXT and "
+                        "WORKSHOP_CONTEXT lines backed by real recall output."
+                    ),
+                )
             self._print_phase_summary("RECALL", task_id, outcome)
             return outcome
 
@@ -382,26 +405,39 @@ class OrchestratorLoop:
         has_honcho = conclusion_id is not None
         has_workshop = "workshop_context:" in recall_lower
         if not has_honcho:
-            outcome = LoopOutcome(
-                action=LoopAction.RETRY, phase="RECALL", task_id=task_id,
-                message=(
-                    "RECALL missing HONCHO_CONTEXT line. Return structured proof like "
-                    "'HONCHO_CONTEXT: <durable context>'."
-                ),
-            )
+            if self._bump_retry(task_id, "RECALL"):
+                outcome = LoopOutcome(
+                    action=LoopAction.FAILED, phase="RECALL", task_id=task_id,
+                    message=f"RECALL failed after {MAX_PHASE_RETRIES['RECALL']} attempts. Escalating.",
+                )
+            else:
+                outcome = LoopOutcome(
+                    action=LoopAction.RETRY, phase="RECALL", task_id=task_id,
+                    message=(
+                        "RECALL missing HONCHO_CONTEXT line. Return structured proof like "
+                        "'HONCHO_CONTEXT: <durable context>'."
+                    ),
+                )
             self._print_phase_summary("RECALL", task_id, outcome)
             return outcome
         if task and task.phase_mode != "fast" and not has_workshop:
-            outcome = LoopOutcome(
-                action=LoopAction.RETRY, phase="RECALL", task_id=task_id,
-                message=(
-                    "RECALL missing WORKSHOP_CONTEXT line. Run the workshop retrieval "
-                    "packet and name the context docs/files you used."
-                ),
-            )
+            if self._bump_retry(task_id, "RECALL"):
+                outcome = LoopOutcome(
+                    action=LoopAction.FAILED, phase="RECALL", task_id=task_id,
+                    message=f"RECALL failed after {MAX_PHASE_RETRIES['RECALL']} attempts. Escalating.",
+                )
+            else:
+                outcome = LoopOutcome(
+                    action=LoopAction.RETRY, phase="RECALL", task_id=task_id,
+                    message=(
+                        "RECALL missing WORKSHOP_CONTEXT line. Run the workshop retrieval "
+                        "packet and name the context docs/files you used."
+                    ),
+                )
             self._print_phase_summary("RECALL", task_id, outcome)
             return outcome
 
+        self._reset_phase_retry(task_id, "RECALL")
         self.enforcer.mark_complete(
             task_id, "RECALL",
             agent="recaller",
@@ -519,26 +555,29 @@ class OrchestratorLoop:
         DOCS, CONTEXT, and HONCHO entries. A lazy agent that skips it produces
         no guidance for CONCLOSE — the gate catches this.
         """
-        # Validate punch list presence
+        # Validate punch list presence — requires structured prefix, not bare substring
         audit_lower = audit.lower()
-        has_punch_list = (
-            "conclude punch list" in audit_lower
-            or ("punch list" in audit_lower)
-            or ("docs:" in audit_lower and ("context" in audit_lower or "not_needed" in audit_lower))
-        )
+        has_punch_list = "conclude punch list" in audit_lower or "docs:" in audit_lower
         if not has_punch_list:
-            outcome = LoopOutcome(
-                action=LoopAction.RETRY, phase="CONTEXT_GUARD", task_id=task_id,
-                message=(
-                    "CONTEXT_GUARD output missing CONCLUDE PUNCH LIST. "
-                    "Include a section with DOCS, CONTEXT, and HONCHO entries "
-                    "(each with updated path or NOT_NEEDED reason). "
-                    "This is required — CONCLOSE cannot close without it."
-                ),
-            )
+            if self._bump_retry(task_id, "CONTEXT_GUARD"):
+                outcome = LoopOutcome(
+                    action=LoopAction.FAILED, phase="CONTEXT_GUARD", task_id=task_id,
+                    message=f"CONTEXT_GUARD failed after {MAX_PHASE_RETRIES['CONTEXT_GUARD']} attempts. Escalating.",
+                )
+            else:
+                outcome = LoopOutcome(
+                    action=LoopAction.RETRY, phase="CONTEXT_GUARD", task_id=task_id,
+                    message=(
+                        "CONTEXT_GUARD output missing CONCLUDE PUNCH LIST. "
+                        "Include a section with DOCS, CONTEXT, and HONCHO entries "
+                        "(each with updated path or NOT_NEEDED reason). "
+                        "This is required — CONCLOSE cannot close without it."
+                    ),
+                )
             self._print_phase_summary("CONTEXT_GUARD", task_id, outcome)
             return outcome
 
+        self._reset_phase_retry(task_id, "CONTEXT_GUARD")
         self.enforcer.mark_complete(
             task_id, "CONTEXT_GUARD",
             agent="context-guard",
@@ -878,13 +917,19 @@ class OrchestratorLoop:
         """
         # Gate: reject checkbox retros
         if len(reflection.strip()) < 100:
-            outcome = LoopOutcome(
-                action=LoopAction.RETRY, phase="RETRO", task_id=task_id,
-                message=(
-                    "RETRO too short (< 100 chars). Answer the 7 questions, reference "
-                    "completed phases, and record lessons learned. This is not a checkbox."
-                ),
-            )
+            if self._bump_retry(task_id, "RETRO"):
+                outcome = LoopOutcome(
+                    action=LoopAction.FAILED, phase="RETRO", task_id=task_id,
+                    message=f"RETRO failed after {MAX_PHASE_RETRIES['RETRO']} attempts. Escalating.",
+                )
+            else:
+                outcome = LoopOutcome(
+                    action=LoopAction.RETRY, phase="RETRO", task_id=task_id,
+                    message=(
+                        "RETRO too short (< 100 chars). Answer the 7 questions, reference "
+                        "completed phases, and record lessons learned. This is not a checkbox."
+                    ),
+                )
             self._print_phase_summary("RETRO", task_id, outcome)
             return outcome
 
@@ -894,17 +939,24 @@ class OrchestratorLoop:
         reflection_lower = reflection.lower()
         referenced = [p for p in completed_phases if p.lower() in reflection_lower]
         if not referenced:
-            outcome = LoopOutcome(
-                action=LoopAction.RETRY, phase="RETRO", task_id=task_id,
-                message=(
-                    "RETRO doesn't reference any completed phase. "
-                    f"Phases this run: {', '.join(completed_phases)}. "
-                    "Reference what happened — what went well, what broke, what to change."
-                ),
-            )
+            if self._bump_retry(task_id, "RETRO"):
+                outcome = LoopOutcome(
+                    action=LoopAction.FAILED, phase="RETRO", task_id=task_id,
+                    message=f"RETRO failed after {MAX_PHASE_RETRIES['RETRO']} attempts. Escalating.",
+                )
+            else:
+                outcome = LoopOutcome(
+                    action=LoopAction.RETRY, phase="RETRO", task_id=task_id,
+                    message=(
+                        "RETRO doesn't reference any completed phase. "
+                        f"Phases this run: {', '.join(completed_phases)}. "
+                        "Reference what happened — what went well, what broke, what to change."
+                    ),
+                )
             self._print_phase_summary("RETRO", task_id, outcome)
             return outcome
 
+        self._reset_phase_retry(task_id, "RETRO")
         self.enforcer.mark_complete(
             task_id, "RETRO", agent="retro",
             summary=reflection[:200], findings=reflection,
@@ -943,13 +995,20 @@ class OrchestratorLoop:
         """
         validation_error = self._validate_conclude_proof(result, task_id)
         if validation_error:
-            outcome = LoopOutcome(
-                action=LoopAction.RETRY, phase="CONCLUDE", task_id=task_id,
-                message=validation_error,
-            )
+            if self._bump_retry(task_id, "CONCLUDE"):
+                outcome = LoopOutcome(
+                    action=LoopAction.FAILED, phase="CONCLUDE", task_id=task_id,
+                    message=f"CONCLUDE failed after {MAX_PHASE_RETRIES['CONCLUDE']} attempts. Escalating.",
+                )
+            else:
+                outcome = LoopOutcome(
+                    action=LoopAction.RETRY, phase="CONCLUDE", task_id=task_id,
+                    message=validation_error,
+                )
             self._print_phase_summary("CONCLUDE", task_id, outcome)
             return outcome
 
+        self._reset_phase_retry(task_id, "CONCLUDE")
         self.enforcer.mark_complete(
             task_id, "CONCLUDE", agent="concluder",
             summary=f"Closure proof: {result[:150]}",
@@ -1037,26 +1096,39 @@ class OrchestratorLoop:
 
         proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if proc.returncode != 0:
-            outcome = LoopOutcome(
-                action=LoopAction.RETRY, phase="REFRESH_CONTEXT", task_id=task_id,
-                message=(
-                    f"REFRESH_CONTEXT failed: "
-                    f"{(proc.stderr or proc.stdout or 'unknown error').strip()[:200]}"
-                ),
-            )
+            if self._bump_retry(task_id, "REFRESH_CONTEXT"):
+                outcome = LoopOutcome(
+                    action=LoopAction.FAILED, phase="REFRESH_CONTEXT", task_id=task_id,
+                    message=f"REFRESH_CONTEXT failed after {MAX_PHASE_RETRIES['REFRESH_CONTEXT']} attempts. Escalating.",
+                )
+            else:
+                outcome = LoopOutcome(
+                    action=LoopAction.RETRY, phase="REFRESH_CONTEXT", task_id=task_id,
+                    message=(
+                        f"REFRESH_CONTEXT failed: "
+                        f"{(proc.stderr or proc.stdout or 'unknown error').strip()[:200]}"
+                    ),
+                )
             self._print_phase_summary("REFRESH_CONTEXT", task_id, outcome)
             return outcome
 
         try:
             payload = json.loads(proc.stdout)
         except json.JSONDecodeError:
-            outcome = LoopOutcome(
-                action=LoopAction.RETRY, phase="REFRESH_CONTEXT", task_id=task_id,
-                message="REFRESH_CONTEXT failed: script output is not valid JSON",
-            )
+            if self._bump_retry(task_id, "REFRESH_CONTEXT"):
+                outcome = LoopOutcome(
+                    action=LoopAction.FAILED, phase="REFRESH_CONTEXT", task_id=task_id,
+                    message=f"REFRESH_CONTEXT failed after {MAX_PHASE_RETRIES['REFRESH_CONTEXT']} attempts. Escalating.",
+                )
+            else:
+                outcome = LoopOutcome(
+                    action=LoopAction.RETRY, phase="REFRESH_CONTEXT", task_id=task_id,
+                    message="REFRESH_CONTEXT failed: script output is not valid JSON",
+                )
             self._print_phase_summary("REFRESH_CONTEXT", task_id, outcome)
             return outcome
 
+        self._reset_phase_retry(task_id, "REFRESH_CONTEXT")
         self.enforcer.mark_complete(
             task_id, "REFRESH_CONTEXT", agent="refresh_context",
             summary=(
@@ -1410,6 +1482,23 @@ class OrchestratorLoop:
     def get_eval(self, task_id: str) -> EvalReport | None:
         """Return the 100-point eval report for a completed task, if any."""
         return self._eval.get(task_id)
+
+    # ── Per-phase retry helpers ─────────────────────────────────────────────
+
+    def _bump_retry(self, task_id: str, phase: str) -> bool:
+        """Increment retry counter for a phase. Returns True if budget exhausted."""
+        if task_id not in self._phase_retry_counts:
+            self._phase_retry_counts[task_id] = {}
+        self._phase_retry_counts[task_id][phase] = (
+            self._phase_retry_counts[task_id].get(phase, 0) + 1
+        )
+        max_retries = MAX_PHASE_RETRIES.get(phase, 3)
+        return self._phase_retry_counts[task_id][phase] >= max_retries
+
+    def _reset_phase_retry(self, task_id: str, phase: str) -> None:
+        """Reset retry counter for a phase on successful completion."""
+        if task_id in self._phase_retry_counts:
+            self._phase_retry_counts[task_id].pop(phase, None)
 
     # ── Escalation ───────────────────────────────────────────────────────
 
