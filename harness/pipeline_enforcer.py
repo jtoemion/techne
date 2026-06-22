@@ -154,7 +154,7 @@ _LOGIC_KEYWORDS = frozenset([
 # FAST-mode keywords — tasks that are review/audit/documentation-only
 _FAST_KEYWORDS = frozenset([
     "review", "audit", "verify", "check", "inspect",
-    "document", "readme", "comment", "typo",
+    "document", "readme",
 ])
 
 # HEAVY-mode keywords — sensitive changes that require explicit human approval
@@ -481,7 +481,65 @@ def get_cost_estimate(phase_mode: str) -> dict:
     return _MODE_COST_ESTIMATES.get(phase_mode.lower(), _MODE_COST_ESTIMATES["full"])
 
 
-def classify_phase_mode(title: str, description: str = "", diff_text: str = "") -> str:
+def _classify_without_diff(title: str, description: str = "") -> str:
+    """Classify mode from title+description alone (no diff available yet).
+
+    Rules (checked in order):
+    1. If title/desc contains sensitive heavy keywords (auth, billing, etc.) → "heavy"
+    2. If title/desc suggests review-only → "fast"
+       Keywords: review, audit, verify, check, inspect, document, README, typo
+    3. If title/desc suggests trivial change → "micro"
+       Keywords: comment, doc, rename, typo, lint, format, whitespace, naming
+    4. If title/desc mentions single file → "micro"
+       Pattern: "in X file" or single file extension match (e.g. "X.ts" or "X.py")
+    5. If description is short (<=20 chars) and title short (<=30 chars) → "micro"
+    6. If title/desc suggests multi-file → "full"
+       Keywords: multiple, several, all, batch, refactor, migration, restructure
+    7. Default → "fast" (not "full" — fast is cheaper and works for most pre-diff cases)
+    """
+    combined = f"{title} {description}".lower()
+
+    # Rule 1: Heavy (sensitive) keywords — highest priority
+    for kw in _HEAVY_KEYWORDS:
+        if kw in combined:
+            return "heavy"
+
+    # Rule 2: Review-only indicators
+    _review_keywords = frozenset(["review", "audit", "verify", "check", "inspect", "document", "readme", "typo"])
+    for kw in _review_keywords:
+        if kw in combined:
+            return "fast"
+
+    # Rule 3: Trivial change indicators
+    _trivial_keywords = frozenset(["comment", "doc", "rename", "lint", "format", "whitespace", "naming"])
+    for kw in _trivial_keywords:
+        if kw in combined:
+            return "micro"
+
+    # Rule 4: Single file mention (e.g. "in config.py" or "fix utils.ts")
+    # Check for "in <filename>" pattern
+    if re.search(r"\bin\s+[\w\./]+\.(py|js|ts|tsx|jsx|go|rs|java|cpp|c|h|rb|php)\b", combined):
+        return "micro"
+    # Check for a bare file path like "utils.ts" or "config.py" in title (short, single file)
+    single_file_pattern = re.search(r"^[\w\./]+\.(py|js|ts|tsx|jsx|go|rs|java|cpp|c|h|rb|php)$", title.strip())
+    if single_file_pattern and len(title) <= 50:
+        return "micro"
+
+    # Rule 5: Both title and description are short → micro
+    if len(description) <= 20 and len(title) <= 30:
+        return "micro"
+
+    # Rule 6: Multi-file indicators
+    _multi_file_keywords = frozenset(["multiple", "several", "all", "batch", "refactor", "restructure"])
+    for kw in _multi_file_keywords:
+        if kw in combined:
+            return "full"
+
+    # Rule 7: Default — fast is safer/cheaper than full for pre-diff classification
+    return "fast"
+
+
+def classify_phase_mode(title: str, description: str = "", diff_text: str = "", task_id: Optional[str] = None) -> str:
     """Classify the appropriate phase mode for a task.
 
     Rules:
@@ -505,9 +563,18 @@ def classify_phase_mode(title: str, description: str = "", diff_text: str = "") 
         if kw in combined:
             return "heavy"
 
-    # If no diff to analyze yet, default to full
+    # If no diff to analyze yet, use pre-diff classification
     if not diff_text or not diff_text.strip():
-        return "full"
+        mode = _classify_without_diff(title, description)
+        # Log pre-classification to override log for tracking
+        if task_id:
+            _log_mode_override(
+                task_id,
+                mode,
+                "full",  # what would have been suggested without pre-classification
+                {"pre_diff": True, "title": title[:100], "description": description[:200]},
+            )
+        return mode
 
     lines = diff_text.splitlines()
 

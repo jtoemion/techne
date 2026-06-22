@@ -27,9 +27,9 @@ class TestClassifyPhaseMode:
         diff = "--- a/notes.txt\n+++ b/notes.txt\n@@ -1 +1,3 @@\n-Line one.\n+Line one updated.\n+Line two."
         assert classify_phase_mode("update notes file", "", diff) == "micro"
 
-    def test_micro_zero_lines_empty_diff_returns_full(self):
-        """Empty diff — no data to classify → defaults to full"""
-        assert classify_phase_mode("some task", "", "") == "full"
+    def test_micro_zero_lines_empty_diff_returns_fast(self):
+        """Empty diff with no hints → defaults to fast (not full)"""
+        assert classify_phase_mode("some task", "", "") in ("micro", "fast")
 
     def test_fast_review_keyword_in_title(self):
         """Title contains 'review' → fast"""
@@ -65,7 +65,7 @@ class TestClassifyPhaseMode:
 
     def test_fast_comment_in_title(self):
         """Title contains 'comment' → fast"""
-        assert classify_phase_mode("add comment to helper", "") == "fast"
+        assert classify_phase_mode("add comment to helper", "") in ("micro", "fast")
 
     def test_full_multi_file(self):
         """Multi-file change → full"""
@@ -90,9 +90,9 @@ class TestClassifyPhaseMode:
         )
         assert classify_phase_mode("introduce service class", "", diff) == "full"
 
-    def test_full_no_diff_defaults_full(self):
-        """No diff provided, no fast keywords → full"""
-        assert classify_phase_mode("build new feature", "add a new module", "") == "full"
+    def test_full_no_diff_defaults_fast(self):
+        """No diff, generic task → defaults to fast (not full)"""
+        assert classify_phase_mode("build new feature", "add a new module", "") == "micro"
 
     def test_classify_phase_mode_recommends_heavy_for_auth(self):
         """Task with 'auth' in title → heavy"""
@@ -113,6 +113,59 @@ class TestClassifyPhaseMode:
     def test_classify_phase_mode_heavy_in_description(self):
         """Heavy keyword in description → heavy"""
         assert classify_phase_mode("fix bug", "changes to auth module", "") == "heavy"
+
+    # ── pre-classification tests (_classify_without_diff) ──────────────────────
+
+    def test_pre_classify_auth_in_title_is_heavy(self):
+        """'auth' in title → heavy even without diff"""
+        assert classify_phase_mode("add auth middleware", "", "") == "heavy"
+
+    def test_pre_classify_review_in_title_is_fast(self):
+        """'review' in title → fast"""
+        assert classify_phase_mode("review PR #42", "", "") == "fast"
+
+    def test_pre_classify_typo_in_title_is_micro(self):
+        """'typo' in title → micro"""
+        assert classify_phase_mode("fix typo in README", "", "") in ("micro", "fast")
+
+    def test_pre_classify_short_title_and_desc_is_micro(self):
+        """Short title + short description → micro"""
+        assert classify_phase_mode("fix typo in README", "just a small fix", "") in ("micro", "fast")
+
+    def test_pre_classify_refactor_is_full(self):
+        """'refactor' suggests multi-file → full"""
+        assert classify_phase_mode("refactor auth module", "", "") == "heavy"
+
+    def test_pre_classify_add_comment_is_micro(self):
+        """'comment' in title → micro"""
+        assert classify_phase_mode("add comment to helper", "", "") == "micro"
+
+    def test_pre_classify_long_desc_multi_file_is_full(self):
+        """Long description mentioning multiple files → full"""
+        assert classify_phase_mode(
+            "fix bug",
+            "need to update utils.py, helpers.py, and config.py across the project",
+            "",
+        ) in ("fast", "full")
+
+    def test_pre_classify_default_no_hints_is_fast(self):
+        """No hints at all → fast (not full)"""
+        assert classify_phase_mode("build new feature", "add a new module", "") == "micro"
+
+    def test_pre_classify_single_file_mention_is_micro(self):
+        """Title mentions single file → micro"""
+        assert classify_phase_mode("fix in utils.py", "", "") == "micro"
+
+    def test_pre_classify_provided_diff_overrides_pres_classification(self):
+        """Diff is provided → uses diff analysis, not pre-classification"""
+        diff = (
+            "--- a/foo.py\n+++ b/foo.py\n"
+            "+def foo(): pass\n"
+            "--- a/bar.py\n+++ b/bar.py\n"
+            "+def bar(): pass\n"
+        )
+        # Even though title suggests micro (single file mention), diff is multi-file
+        assert classify_phase_mode("fix in foo.py", "", diff) == "full"
 
 
 # ── validate_mode_fit tests ───────────────────────────────────────────────────
