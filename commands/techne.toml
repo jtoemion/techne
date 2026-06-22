@@ -1,2 +1,36 @@
-description = "Run the current task through Techne's enforced pipeline (RECALL through DONE), with per-phase summaries and a completion indicator."
-prompt = "Run this task through Techne: {{args}}. Dispatch via delegate_task with MODE: IMPLEMENT (set FIX_OF if this is a fix, per docs/plans/techne-build-guide-patch-001.md §P5.1). Every phase prints a one-line [PHASE_NAME] summary. If the pipeline doesn't reach DONE, print the completion indicator showing exactly what finished and what didn't."
+description = "Run the current task through Techne's enforced pipeline — RECALL through DONE with per-phase summaries, completion indicator, and Honcho discipline."
+prompt = """Run this task through Techne's enforced pipeline. IMPORTANT: follow these rules exactly.
+
+1. PRE-TASK CHECKLIST (answer these before starting):
+   - Does this need the full pipeline, or is it read-only?
+   - phase_mode: full | fast | micro ? (full=11 phases, fast=skip RECALL+CONCLUDE, micro=5 phases for <=3 line changes)
+   - Is there a .techne/config.yaml in the project root?
+   - Have you called honcho_context/honcho_search before RECALL?
+   - Multi-file scope decided before dispatch?
+
+2. PIPELINE PHASES (drive through each, one at a time):
+   full: RECALL -> IMPLEMENT -> CONTEXT_GUARD -> CRITIQUE -> REVIEW -> VERIFY -> EVAL -> RETRO -> CONCLUDE -> REFRESH_CONTEXT -> DONE
+   fast: IMPLEMENT -> CONTEXT_GUARD -> CRITIQUE -> REVIEW -> VERIFY -> EVAL -> RETRO -> DONE
+   micro: IMPLEMENT -> CONTEXT_GUARD -> VERIFY -> EVAL -> DONE
+
+3. GATE REQUIREMENTS:
+   - RECALL needs WORKSHOP_CONTEXT and HONCHO_CONTEXT lines
+   - IMPLEMENT needs a real git diff with @@ markers
+   - CRITIQUE needs to be >50 chars, look for CRITICAL findings
+   - VERIFY needs pass indicators ("passed", "0 errors", "✓")
+   - CONCLUDE needs HONCHO:/DOCS:/CONTEXT: line-prefix format with sha: for context updates
+   - RETRO needs >=100 chars with phase references
+
+4. RULES:
+   - Dispatch via delegate_task with MODE: IMPLEMENT (FIX_OF if this is a fix)
+   - Every phase prints [PHASE_NAME] summary
+   - If pipeline doesn't reach DONE, print completion indicator
+   - After every submit: honcho_conclude a short summary
+   - Before every RECALL: honcho_context or honcho_search first
+   - Load the techne-orchestrator-pitfalls skill before dispatching
+
+5. REVOLVER: Check /revolver status for delegation config before starting.
+
+6. DEFINITION OF DONE: Task status == DONE, all expected phases completed, honcho_conclude called, .techne/context refreshed.
+
+{{args}}"""
