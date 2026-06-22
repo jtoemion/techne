@@ -324,6 +324,15 @@ class OrchestratorLoop:
         from pipeline_enforcer import get_mode_overrides as _get_overrides
         return _get_overrides(limit=limit)
 
+    def get_learning_insights(self, threshold: int = 3) -> list[str]:
+        """Return actionable classifier update suggestions from the learning loop.
+
+        Analyzes the override telemetry log and surfaces patterns that appear
+        >= threshold times, returning human-readable tuning suggestions.
+        """
+        from pipeline_enforcer import suggest_classifier_updates as _suggest
+        return _suggest(threshold=threshold)
+
     def summary(self) -> str:
         """Human-readable summary of all task states."""
         return self.enforcer.dashboard()

@@ -472,3 +472,151 @@ class TestLogModeOverride:
         overrides = loop.get_mode_overrides(limit=5)
         assert len(overrides) == 1
         assert overrides[0]["task_id"] == "task-loop"
+
+
+# ── Learning loop tests ────────────────────────────────────────────────────────
+
+class TestAnalyzeOverridePatterns:
+    """Tests for analyze_override_patterns() and suggest_classifier_updates()."""
+
+    def test_analyze_override_patterns_detects_logic_pattern(self, tmp_path, monkeypatch):
+        """5 'micro->full with logic' entries are detected as a pattern."""
+        import pipeline_enforcer
+        monkeypatch.setattr(pipeline_enforcer, "OVERRIDES_LOG", tmp_path / "mode_overrides.log")
+        monkeypatch.setattr(pipeline_enforcer, "_MAX_LOG_LINES", 1000)
+        monkeypatch.setattr(pipeline_enforcer, "_reset_learning_state", lambda: None)
+        # Simulate entries that chose full when micro was suggested, with logic
+        for i in range(5):
+            pipeline_enforcer._log_mode_override(
+                f"task-{i}",
+                "micro",
+                "full",
+                {"diff_lines": 2, "file_count": 1, "has_logic": True},
+            )
+
+        patterns = pipeline_enforcer.analyze_override_patterns(limit=20)
+        assert len(patterns) > 0
+        # Should find the micro->full with logic pattern
+        logic_patterns = [p for p in patterns if "logic" in p["pattern"].lower()]
+        assert len(logic_patterns) > 0
+        # All 5 entries should be in the same pattern group
+        logic_pattern = logic_patterns[0]
+        assert logic_pattern["count"] == 5
+
+    def test_analyze_override_patterns_empty_log(self, tmp_path, monkeypatch):
+        """Empty override log → empty pattern list."""
+        import pipeline_enforcer
+        monkeypatch.setattr(pipeline_enforcer, "OVERRIDES_LOG", tmp_path / "empty.log")
+        monkeypatch.setattr(pipeline_enforcer, "_reset_learning_state", lambda: None)
+        patterns = pipeline_enforcer.analyze_override_patterns(limit=200)
+        assert patterns == []
+
+    def test_analyze_override_patterns_too_few_entries(self, tmp_path, monkeypatch):
+        """Only 2 entries below threshold → no strong patterns (but still returns grouped)."""
+        import pipeline_enforcer
+        monkeypatch.setattr(pipeline_enforcer, "OVERRIDES_LOG", tmp_path / "mode_overrides.log")
+        monkeypatch.setattr(pipeline_enforcer, "_MAX_LOG_LINES", 1000)
+        monkeypatch.setattr(pipeline_enforcer, "_reset_learning_state", lambda: None)
+
+        # 2 entries: micro->full with logic
+        for i in range(2):
+            pipeline_enforcer._log_mode_override(
+                f"task-{i}",
+                "micro",
+                "full",
+                {"diff_lines": 2, "file_count": 1, "has_logic": True},
+            )
+
+        suggestions = pipeline_enforcer.suggest_classifier_updates(threshold=3)
+        # Below threshold=3 → should not suggest (classifier correct patterns are filtered)
+        # Only micro->full with logic → "strict micro correct" → filtered out
+        assert suggestions == []
+
+    def test_suggest_classifier_updates_returns_actionable(self, tmp_path, monkeypatch):
+        """5 micro->full small_clean entries → returns actionable relaxation suggestion."""
+        import pipeline_enforcer
+        monkeypatch.setattr(pipeline_enforcer, "OVERRIDES_LOG", tmp_path / "mode_overrides.log")
+        monkeypatch.setattr(pipeline_enforcer, "_MAX_LOG_LINES", 1000)
+        monkeypatch.setattr(pipeline_enforcer, "_reset_learning_state", lambda: None)
+
+        # 5 entries: micro chosen when full suggested, small clean diff (no logic, <=3 lines, 1 file)
+        for i in range(5):
+            pipeline_enforcer._log_mode_override(
+                f"task-{i}",
+                "micro",
+                "full",
+                {"diff_lines": 2, "file_count": 1, "has_logic": False},
+            )
+
+        suggestions = pipeline_enforcer.suggest_classifier_updates(threshold=3)
+        assert len(suggestions) > 0
+        # Should surface the relaxation candidate
+        assert any("relax" in s.lower() for s in suggestions)
+
+    def test_suggest_classifier_updates_below_threshold(self, tmp_path, monkeypatch):
+        """2 entries → below threshold=3 → empty suggestion list."""
+        import pipeline_enforcer
+        monkeypatch.setattr(pipeline_enforcer, "OVERRIDES_LOG", tmp_path / "mode_overrides.log")
+        monkeypatch.setattr(pipeline_enforcer, "_MAX_LOG_LINES", 1000)
+        monkeypatch.setattr(pipeline_enforcer, "_reset_learning_state", lambda: None)
+
+        for i in range(2):
+            pipeline_enforcer._log_mode_override(
+                f"task-{i}",
+                "micro",
+                "full",
+                {"diff_lines": 2, "file_count": 1, "has_logic": False},
+            )
+
+        suggestions = pipeline_enforcer.suggest_classifier_updates(threshold=3)
+        assert suggestions == []
+
+    def test_learning_loop_triggers_after_20_entries(self, tmp_path, monkeypatch):
+        """Write 25 entries → auto-analysis fires at 20, classifier_insights.log is written."""
+        import pipeline_enforcer
+        monkeypatch.setattr(pipeline_enforcer, "OVERRIDES_LOG", tmp_path / "mode_overrides.log")
+        monkeypatch.setattr(pipeline_enforcer, "_MAX_LOG_LINES", 1000)
+        monkeypatch.setattr(pipeline_enforcer, "_AUTO_ANALYSIS_THRESHOLD", 20)
+        monkeypatch.setattr(pipeline_enforcer, "_CLASSIFIER_INSIGHTS_LOG", tmp_path / "classifier_insights.log")
+        # Reset counters so delta builds up from 0
+        monkeypatch.setattr(pipeline_enforcer, "_LEARNING_COUNTER", 0)
+        monkeypatch.setattr(pipeline_enforcer, "_LAST_ANALYZED_COUNT", 0)
+
+        # Write 25 entries (delta reaches 20 at entry 20, triggering analysis)
+        for i in range(25):
+            pipeline_enforcer._log_mode_override(
+                f"task-{i}",
+                "micro",
+                "full",
+                {"diff_lines": 2, "file_count": 1, "has_logic": False},
+            )
+
+        insights_file = tmp_path / "classifier_insights.log"
+        assert insights_file.exists(), "classifier_insights.log was not created after 20 entries"
+        content = insights_file.read_text()
+        assert "Auto-analysis" in content
+        assert "Patterns found:" in content
+
+    def test_get_learning_insights_on_orchestrator_loop(self, tmp_path, monkeypatch):
+        """OrchestratorLoop.get_learning_insights delegates to suggest_classifier_updates."""
+        import pipeline_enforcer
+        monkeypatch.setattr(pipeline_enforcer, "OVERRIDES_LOG", tmp_path / "mode_overrides.log")
+        monkeypatch.setattr(pipeline_enforcer, "_MAX_LOG_LINES", 1000)
+        monkeypatch.setattr(pipeline_enforcer, "_reset_learning_state", lambda: None)
+
+        # Write 5 micro->full small_clean entries (relaxation candidate)
+        for i in range(5):
+            pipeline_enforcer._log_mode_override(
+                f"task-{i}",
+                "micro",
+                "full",
+                {"diff_lines": 2, "file_count": 1, "has_logic": False},
+            )
+
+        from task_db import TaskDB
+        from orchestrator_loop import OrchestratorLoop
+        db = TaskDB(":memory:")
+        loop = OrchestratorLoop(db)
+        insights = loop.get_learning_insights(threshold=3)
+        assert len(insights) > 0
+        assert any("relax" in s.lower() for s in insights)

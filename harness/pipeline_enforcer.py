@@ -50,6 +50,19 @@ MEMORY_DIR = _ROOT / ".techne" / "memory"
 OVERRIDES_LOG = MEMORY_DIR / "mode_overrides.log"
 _MAX_LOG_LINES = 1000
 
+# ── Learning loop state ─────────────────────────────────────────────────────
+_LEARNING_COUNTER = 0          # total override entries ever logged
+_LAST_ANALYZED_COUNT = 0       # counter value at last auto-analysis
+_AUTO_ANALYSIS_THRESHOLD = 20  # trigger analysis every N new entries
+_CLASSIFIER_INSIGHTS_LOG = MEMORY_DIR / "classifier_insights.log"
+
+
+def _reset_learning_state() -> None:
+    """Reset learning loop counters. For testing only."""
+    global _LEARNING_COUNTER, _LAST_ANALYZED_COUNT
+    _LEARNING_COUNTER = 0
+    _LAST_ANALYZED_COUNT = 0
+
 
 # ── Phase definitions ────────────────────────────────────────────────────
 
@@ -140,7 +153,10 @@ def _log_mode_override(
 
     Appends a JSON line to ``.techne/memory/mode_overrides.log``.
     Auto-rotates when the log exceeds ``_MAX_LOG_LINES`` (keeps last 1000).
+    Triggers auto-analysis of override patterns every 20 new entries.
     """
+    global _LEARNING_COUNTER
+
     from datetime import datetime, timezone
 
     entry = {
@@ -165,6 +181,10 @@ def _log_mode_override(
     if len(lines) > _MAX_LOG_LINES:
         with open(log_path, "w", encoding="utf-8") as fh:
             fh.writelines(lines[-_MAX_LOG_LINES:])
+
+    # Learning loop: increment counter and trigger auto-analysis at threshold
+    _LEARNING_COUNTER += 1
+    _auto_analysis_if_needed()
 
 
 def get_mode_overrides(limit: int = 20) -> list[dict]:
@@ -191,6 +211,237 @@ def get_mode_overrides(limit: int = 20) -> list[dict]:
         except json.JSONDecodeError:
             pass
     return entries
+
+
+def _file_count_bucket(file_count: int) -> str:
+    """Bucket file_count into small/medium/large."""
+    if file_count <= 1:
+        return "single_file"
+    if file_count <= 3:
+        return "few_files"
+    return "many_files"
+
+
+def analyze_override_patterns(limit: int = 200) -> list[dict]:
+    """Analyze override log for recurring patterns.
+
+    Returns a list of pattern dicts sorted by frequency:
+    [
+        {
+            "pattern": "micro->full (logic keywords in clean diff)",
+            "count": 12,
+            "pct": 60.0,
+            "suggested_action": "Add 'test' to _FAST_KEYWORDS exclusion list",
+            "sample_tasks": ["fix test assertion", "add test coverage"],
+        },
+        ...
+    ]
+
+    Detection rules:
+    - If chosen==full and suggested==micro and has_logic==True:
+        pattern = "logic keywords in micro-mode diff"
+        suggested_action = "Strict micro rules are correct, no adjustment needed"
+    - If chosen==full and suggested==micro and has_logic==False and lines>3:
+        pattern = "diff-too-large for micro"
+        suggested_action = "Classifier working correctly, no adjustment needed"
+    - If chosen==full and suggested==fast and "review" in task title:
+        pattern = "review task choosing full over fast"
+        suggested_action = "Consider adding to _FAST_KEYWORDS"
+    - Group by (suggested_mode, chosen_mode, has_logic, file_count_bucket)
+    - Return sorted by count descending
+    """
+    entries = get_mode_overrides(limit=limit)
+    if not entries:
+        return []
+
+    from collections import defaultdict
+    from datetime import datetime, timezone
+
+    # We need task titles to detect "review" keyword pattern.
+    # entries from _log_mode_override don't include titles, so we reconstruct
+    # from the override log.  Fall back to the group key only when no title.
+    # A separate field "task_title" is NOT yet in _log_mode_override's entry,
+    # so we use file_count_bucket for grouping only.
+    #
+    # Override patterns we detect:
+    # 1. chosen=full, suggested=micro, has_logic=True  → classifier correct, no action
+    # 2. chosen=full, suggested=micro, has_logic=False, diff_lines>3 → classifier correct
+    # 3. chosen=full, suggested=fast, file_count>1     → needs investigation
+    # 4. chosen=micro, suggested=full, has_logic=True  → classifier correct (strict)
+    # 5. chosen=micro, suggested=full, has_logic=False, diff_lines>3 → classifier correct
+    # 6. chosen=micro, suggested=full, has_logic=False, diff_lines<=3, file_count=1 → consider micro relax
+
+    groups: dict[tuple, dict] = defaultdict(lambda: {
+        "count": 0,
+        "sample_tasks": [],
+    })
+
+    for entry in entries:
+        chosen = entry.get("chosen_mode", "")
+        suggested = entry.get("suggested_mode", "")
+        has_logic = entry.get("has_logic", False)
+        diff_lines = entry.get("diff_lines", 0)
+        file_count = entry.get("file_count", 0)
+        task_id = entry.get("task_id", "")
+        task_title = entry.get("task_title", task_id)
+
+        fb = _file_count_bucket(file_count)
+
+        if chosen == "full" and suggested == "micro" and has_logic:
+            key = ("full->micro", "has_logic", "classifier_correct")
+            groups[key]["count"] += 1
+            if len(groups[key]["sample_tasks"]) < 3:
+                groups[key]["sample_tasks"].append(task_title)
+        elif chosen == "full" and suggested == "micro" and not has_logic and diff_lines > 3:
+            key = ("full->micro", "no_logic_large_diff", "classifier_correct")
+            groups[key]["count"] += 1
+            if len(groups[key]["sample_tasks"]) < 3:
+                groups[key]["sample_tasks"].append(task_title)
+        elif chosen == "full" and suggested == "fast" and file_count > 1:
+            key = ("full->fast", "multi_file_review", "consider_fast_keyword")
+            groups[key]["count"] += 1
+            if len(groups[key]["sample_tasks"]) < 3:
+                groups[key]["sample_tasks"].append(task_title)
+        elif chosen == "micro" and suggested == "full" and has_logic:
+            key = ("micro->full", "has_logic", "strict_micro_correct")
+            groups[key]["count"] += 1
+            if len(groups[key]["sample_tasks"]) < 3:
+                groups[key]["sample_tasks"].append(task_title)
+        elif chosen == "micro" and suggested == "full" and not has_logic and diff_lines > 3:
+            key = ("micro->full", "large_diff", "strict_micro_correct")
+            groups[key]["count"] += 1
+            if len(groups[key]["sample_tasks"]) < 3:
+                groups[key]["sample_tasks"].append(task_title)
+        elif chosen == "micro" and suggested == "full" and not has_logic and diff_lines <= 3 and file_count == 1:
+            key = ("micro->full", "small_clean", "relax_micro_candidate")
+            groups[key]["count"] += 1
+            if len(groups[key]["sample_tasks"]) < 3:
+                groups[key]["sample_tasks"].append(task_title)
+        else:
+            key = ("other", "misc", "needs_review")
+            groups[key]["count"] += 1
+            if len(groups[key]["sample_tasks"]) < 3:
+                groups[key]["sample_tasks"].append(task_title)
+
+    # Build result sorted by count descending
+    total = len(entries)
+    results = []
+
+    # Pattern label map
+    pattern_labels: dict[tuple, str] = {
+        ("full->micro", "has_logic", "classifier_correct"):
+            "full mode overriding micro recommendation with logic keywords",
+        ("full->micro", "no_logic_large_diff", "classifier_correct"):
+            "full mode overriding micro recommendation on large diff (no logic)",
+        ("full->fast", "multi_file_review", "consider_fast_keyword"):
+            "full mode overriding fast recommendation on multi-file review",
+        ("micro->full", "has_logic", "strict_micro_correct"):
+            "micro mode overriding full recommendation with logic keywords",
+        ("micro->full", "large_diff", "strict_micro_correct"):
+            "micro mode overriding full on large diff (no logic keywords)",
+        ("micro->full", "small_clean", "relax_micro_candidate"):
+            "micro mode overriding full on small clean diff — candidate for micro relaxation",
+        ("other", "misc", "needs_review"):
+            "miscellaneous override pattern",
+    }
+
+    # Suggested action map
+    suggested_actions: dict[tuple, str] = {
+        ("full->micro", "has_logic", "classifier_correct"):
+            "Classifier working correctly — strict micro rules are appropriate",
+        ("full->micro", "no_logic_large_diff", "classifier_correct"):
+            "Classifier working correctly — large diff without logic still needs full pipeline",
+        ("full->fast", "multi_file_review", "consider_fast_keyword"):
+            "Consider adding multi-file review pattern to _FAST_KEYWORDS exclusion",
+        ("micro->full", "has_logic", "strict_micro_correct"):
+            "Strict micro rules are correct — no adjustment needed for logic keywords",
+        ("micro->full", "large_diff", "strict_micro_correct"):
+            "Strict micro rules are correct — no adjustment needed for large diffs",
+        ("micro->full", "small_clean", "relax_micro_candidate"):
+            "Consider relaxing micro rules to allow this pattern (small clean diff)",
+        ("other", "misc", "needs_review"):
+            "Review this pattern manually for classifier tuning opportunity",
+    }
+
+    for (key_tuple), data in groups.items():
+        pattern = pattern_labels.get(key_tuple, f"override pattern: {key_tuple[0]}")
+        suggested_action = suggested_actions.get(key_tuple, "No suggested action")
+        pct = round(data["count"] / total * 100, 1) if total > 0 else 0.0
+        results.append({
+            "pattern": pattern,
+            "count": data["count"],
+            "pct": pct,
+            "suggested_action": suggested_action,
+            "sample_tasks": data["sample_tasks"],
+        })
+
+    results.sort(key=lambda x: x["count"], reverse=True)
+    return results
+
+
+def suggest_classifier_updates(threshold: int = 3) -> list[str]:
+    """Suggest classifier rule updates based on override patterns.
+
+    Only returns suggestions for patterns that appear >= threshold times.
+    Suggestions are human-readable strings like:
+    - "Add '_debug' to logic keywords list (3 overrides from debug tasks)"
+    - "Add 'migration' to _FAST_KEYWORDS exclusion (5 overrides)"
+    """
+    patterns = analyze_override_patterns(limit=200)
+    suggestions = []
+
+    for p in patterns:
+        if p["count"] < threshold:
+            continue
+        action = p["suggested_action"]
+        # Only surface actionable suggestions (not "classifier correct")
+        if "no adjustment needed" in action.lower() or "working correctly" in action.lower():
+            continue
+        if "needs_review" in p["pattern"].lower():
+            continue
+        suggestions.append(f"{action} ({p['count']} overrides)")
+
+    return suggestions
+
+
+def _auto_analysis_if_needed() -> None:
+    """Check if enough new overrides have been logged; run analysis if so.
+
+    Writes results to ``.techne/memory/classifier_insights.log`` when triggered.
+    This is called automatically after each _log_mode_override().
+    """
+    global _LEARNING_COUNTER, _LAST_ANALYZED_COUNT
+
+    new_entries = _LEARNING_COUNTER - _LAST_ANALYZED_COUNT
+    if new_entries >= _AUTO_ANALYSIS_THRESHOLD:
+        _LAST_ANALYZED_COUNT = _LEARNING_COUNTER
+        patterns = analyze_override_patterns(limit=200)
+        suggestions = suggest_classifier_updates(threshold=3)
+
+        from datetime import datetime, timezone
+        timestamp = datetime.now(timezone.utc).isoformat()
+
+        insights_path = Path(_CLASSIFIER_INSIGHTS_LOG)
+        insights_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(insights_path, "a", encoding="utf-8") as fh:
+            fh.write(f"\n=== Auto-analysis @ {timestamp} ({new_entries} new entries) ===\n")
+            fh.write(f"Patterns found: {len(patterns)}\n")
+            for p in patterns:
+                fh.write(
+                    f"  [{p['count']}x, {p['pct']}%] {p['pattern']} — {p['suggested_action']}\n"
+                )
+            fh.write(f"Actionable suggestions: {len(suggestions)}\n")
+            for s in suggestions:
+                fh.write(f"  • {s}\n")
+
+
+def get_classifier_insights(threshold: int = 3) -> list[str]:
+    """Return actionable classifier update suggestions.
+
+    This is the public API for reading learning loop output.
+    """
+    return suggest_classifier_updates(threshold=threshold)
 
 
 def get_cost_estimate(phase_mode: str) -> dict:
