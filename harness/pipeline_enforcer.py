@@ -33,6 +33,7 @@ Usage:
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Optional
 
 from task_db import TaskDB, Task
@@ -92,6 +93,217 @@ PHASE_DESCRIPTIONS = {
     "FAILED": "Task terminal failure",
     "DEBUG": "Debugger diagnosing root cause",
 }
+
+# Logic keywords that indicate a non-trivial change (used by validate_micro_mode)
+_LOGIC_KEYWORDS = frozenset([
+    "if", "for", "while", "switch", "function",
+    "import", "export", "try", "except", "finally",
+    "return", "yield", "with", "async", "await",
+    "def ", "class ",
+])
+
+# FAST-mode keywords — tasks that are review/audit/documentation-only
+_FAST_KEYWORDS = frozenset([
+    "review", "audit", "verify", "check", "inspect",
+    "document", "readme", "comment", "typo",
+])
+
+
+def classify_phase_mode(title: str, description: str = "", diff_text: str = "") -> str:
+    """Classify the appropriate phase mode for a task.
+
+    Rules:
+    - MICRO: Change is <=3 lines, single file, no logic keywords
+      (if, for, while, switch, function, class, import, export, return, async, await, try, catch)
+    - FAST: Task is review-only, audit-only, verification-only, or documentation-only
+      (keywords: review, audit, verify, check, inspect, document, README, comment, typo in title)
+    - FULL: Everything else — code changes with logic, multi-file, complex work
+    """
+    combined = f"{title} {description}".lower()
+
+    # Check fast-mode indicators
+    for kw in _FAST_KEYWORDS:
+        if kw in combined:
+            return "fast"
+
+    # If no diff to analyze yet, default to full
+    if not diff_text or not diff_text.strip():
+        return "full"
+
+    lines = diff_text.splitlines()
+
+    # Count changed lines
+    added = sum(1 for l in lines if l.startswith("+") and not l.startswith("+++"))
+    removed = sum(1 for l in lines if l.startswith("-") and not l.startswith("---"))
+    changed_lines = added + removed
+
+    # Count unique files
+    files: set[str] = set()
+    for l in lines:
+        if l.startswith("+++ b/") or l.startswith("--- a/"):
+            path = l[6:].strip()
+            if path and path != "/dev/null":
+                files.add(path)
+
+    # Check for logic keywords (word-boundary for plain words, trailing-space for def/class)
+    diff_lower = diff_text.lower()
+    has_logic = False
+    for kw in _LOGIC_KEYWORDS:
+        if kw.endswith(" "):
+            # def / class — match as prefix (def foo, class Bar)
+            if kw.rstrip() in diff_lower:
+                has_logic = True
+                break
+        else:
+            # Word boundary: \b keyword \b
+            if re.search(r"\b" + re.escape(kw) + r"\b", diff_lower):
+                has_logic = True
+                break
+
+    # MICRO: ≤3 lines, 1 file, no logic
+    if changed_lines <= 3 and len(files) <= 1 and not has_logic:
+        return "micro"
+
+    return "full"
+
+
+def validate_mode_fit(
+    phase_mode: str, diff_text: str = "", file_count: int = 0
+) -> tuple[bool, str, str]:
+    """Returns (valid, reason, suggested_mode).
+
+    - If micro is chosen but diff >3 lines: return (False, "...", "fast" or "full")
+    - If micro is chosen but >1 file: return (False, "...", "fast" or "full")
+    - If micro is chosen but logic keywords found: return (False, "...", "full")
+    - If full is chosen but diff <=3 lines, 1 file, no logic: return (False, "...", "micro")
+    - If full is chosen but title suggests review/audit: return (False, "...", "fast")
+    """
+    mode = phase_mode.lower()
+
+    if mode == "micro":
+        # Empty diff is only valid if file_count is 0 (pre-implement check)
+        if not diff_text or not diff_text.strip():
+            if file_count == 0:
+                return True, "", ""
+            return False, "Empty diff but files already touched", "full"
+
+        lines = diff_text.splitlines()
+        added = sum(1 for l in lines if l.startswith("+") and not l.startswith("+++"))
+        removed = sum(1 for l in lines if l.startswith("-") and not l.startswith("---"))
+        changed_lines = added + removed
+
+        if changed_lines > 3:
+            return False, f"micro mode requires <=3 changed lines (got {changed_lines})", "full"
+
+        files: set[str] = set()
+        for l in lines:
+            if l.startswith("+++ b/") or l.startswith("--- a/"):
+                path = l[6:].strip()
+                if path and path != "/dev/null":
+                    files.add(path)
+        if len(files) > 1:
+            return False, f"micro mode requires <=1 file (got {len(files)})", "full"
+        if len(files) == 0:
+            return False, "No file paths found in diff", "full"
+
+        diff_lower = diff_text.lower()
+        kw_check = []
+        for kw in _LOGIC_KEYWORDS:
+            if kw.endswith(" "):
+                if kw.rstrip() in diff_lower:
+                    kw_check.append(kw)
+                    break
+            else:
+                if re.search(r"\b" + re.escape(kw) + r"\b", diff_lower):
+                    kw_check.append(kw)
+                    break
+        has_logic = bool(kw_check)
+        if has_logic:
+            return False, "micro mode cannot contain logic keywords (if/for/while/class/etc)", "full"
+
+        return True, "", ""
+
+    if mode == "full":
+        # Empty diff — nothing to validate yet (pre-implement check)
+        if not diff_text or not diff_text.strip():
+            return True, "", ""
+
+        lines = diff_text.splitlines()
+        added = sum(1 for l in lines if l.startswith("+") and not l.startswith("+++"))
+        removed = sum(1 for l in lines if l.startswith("-") and not l.startswith("---"))
+        changed_lines = added + removed
+
+        files: set[str] = set()
+        for l in lines:
+            if l.startswith("+++ b/") or l.startswith("--- a/"):
+                path = l[6:].strip()
+                if path and path != "/dev/null":
+                    files.add(path)
+
+        diff_lower = diff_text.lower()
+        kw_check = []
+        for kw in _LOGIC_KEYWORDS:
+            if kw.endswith(" "):
+                if kw.rstrip() in diff_lower:
+                    kw_check.append(kw)
+                    break
+            else:
+                if re.search(r"\b" + re.escape(kw) + r"\b", diff_lower):
+                    kw_check.append(kw)
+                    break
+        has_logic = bool(kw_check)
+
+        # If it looks like it should be micro, suggest it
+        if changed_lines <= 3 and len(files) <= 1 and not has_logic:
+            return False, f"full mode applied to trivial change ({changed_lines} lines, {len(files)} file)", "micro"
+
+        return True, "", ""
+
+    # fast mode is always valid — it's just a subset, never over-specified
+    return True, "", ""
+
+
+def validate_micro_mode(diff_text: str) -> tuple[bool, str]:
+    """Validate that micro mode is appropriate for this diff.
+
+    Returns (is_valid, rejection_reason).
+    Micro mode is valid only if:
+    - Diff is ≤3 lines changed (added + removed)
+    - Diff touches only 1 file
+    - Diff doesn't contain logic keywords (if, for, while, switch, function, class, import, export)
+    """
+    if not diff_text or not diff_text.strip():
+        return False, "Empty diff — not a valid micro-mode change"
+
+    lines = diff_text.splitlines()
+
+    # Count changed lines (+ and -, but not hunk headers or file paths)
+    added = sum(1 for l in lines if l.startswith("+") and not l.startswith("+++"))
+    removed = sum(1 for l in lines if l.startswith("-") and not l.startswith("---"))
+    changed_lines = added + removed
+
+    if changed_lines > 3:
+        return False, f"Diff has {changed_lines} changed lines (max 3 for micro mode)"
+
+    # Count unique file paths touched
+    files = set()
+    for l in lines:
+        if l.startswith("+++ b/") or l.startswith("--- a/"):
+            path = l[6:].strip()
+            if path and path != "/dev/null":
+                files.add(path)
+    if len(files) > 1:
+        return False, f"Diff touches {len(files)} files (max 1 for micro mode)"
+    if not files:
+        return False, "No file paths found in diff — not a valid unified diff"
+
+    # Check for logic keywords
+    diff_lower = diff_text.lower()
+    for kw in _LOGIC_KEYWORDS:
+        if kw in diff_lower:
+            return False, f"Diff contains logic keyword '{kw}' — not a trivial change"
+
+    return True, ""
 
 
 @dataclass
@@ -223,6 +435,17 @@ class PipelineEnforcer:
                 allowed_next = ["IMPLEMENT"]
             elif current == "RETRO":
                 allowed_next = ["DONE", "FAILED"]
+        if task.phase_mode == "micro":
+            # Micro mode: IMPLEMENT → CONTEXT_GUARD → VERIFY → EVAL → DONE
+            # Skip RECALL, CRITIQUE, REVIEW, RETRO, CONCLUDE, REFRESH_CONTEXT
+            if current is None:
+                allowed_next = ["IMPLEMENT"]
+            elif current == "EVAL":
+                allowed_next = ["DONE", "FAILED"]
+            elif current == "VERIFY":
+                allowed_next = ["EVAL"]
+            elif current == "CONTEXT_GUARD":
+                allowed_next = ["VERIFY"]
         if target_phase not in allowed_next:
             expected = " or ".join(allowed_next) if allowed_next else "none (terminal)"
             return PhaseTransition(

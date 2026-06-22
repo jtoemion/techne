@@ -59,7 +59,7 @@ from pathlib import Path
 from typing import Optional
 
 from task_db import TaskDB
-from pipeline_enforcer import PipelineEnforcer, PHASE_DESCRIPTIONS
+from pipeline_enforcer import PipelineEnforcer, PHASE_DESCRIPTIONS, classify_phase_mode, validate_mode_fit
 from reward_log import RewardLog
 from prompt_evolution import PromptEvolution
 from gate_evolution import GateEvolution
@@ -141,6 +141,14 @@ class OrchestratorLoop:
         self._gate_violations: dict[str, int] = {}             # task_id -> # gate failures
         self._eval: dict[str, EvalReport] = {}                 # task_id -> eval report
         self._eval_run_no = 0
+
+    def recommend_mode(self, title: str, description: str = "", diff: str = "") -> str:
+        """Pre-flight recommendation: suggest the appropriate phase mode for a task.
+
+        Agents can call this BEFORE creating the task to get the recommended mode.
+        Returns one of: "micro", "fast", "full".
+        """
+        return classify_phase_mode(title, description, diff)
 
     def has_work(self, task_id: str) -> bool:
         """Check if a task still has phases to run."""
@@ -413,6 +421,26 @@ class OrchestratorLoop:
             return self._impl_retry_or_escalate(
                 task_id, "diff", "implementer produced no valid diff"
             )
+
+        # ── Phase-mode fit validation ───────────────────────────────────────
+        # After we have a real diff, verify the chosen phase_mode matches the work.
+        # Extract file count from the diff for validate_mode_fit.
+        file_count = len(self._extract_files(diff))
+        valid, reason, suggested = validate_mode_fit(
+            task.phase_mode if task else "full", diff, file_count
+        )
+        if not valid:
+            suggestion = f" Suggested: {suggested}" if suggested else ""
+            outcome = LoopOutcome(
+                action=LoopAction.BLOCK_HITL,
+                phase="IMPLEMENT",
+                task_id=task_id,
+                message=f"(!) Mode mismatch: {reason}.{suggestion}",
+                question=f"Phase mode '{task.phase_mode if task else 'full'}' mismatch — {reason}. Use {suggested} mode instead?",
+                options=[suggested, "continue anyway"],
+            )
+            self._print_phase_summary("IMPLEMENT", task_id, outcome)
+            return outcome
 
         # ── Real deterministic enforcement (the merge with conductor) ──────
         # Run the same hard gates conductor runs, so the RL reward signal
