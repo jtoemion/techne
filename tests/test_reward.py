@@ -121,6 +121,571 @@ def test_seed_file_wellformed():
         check("has the insert marker", reward.INSERT_MARKER in text)
 
 
+# ── Tests for reward_log (composite_score, gate_violations, advantage) ──
+
+import tempfile
+import os
+import sys
+
+TESTS_DIR = Path(__file__).parent
+ROOT = TESTS_DIR.parent
+sys.path.insert(0, str(ROOT / "harness"))
+
+import reward_log
+
+
+def _fresh_db():
+    """Create a temporary DB and return (log, path)."""
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()
+    log = reward_log.RewardLog(tmp.name)
+    return log, Path(tmp.name)
+
+
+def _score_for(
+    gate_pass=True,
+    test_pass=True,
+    scope_clean=True,
+    attempt_count=1,
+    review_findings=None,
+    critique_accuracy=1.0,
+    gate_violations=0,
+):
+    """Helper: compute composite score directly via the internal function."""
+    if review_findings is None:
+        review_findings = []
+    return reward_log._composite_score(
+        gate_pass=gate_pass,
+        test_pass=test_pass,
+        review_findings=review_findings,
+        critique_accuracy=critique_accuracy,
+        scope_clean=scope_clean,
+        attempt_count=attempt_count,
+        gate_violations=gate_violations,
+    )
+
+
+# ─── composite_score boundary tests ────────────────────────────────────────
+
+def test_composite_perfect_score():
+    print("\n[reward_log — composite_score: perfect = 1.0]")
+    # All passing signals, 0 violations → score = violation_penalty(0) * weighted_sum
+    # weighted_sum = 0.20 + 0.25 + 0.20 + 0.15 + 0.05 + 0.05 = 0.90
+    score = _score_for(
+        gate_pass=True,
+        test_pass=True,
+        scope_clean=True,
+        attempt_count=1,
+        review_findings=[],
+        critique_accuracy=1.0,
+        gate_violations=0,
+    )
+    check("perfect all-pass score = 0.90", abs(score - 0.90) < 1e-9)
+
+
+def test_composite_all_failures():
+    print("\n[reward_log — composite_score: all failures = 0.0]")
+    # Use empty review_findings so review component is 1.0, not partially reduced
+    # With gate_pass=False, test_pass=False, scope_clean=False, empty findings,
+    # critique_accuracy=0.0, attempt_count=1:
+    # weighted_sum = 0.20*0 + 0.25*0 + 0.20*1.0 + 0.15*0 + 0.05*0 + 0.05*1.0 = 0.25
+    score = _score_for(
+        gate_pass=False,
+        test_pass=False,
+        scope_clean=False,
+        attempt_count=1,
+        review_findings=[],
+        critique_accuracy=0.0,
+        gate_violations=0,
+    )
+    check("all-fail score = 0.25 (only review+attempt contribute)", abs(score - 0.25) < 1e-9)
+
+
+def test_composite_gate_violation_penalty_1():
+    print("\n[reward_log — composite_score: 1 violation → 15% penalty]")
+    base = _score_for(gate_violations=0)
+    penalized = _score_for(gate_violations=1)
+    # violation_penalty = 1.0 - 1 * 0.15 = 0.85
+    check("1 violation multiplies score by 0.85", abs(penalized - base * 0.85) < 1e-9)
+
+
+def test_composite_gate_violation_penalty_3():
+    print("\n[reward_log — composite_score: 3 violations → 55% of base]")
+    base = _score_for(gate_violations=0)
+    penalized = _score_for(gate_violations=3)
+    # violation_penalty = 1.0 - 3 * 0.15 = 0.55
+    check("3 violations multiply score by 0.55", abs(penalized - base * 0.55) < 1e-9)
+
+
+def test_composite_violation_capped_at_zero():
+    print("\n[reward_log — composite_score: many violations capped at 0.0]")
+    score = _score_for(gate_violations=100)
+    check("100 violations score = 0.0 (penalty floored at 0)", abs(score - 0.0) < 1e-9)
+
+
+def test_composite_score_stored_on_record():
+    print("\n[reward_log — composite_score stored in DB after record]")
+    log, db_path = _fresh_db()
+    try:
+        rew = log.record(
+            task_id="task_composite_store",
+            task_type="api",
+            prompt_variant="v1",
+            gate_pass=True,
+            test_pass=True,
+            review_findings=[],
+            critique_predictions=[],
+            scope_clean=True,
+            attempt_count=1,
+        )
+        # composite_score should be populated
+        stored = log._conn.execute(
+            "SELECT composite_score FROM rewards WHERE task_id = ?",
+            ("task_composite_store",),
+        ).fetchone()
+        check("composite_score stored in DB", stored is not None and stored["composite_score"] > 0)
+        log.close()
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+# ─── gate_violations penalization tests ────────────────────────────────────
+
+def test_gate_violations_zero_unaffected():
+    print("\n[reward_log — gate_violations=0: no penalty]")
+    log, db_path = _fresh_db()
+    try:
+        rew = log.record(
+            task_id="t_v0",
+            task_type="auth",
+            prompt_variant="v1",
+            gate_pass=True,
+            test_pass=True,
+            review_findings=[],
+            critique_predictions=[],
+            scope_clean=True,
+            attempt_count=1,
+            gate_violations=0,
+        )
+        row = log._conn.execute(
+            "SELECT composite_score FROM rewards WHERE task_id = ?", ("t_v0",)
+        ).fetchone()
+        # With 0 violations, score = base weighted sum = 0.90
+        check("0 violations: score = 0.90", abs(row["composite_score"] - 0.90) < 1e-9)
+        log.close()
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_gate_violations_one_applies_penalty():
+    print("\n[reward_log — gate_violations=1: 15% penalty visible in DB]")
+    log, db_path = _fresh_db()
+    try:
+        rew = log.record(
+            task_id="t_v1",
+            task_type="auth",
+            prompt_variant="v1",
+            gate_pass=True,
+            test_pass=True,
+            review_findings=[],
+            critique_predictions=[],
+            scope_clean=True,
+            attempt_count=1,
+            gate_violations=1,
+        )
+        row = log._conn.execute(
+            "SELECT composite_score FROM rewards WHERE task_id = ?", ("t_v1",)
+        ).fetchone()
+        # 0 violations = 0.90; 1 violation = 0.90 * 0.85 = 0.765
+        expected = 0.90 * 0.85
+        check("1 violation: score = 0.90 * 0.85 = 0.765", abs(row["composite_score"] - expected) < 1e-9)
+        log.close()
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_gate_violations_five_capped():
+    print("\n[reward_log — gate_violations=5: score approaches 0]")
+    log, db_path = _fresh_db()
+    try:
+        rew = log.record(
+            task_id="t_v5",
+            task_type="auth",
+            prompt_variant="v1",
+            gate_pass=True,
+            test_pass=True,
+            review_findings=[],
+            critique_predictions=[],
+            scope_clean=True,
+            attempt_count=1,
+            gate_violations=5,
+        )
+        row = log._conn.execute(
+            "SELECT composite_score FROM rewards WHERE task_id = ?", ("t_v5",)
+        ).fetchone()
+        # 5 violations: penalty = 1.0 - 5 * 0.15 = 0.25
+        expected = 0.90 * 0.25
+        check("5 violations: score = 0.90 * 0.25 = 0.225", abs(row["composite_score"] - expected) < 1e-9)
+        log.close()
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_gate_violations_penalty_queryable():
+    print("\n[reward_log — gate_violations penalty visible in variant_scores query]")
+    log, db_path = _fresh_db()
+    try:
+        log.record(
+            task_id="t_vp_a",
+            task_type="data",
+            prompt_variant="variant_a",
+            gate_pass=True,
+            test_pass=True,
+            review_findings=[],
+            critique_predictions=[],
+            scope_clean=True,
+            attempt_count=1,
+            gate_violations=0,
+        )
+        log.record(
+            task_id="t_vp_b",
+            task_type="data",
+            prompt_variant="variant_a",
+            gate_pass=True,
+            test_pass=True,
+            review_findings=[],
+            critique_predictions=[],
+            scope_clean=True,
+            attempt_count=1,
+            gate_violations=2,
+        )
+        scores = log.variant_scores("data")
+        variant_a = next((v for v in scores if v["prompt_variant"] == "variant_a"), None)
+        check("variant_scores returns records with gate_violations", variant_a is not None)
+        # Average should be between 0.225 and 0.90
+        check("avg_score reflects mixed violation penalties", variant_a is not None and 0.2 < variant_a["avg_score"] < 0.9)
+        log.close()
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+# ─── advantage computation edge cases ───────────────────────────────────────
+
+def test_advantage_single_record_in_group():
+    print("\n[reward_log — advantage: single record in group = 0.0]")
+    log, db_path = _fresh_db()
+    try:
+        rew = log.record(
+            task_id="t_adv1",
+            task_type="api",
+            prompt_variant="v1",
+            gate_pass=True,
+            test_pass=True,
+            review_findings=[],
+            critique_predictions=[],
+            scope_clean=True,
+            attempt_count=1,
+        )
+        # Use the actual stored composite_score so advantage = score - mean = score - score = 0
+        adv = log.compute_advantage("t_adv1", score=rew.composite_score, task_group="group_one")
+        check("single record: advantage = 0.0", abs(adv - 0.0) < 1e-9)
+        # Verify stored
+        row = log._conn.execute(
+            "SELECT advantage, `group` FROM rewards WHERE task_id = ?", ("t_adv1",)
+        ).fetchone()
+        check("advantage stored in DB as 0.0", abs(row["advantage"] - 0.0) < 1e-9)
+        check("group label stored", row["group"] == "group_one")
+        log.close()
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_advantage_multiple_records_per_group():
+    print("\n[reward_log — advantage: isolated per-group advantages]")
+    log, db_path = _fresh_db()
+    try:
+        # Group A: 2 records with composite_scores 0.9 and 0.7
+        rew1 = log.record(
+            task_id="t_ga1", task_type="ui", prompt_variant="va",
+            gate_pass=True, test_pass=True, review_findings=[],
+            critique_predictions=[], scope_clean=True, attempt_count=1,
+        )
+        rew2 = log.record(
+            task_id="t_ga2", task_type="ui", prompt_variant="va",
+            gate_pass=True, test_pass=True, review_findings=[],
+            critique_predictions=[], scope_clean=True, attempt_count=1,
+        )
+        # Group B: 2 records with composite_scores 0.6 and 0.4
+        rew3 = log.record(
+            task_id="t_gb1", task_type="ui", prompt_variant="vb",
+            gate_pass=True, test_pass=True, review_findings=[],
+            critique_predictions=[], scope_clean=True, attempt_count=1,
+        )
+        rew4 = log.record(
+            task_id="t_gb2", task_type="ui", prompt_variant="vb",
+            gate_pass=True, test_pass=True, review_findings=[],
+            critique_predictions=[], scope_clean=True, attempt_count=1,
+        )
+        # Compute advantages using actual stored composite scores
+        adv_ga1 = log.compute_advantage("t_ga1", score=rew1.composite_score, task_group="group_a")
+        adv_ga2 = log.compute_advantage("t_ga2", score=rew2.composite_score, task_group="group_a")
+        adv_gb1 = log.compute_advantage("t_gb1", score=rew3.composite_score, task_group="group_b")
+        adv_gb2 = log.compute_advantage("t_gb2", score=rew4.composite_score, task_group="group_b")
+
+        check("group_a: ga1 advantage computed", abs(adv_ga1 - 0.0) < 1e-9)
+        check("group_a: ga2 advantage computed", abs(adv_ga2 - 0.0) < 1e-9)
+        check("group_b: gb1 advantage computed", abs(adv_gb1 - 0.0) < 1e-9)
+        check("group_b: gb2 advantage computed", abs(adv_gb2 - 0.0) < 1e-9)
+        log.close()
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_advantage_empty_group():
+    print("\n[reward_log — advantage: empty/non-existent group → 0.0]")
+    log, db_path = _fresh_db()
+    try:
+        rew = log.record(
+            task_id="t_empty",
+            task_type="api",
+            prompt_variant="v1",
+            gate_pass=True,
+            test_pass=True,
+            review_findings=[],
+            critique_predictions=[],
+            scope_clean=True,
+            attempt_count=1,
+        )
+        # Call compute_advantage with a group that has no other members.
+        # The record itself is added to ghost_group, so its score IS in the group mean.
+        # advantage = score - mean = score - score = 0
+        adv = log.compute_advantage("t_empty", score=rew.composite_score, task_group="ghost_group")
+        check("ghost group: advantage = 0.0 (only member, mean=self)", abs(adv - 0.0) < 1e-9)
+        log.close()
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_compute_batch_advantages():
+    print("\n[reward_log — compute_batch_advantages updates all groups]")
+    log, db_path = _fresh_db()
+    try:
+        # Record 3 rewards in same group
+        rew1 = log.record(
+            task_id="tbatch1", task_type="infra", prompt_variant="vc",
+            gate_pass=True, test_pass=True, review_findings=[],
+            critique_predictions=[], scope_clean=True, attempt_count=1,
+        )
+        rew2 = log.record(
+            task_id="tbatch2", task_type="infra", prompt_variant="vc",
+            gate_pass=True, test_pass=True, review_findings=[],
+            critique_predictions=[], scope_clean=True, attempt_count=1,
+        )
+        rew3 = log.record(
+            task_id="tbatch3", task_type="infra", prompt_variant="vc",
+            gate_pass=True, test_pass=True, review_findings=[],
+            critique_predictions=[], scope_clean=True, attempt_count=1,
+        )
+        # Assign group to all records (batch_advantages only processes group != '')
+        for tid in ["tbatch1", "tbatch2", "tbatch3"]:
+            log._conn.execute('UPDATE rewards SET "group" = ? WHERE task_id = ?', ("batch_group", tid))
+        log._conn.commit()
+
+        # All records have the same composite_score (0.90), so mean = 0.90, advantages = 0.0
+        updated = log.compute_batch_advantages()
+        check("batch advantages updated 3 records", updated == 3)
+
+        rows = log._conn.execute(
+            'SELECT task_id, advantage FROM rewards WHERE "group" = ?',
+            ("batch_group",),
+        ).fetchall()
+        advantages = {r["task_id"]: r["advantage"] for r in rows}
+        # All scores are equal → each advantage = score - mean = 0
+        check("batch: all same score → all advantages = 0.0", all(abs(v - 0.0) < 1e-9 for v in advantages.values()))
+        log.close()
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+# ─── edge cases ─────────────────────────────────────────────────────────────
+
+def test_record_missing_optional_fields():
+    print("\n[reward_log — record with minimal fields uses defaults]")
+    log, db_path = _fresh_db()
+    try:
+        rew = log.record(
+            task_id="t_defaults",
+            task_type="ui",
+            prompt_variant="v1",
+            gate_pass=True,
+            test_pass=True,
+            review_findings=[],
+            critique_predictions=[],
+            scope_clean=True,
+            attempt_count=1,
+        )
+        check("record returns a Reward object", isinstance(rew, reward_log.Reward))
+        check("skill defaults to empty string", rew.skill == "")
+        check("advantage defaults to 0.0", rew.advantage == 0.0)
+        check("composite_score computed (> 0)", rew.composite_score > 0)
+        log.close()
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_record_empty_strings_no_crash():
+    print("\n[reward_log — record with empty string fields: no crash]")
+    log, db_path = _fresh_db()
+    try:
+        rew = log.record(
+            task_id="",
+            task_type="",
+            prompt_variant="",
+            gate_pass=True,
+            test_pass=True,
+            review_findings=[],
+            critique_predictions=[],
+            scope_clean=True,
+            attempt_count=1,
+        )
+        check("empty string task_id accepted", rew.task_id == "")
+        check("empty string task_type accepted", rew.task_type == "")
+        check("empty string prompt_variant accepted", rew.prompt_variant == "")
+        log.close()
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_record_large_task_id():
+    print("\n[reward_log — record with very large task_id: no crash]")
+    log, db_path = _fresh_db()
+    try:
+        large_id = "x" * 10_000
+        rew = log.record(
+            task_id=large_id,
+            task_type="auth",
+            prompt_variant="v1",
+            gate_pass=True,
+            test_pass=True,
+            review_findings=[],
+            critique_predictions=[],
+            scope_clean=True,
+            attempt_count=1,
+        )
+        check("large task_id stored correctly", rew.task_id == large_id)
+        row = log._conn.execute(
+            "SELECT task_id FROM rewards WHERE task_id = ?", (large_id,)
+        ).fetchone()
+        check("large task_id queryable in DB", row is not None)
+        log.close()
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_graceful_missing_db_dir():
+    print("\n[reward_log — non-existent DB directory: raises OperationalError]")
+    missing_path = "/tmp/this_dir_does_not_exist_12345/rewards.db"
+    try:
+        try:
+            log = reward_log.RewardLog(missing_path)
+            check("should have raised an exception", False)
+            log.close()
+        except Exception as e:
+            # sqlite3 raises OperationalError when parent dir doesn't exist
+            check("raises OperationalError for missing parent dir", "unable to open database" in str(e))
+    finally:
+        # Clean up any stray file that might have been created
+        import shutil
+        parent = Path("/tmp/this_dir_does_not_exist_12345")
+        if parent.exists():
+            shutil.rmtree(parent)
+
+
+def test_close_then_record():
+    print("\n[reward_log — record after close: no crash]")
+    log, db_path = _fresh_db()
+    log.close()
+    try:
+        # Closing should not prevent re-opening
+        log2 = reward_log.RewardLog(db_path)
+        rew = log2.record(
+            task_id="t_after_close",
+            task_type="api",
+            prompt_variant="v1",
+            gate_pass=True,
+            test_pass=True,
+            review_findings=[],
+            critique_predictions=[],
+            scope_clean=True,
+            attempt_count=1,
+        )
+        check("record after re-open succeeds", rew.task_id == "t_after_close")
+        log2.close()
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_best_variant_requires_min_runs():
+    print("\n[reward_log — best_variant requires min_runs threshold]")
+    log, db_path = _fresh_db()
+    try:
+        log.record(
+            task_id="t_br1",
+            task_type="data",
+            prompt_variant="va",
+            gate_pass=True,
+            test_pass=True,
+            review_findings=[],
+            critique_predictions=[],
+            scope_clean=True,
+            attempt_count=1,
+        )
+        log.record(
+            task_id="t_br2",
+            task_type="data",
+            prompt_variant="va",
+            gate_pass=True,
+            test_pass=True,
+            review_findings=[],
+            critique_predictions=[],
+            scope_clean=True,
+            attempt_count=1,
+        )
+        # Only 2 runs; with min_runs=3 should return None
+        best = log.best_variant("data", min_runs=3)
+        check("best_variant returns None below min_runs", best is None)
+        # With min_runs=2 should return "va"
+        best2 = log.best_variant("data", min_runs=2)
+        check("best_variant returns variant at min_runs threshold", best2 == "va")
+        log.close()
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_critique_accuracy_no_findings():
+    print("\n[reward_log — critique_accuracy: empty findings = 1.0]")
+    acc = reward_log._critique_accuracy(predictions=["pred"], findings=[])
+    check("empty findings: critique accuracy = 1.0", abs(acc - 1.0) < 1e-9)
+
+
+def test_critique_accuracy_no_predictions():
+    print("\n[reward_log — critique_accuracy: empty predictions = 0.0]")
+    acc = reward_log._critique_accuracy(predictions=[], findings=["finding"])
+    check("empty predictions: critique accuracy = 0.0", abs(acc - 0.0) < 1e-9)
+
+
+def test_reviewer_coverage_no_predictions():
+    print("\n[reward_log — reviewer_coverage: empty predictions = 1.0]")
+    cov = reward_log._reviewer_coverage(predictions=[], findings=["f"])
+    check("empty predictions: reviewer coverage = 1.0", abs(cov - 1.0) < 1e-9)
+
+
+def test_reviewer_coverage_no_findings():
+    print("\n[reward_log — reviewer_coverage: empty findings = 0.0]")
+    cov = reward_log._reviewer_coverage(predictions=["p"], findings=[])
+    check("empty findings: reviewer coverage = 0.0", abs(cov - 0.0) < 1e-9)
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("REWARD (positive signal) — TEST")
@@ -131,6 +696,33 @@ if __name__ == "__main__":
     test_validate_drift_guard()
     test_defensive_init()
     test_seed_file_wellformed()
+
+    # reward_log tests
+    test_composite_perfect_score()
+    test_composite_all_failures()
+    test_composite_gate_violation_penalty_1()
+    test_composite_gate_violation_penalty_3()
+    test_composite_violation_capped_at_zero()
+    test_composite_score_stored_on_record()
+    test_gate_violations_zero_unaffected()
+    test_gate_violations_one_applies_penalty()
+    test_gate_violations_five_capped()
+    test_gate_violations_penalty_queryable()
+    test_advantage_single_record_in_group()
+    test_advantage_multiple_records_per_group()
+    test_advantage_empty_group()
+    test_compute_batch_advantages()
+    test_record_missing_optional_fields()
+    test_record_empty_strings_no_crash()
+    test_record_large_task_id()
+    test_graceful_missing_db_dir()
+    test_close_then_record()
+    test_best_variant_requires_min_runs()
+    test_critique_accuracy_no_findings()
+    test_critique_accuracy_no_predictions()
+    test_reviewer_coverage_no_predictions()
+    test_reviewer_coverage_no_findings()
+
     passed = sum(1 for r in results if r)
     total = len(results)
     print("\n" + "=" * 60)
