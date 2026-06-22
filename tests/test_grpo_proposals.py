@@ -572,6 +572,166 @@ def test_propose_skill_edits_requires_two_runs():
             tmp_path.unlink()
 
 
+# ── Edge-case tests ───────────────────────────────────────────────────────────
+
+def test_threshold_at_exact_value_included():
+    """Advantage exactly equal to threshold (0.2) is excluded because the check
+    is STRICTLY GREATER THAN (adv > 0.2)."""
+    print("\n[edge — threshold at exact value: 0.2 not greater than 0.2]")
+    log = _fresh_log()
+    # Two records with advantage = 0.20 exactly each → mean = 0.20
+    # Since the check is "advantage > threshold", 0.20 > 0.20 is False → excluded
+    _seed_with_skill_and_adv(log, "t1", "auth", 0.95, skill="diagnose",
+                              adv=0.20, group="implement:auth")
+    _seed_with_skill_and_adv(log, "t2", "auth", 0.90, skill="diagnose",
+                              adv=0.20, group="implement:auth")
+
+    result = log.high_advantage_variants(threshold=0.2)
+    check("exact-threshold advantage is NOT returned (strict >)", len(result) == 0)
+    log.close()
+    os.remove(log.db_path)
+
+
+def test_threshold_just_below_excluded():
+    """Advantage just below threshold (0.1999) is excluded."""
+    print("\n[edge — advantage 0.1999 < 0.2 threshold]")
+    log = _fresh_log()
+    # Explicitly set advantage = 0.1999 for both records → mean ≈ 0.1999 < 0.2
+    _seed_with_skill_and_adv(log, "t1", "auth", 0.95, skill="diagnose",
+                              adv=0.1999, group="implement:auth")
+    _seed_with_skill_and_adv(log, "t2", "auth", 0.90, skill="diagnose",
+                              adv=0.1999, group="implement:auth")
+
+    result = log.high_advantage_variants(threshold=0.2)
+    check("advantage 0.1999 is below 0.2 threshold", len(result) == 0)
+    log.close()
+    os.remove(log.db_path)
+
+
+def test_empty_reward_log_returns_empty():
+    """A fresh RewardLog (no records) returns empty list from propose_grpo_edits."""
+    print("\n[edge — empty log returns empty proposals]")
+    log = _fresh_log()
+
+    tmp_proposals = tempfile.NamedTemporaryFile(suffix=".md", delete=False, mode="w")
+    tmp_proposals.close()
+    tmp_path = Path(tmp_proposals.name)
+
+    try:
+        proposals = propose_grpo_edits(log, proposals_path=tmp_path, threshold=0.2)
+        check("propose_grpo_edits on empty log returns []", len(proposals) == 0)
+        check("no PROPOSE ADD written to file",
+              not tmp_path.exists() or "### PROPOSE ADD" not in tmp_path.read_text())
+    finally:
+        log.close()
+        os.remove(log.db_path)
+        if tmp_path.exists():
+            tmp_path.unlink()
+
+
+def test_propose_skill_edits_requires_advantage():
+    """Skill records with advantage=0 produce no proposals even with high scores."""
+    print("\n[edge — zero advantage: no skill proposals]")
+    log = _fresh_log()
+
+    # Two records with skill="diagnose" but advantage=0 → avg_adv = 0 < 0.2
+    _seed_with_skill_and_adv(log, "t1", "auth", 0.95, skill="diagnose",
+                              adv=0.0, group="implement:auth")
+    _seed_with_skill_and_adv(log, "t2", "auth", 0.90, skill="diagnose",
+                              adv=0.0, group="implement:auth")
+
+    tmp_proposals = tempfile.NamedTemporaryFile(suffix=".md", delete=False, mode="w")
+    tmp_proposals.close()
+    tmp_path = Path(tmp_proposals.name)
+
+    try:
+        written = propose_skill_edits(log, proposals_path=tmp_path, threshold=0.2)
+        check("zero-advantage skill produces no proposals", len(written) == 0)
+        check("no PROPOSE ADD written",
+              not tmp_path.exists() or "### PROPOSE ADD" not in tmp_path.read_text())
+    finally:
+        log.close()
+        os.remove(log.db_path)
+        if tmp_path.exists():
+            tmp_path.unlink()
+
+
+def test_propose_skill_edits_high_advantage_writes_proposal():
+    """Two records with skill='diagnose' and explicit adv=0.30 and 0.20
+    (avg=0.25 > 0.2) → propose_skill_edits returns at least 1 entry."""
+    print("\n[edge — high-advantage skill writes proposal]")
+    log = _fresh_log()
+
+    _seed_with_skill_and_adv(log, "t1", "auth", 0.95, skill="diagnose",
+                              adv=0.30, group="implement:auth")
+    _seed_with_skill_and_adv(log, "t2", "auth", 0.90, skill="diagnose",
+                              adv=0.20, group="implement:auth")
+
+    tmp_proposals = tempfile.NamedTemporaryFile(suffix=".md", delete=False, mode="w")
+    tmp_proposals.close()
+    tmp_path = Path(tmp_proposals.name)
+
+    try:
+        written = propose_skill_edits(log, proposals_path=tmp_path, threshold=0.2)
+        check("propose_skill_edits returns >= 1 proposal", len(written) > 0)
+        check("proposal skill field is 'diagnose'",
+              any(p.get("skill") == "diagnose" for p in written))
+
+        content = tmp_path.read_text(encoding="utf-8")
+        check("skills/diagnose.md appears in written content",
+              "skills/diagnose.md" in content)
+    finally:
+        log.close()
+        os.remove(log.db_path)
+        if tmp_path.exists():
+            tmp_path.unlink()
+
+
+def test_propose_grpo_and_skill_together():
+    """Seed a log with both a high-advantage variant (GRPO) and a high-advantage
+    skill → both propose_grpo_edits and propose_skill_edits return results."""
+    print("\n[edge — GRPO variant + skill advantage together]")
+    log = _fresh_log()
+
+    # High-advantage variant (GRPO path)
+    _seed_with_group(log, "t1", "auth", 0.95, variant="v1_high", group="implement:auth")
+    _seed_with_group(log, "t2", "auth", 0.95, variant="v1_high", group="implement:auth")
+    _seed_with_group(log, "t3", "auth", 0.10, variant="v2_low", group="implement:auth")
+    # Compute variant advantages via batch (symmetric cancellation)
+    log.compute_batch_advantages()
+
+    # High-advantage skill (P4 path — explicit advantage via SQL, no batch needed)
+    _seed_with_skill_and_adv(log, "t4", "auth", 0.95, skill="diagnose",
+                              adv=0.30, group="implement:auth")
+    _seed_with_skill_and_adv(log, "t5", "auth", 0.90, skill="diagnose",
+                              adv=0.20, group="implement:auth")
+
+    tmp_proposals = tempfile.NamedTemporaryFile(suffix=".md", delete=False, mode="w")
+    tmp_proposals.close()
+    tmp_path = Path(tmp_proposals.name)
+
+    try:
+        grpo_proposals = propose_grpo_edits(log, proposals_path=tmp_path, threshold=0.2)
+        skill_proposals = propose_skill_edits(log, proposals_path=tmp_path, threshold=0.2)
+
+        check("propose_grpo_edits returns variant proposal", len(grpo_proposals) > 0)
+        check("propose_skill_edits returns skill proposal", len(skill_proposals) > 0)
+        check("GRPO proposal mentions v1_high variant",
+              any("v1_high" in p.get("text", "") or "v1_high" in str(p)
+                  for p in grpo_proposals))
+        check("skill proposal skill field is 'diagnose'",
+              any(p.get("skill") == "diagnose" for p in skill_proposals))
+
+        content = tmp_path.read_text(encoding="utf-8")
+        check("both skill and variant content appear in file",
+              "skills/diagnose.md" in content and ("v1_high" in content or "v1" in content))
+    finally:
+        log.close()
+        os.remove(log.db_path)
+        if tmp_path.exists():
+            tmp_path.unlink()
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -595,6 +755,14 @@ if __name__ == "__main__":
     test_propose_skill_edits_dedup()
     test_propose_skill_edits_empty_log()
     test_propose_skill_edits_requires_two_runs()
+
+    # Edge cases
+    test_threshold_at_exact_value_included()
+    test_threshold_just_below_excluded()
+    test_empty_reward_log_returns_empty()
+    test_propose_skill_edits_requires_advantage()
+    test_propose_skill_edits_high_advantage_writes_proposal()
+    test_propose_grpo_and_skill_together()
 
     passed = sum(1 for r in results if r)
     total = len(results)
