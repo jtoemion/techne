@@ -307,3 +307,168 @@ class TestRecommendMode:
         assert "4" in result
         assert "7" in result
         assert "11" in result
+
+
+# ── Mode-override telemetry tests ─────────────────────────────────────────────
+
+import tempfile
+import os
+
+
+class TestLogModeOverride:
+    """Tests for _log_mode_override() and get_mode_overrides()."""
+
+    def test_log_mode_override_writes_to_file(self, tmp_path, monkeypatch):
+        """_log_mode_override creates the log file and writes a JSON entry."""
+        # Patch OVERRIDES_LOG to use tmp_path
+        import pipeline_enforcer
+        monkeypatch.setattr(pipeline_enforcer, "OVERRIDES_LOG", tmp_path / "mode_overrides.log")
+        monkeypatch.setattr(pipeline_enforcer, "_MAX_LOG_LINES", 1000)
+
+        pipeline_enforcer._log_mode_override(
+            "task-abc",
+            "micro",
+            "full",
+            {"diff_lines": 10, "file_count": 2, "has_logic": True},
+        )
+
+        log_file = tmp_path / "mode_overrides.log"
+        assert log_file.exists(), "mode_overrides.log was not created"
+        content = log_file.read_text()
+        import json
+        entry = json.loads(content.strip().split("\n")[0])
+        assert entry["task_id"] == "task-abc"
+        assert entry["chosen_mode"] == "micro"
+        assert entry["suggested_mode"] == "full"
+        assert entry["diff_lines"] == 10
+        assert entry["file_count"] == 2
+        assert entry["has_logic"] is True
+        assert "timestamp" in entry
+
+    def test_get_mode_overrides_returns_recent(self, tmp_path, monkeypatch):
+        """get_mode_overrides returns the last N entries."""
+        import pipeline_enforcer
+        monkeypatch.setattr(pipeline_enforcer, "OVERRIDES_LOG", tmp_path / "mode_overrides.log")
+        monkeypatch.setattr(pipeline_enforcer, "_MAX_LOG_LINES", 1000)
+
+        # Write 5 entries
+        for i in range(5):
+            pipeline_enforcer._log_mode_override(
+                f"task-{i}",
+                "micro",
+                "full",
+                {"diff_lines": i, "file_count": 1, "has_logic": False},
+            )
+
+        # Read last 3 — should be task-2, task-3, task-4
+        entries = pipeline_enforcer.get_mode_overrides(limit=3)
+        assert len(entries) == 3
+        assert entries[0]["task_id"] == "task-2"
+        assert entries[1]["task_id"] == "task-3"
+        assert entries[2]["task_id"] == "task-4"
+
+    def test_validate_mode_fit_logs_override(self, tmp_path, monkeypatch):
+        """validate_mode_fit writes an override entry when mode is invalid."""
+        import pipeline_enforcer
+        monkeypatch.setattr(pipeline_enforcer, "OVERRIDES_LOG", tmp_path / "mode_overrides.log")
+        monkeypatch.setattr(pipeline_enforcer, "_MAX_LOG_LINES", 1000)
+
+        diff = (
+            "--- a/foo.py\n+++ b/foo.py\n"
+            "+line1\n+line2\n+line3\n+line4\n+line5\n"
+        )
+        valid, reason, suggested = pipeline_enforcer.validate_mode_fit(
+            "micro", diff, 1, task_id="task-xyz"
+        )
+        assert valid is False
+        assert suggested == "full"
+
+        log_file = tmp_path / "mode_overrides.log"
+        assert log_file.exists()
+        content = log_file.read_text()
+        import json
+        entries = [json.loads(line) for line in content.strip().split("\n") if line]
+        assert len(entries) == 1
+        assert entries[0]["task_id"] == "task-xyz"
+        assert entries[0]["chosen_mode"] == "micro"
+        assert entries[0]["suggested_mode"] == "full"
+
+    def test_mode_overrides_log_rotation(self, tmp_path, monkeypatch):
+        """When log exceeds _MAX_LOG_LINES (1000), only last 1000 lines are kept."""
+        import pipeline_enforcer
+        monkeypatch.setattr(pipeline_enforcer, "OVERRIDES_LOG", tmp_path / "mode_overrides.log")
+        monkeypatch.setattr(pipeline_enforcer, "_MAX_LOG_LINES", 1000)
+
+        # Write 1002 entries
+        for i in range(1002):
+            pipeline_enforcer._log_mode_override(
+                f"task-{i}",
+                "micro",
+                "full",
+                {"diff_lines": 1, "file_count": 1, "has_logic": False},
+            )
+
+        log_file = tmp_path / "mode_overrides.log"
+        lines = log_file.read_text().strip().split("\n")
+        # Should have exactly 1000 (last 1000 of 1002)
+        assert len(lines) == 1000
+        # First entry should be task-2 (0-indexed: 1002-1000=2)
+        import json
+        first_entry = json.loads(lines[0])
+        assert first_entry["task_id"] == "task-2"
+        last_entry = json.loads(lines[-1])
+        assert last_entry["task_id"] == "task-1001"
+
+    def test_get_mode_overrides_empty_when_no_file(self, tmp_path, monkeypatch):
+        """get_mode_overrides returns [] when log file does not exist."""
+        import pipeline_enforcer
+        monkeypatch.setattr(pipeline_enforcer, "OVERRIDES_LOG", tmp_path / "nonexistent.log")
+        entries = pipeline_enforcer.get_mode_overrides(limit=20)
+        assert entries == []
+
+    def test_get_mode_overrides_respects_zero_limit(self, tmp_path, monkeypatch):
+        """limit=0 returns all entries."""
+        import pipeline_enforcer
+        monkeypatch.setattr(pipeline_enforcer, "OVERRIDES_LOG", tmp_path / "mode_overrides.log")
+        monkeypatch.setattr(pipeline_enforcer, "_MAX_LOG_LINES", 1000)
+
+        for i in range(5):
+            pipeline_enforcer._log_mode_override(
+                f"task-{i}", "micro", "full",
+                {"diff_lines": 1, "file_count": 1, "has_logic": False},
+            )
+        entries = pipeline_enforcer.get_mode_overrides(limit=0)
+        assert len(entries) == 5
+
+    def test_validate_mode_fit_no_override_when_valid(self, tmp_path, monkeypatch):
+        """No override is logged when mode is valid."""
+        import pipeline_enforcer
+        monkeypatch.setattr(pipeline_enforcer, "OVERRIDES_LOG", tmp_path / "mode_overrides.log")
+        monkeypatch.setattr(pipeline_enforcer, "_MAX_LOG_LINES", 1000)
+
+        diff = "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1,2 @@\n-# old\n+# new"
+        valid, reason, suggested = pipeline_enforcer.validate_mode_fit(
+            "micro", diff, 1, task_id="task-valid"
+        )
+        assert valid is True
+        log_file = tmp_path / "mode_overrides.log"
+        assert not log_file.exists()
+
+    def test_orchestrator_loop_get_mode_overrides(self, tmp_path, monkeypatch):
+        """OrchestratorLoop.get_mode_overrides delegates to pipeline_enforcer."""
+        import pipeline_enforcer
+        monkeypatch.setattr(pipeline_enforcer, "OVERRIDES_LOG", tmp_path / "mode_overrides.log")
+        monkeypatch.setattr(pipeline_enforcer, "_MAX_LOG_LINES", 1000)
+
+        pipeline_enforcer._log_mode_override(
+            "task-loop", "full", "micro",
+            {"diff_lines": 1, "file_count": 1, "has_logic": False},
+        )
+
+        from task_db import TaskDB
+        from orchestrator_loop import OrchestratorLoop
+        db = TaskDB(":memory:")
+        loop = OrchestratorLoop(db)
+        overrides = loop.get_mode_overrides(limit=5)
+        assert len(overrides) == 1
+        assert overrides[0]["task_id"] == "task-loop"

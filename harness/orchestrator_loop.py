@@ -59,7 +59,7 @@ from pathlib import Path
 from typing import Optional
 
 from task_db import TaskDB
-from pipeline_enforcer import PipelineEnforcer, PHASE_DESCRIPTIONS, classify_phase_mode, validate_mode_fit, get_cost_estimate
+from pipeline_enforcer import PipelineEnforcer, PHASE_DESCRIPTIONS, classify_phase_mode, validate_mode_fit, get_cost_estimate, _log_mode_override, _compute_diff_stats
 from reward_log import RewardLog
 from prompt_evolution import PromptEvolution
 from gate_evolution import GateEvolution
@@ -319,6 +319,11 @@ class OrchestratorLoop:
             })
         return result
 
+    def get_mode_overrides(self, limit: int = 20) -> list[dict]:
+        """Return the most recent N mode-override events from the telemetry log."""
+        from pipeline_enforcer import get_mode_overrides as _get_overrides
+        return _get_overrides(limit=limit)
+
     def summary(self) -> str:
         """Human-readable summary of all task states."""
         return self.enforcer.dashboard()
@@ -435,6 +440,13 @@ class OrchestratorLoop:
             task.phase_mode if task else "full", diff, file_count
         )
         if not valid:
+            diff_stats = _compute_diff_stats(diff)
+            _log_mode_override(
+                task_id,
+                task.phase_mode if task else "full",
+                suggested,
+                diff_stats,
+            )
             suggestion = f" Suggested: {suggested}" if suggested else ""
             outcome = LoopOutcome(
                 action=LoopAction.BLOCK_HITL,

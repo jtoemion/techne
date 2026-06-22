@@ -33,10 +33,22 @@ Usage:
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import re
+import os
+from pathlib import Path
 from typing import Optional
 
 from task_db import TaskDB, Task
+
+
+# ── Memory directory and override log ──────────────────────────────────────
+
+_HARNESS_DIR = Path(__file__).parent
+_ROOT = _HARNESS_DIR.parent
+MEMORY_DIR = _ROOT / ".techne" / "memory"
+OVERRIDES_LOG = MEMORY_DIR / "mode_overrides.log"
+_MAX_LOG_LINES = 1000
 
 
 # ── Phase definitions ────────────────────────────────────────────────────
@@ -116,6 +128,71 @@ _MODE_COST_ESTIMATES = {
 }
 
 
+# ── Mode-override telemetry ─────────────────────────────────────────────────
+
+def _log_mode_override(
+    task_id: str,
+    chosen_mode: str,
+    suggested_mode: str,
+    diff_stats: dict,
+) -> None:
+    """Record a mode override event to the telemetry log.
+
+    Appends a JSON line to ``.techne/memory/mode_overrides.log``.
+    Auto-rotates when the log exceeds ``_MAX_LOG_LINES`` (keeps last 1000).
+    """
+    from datetime import datetime, timezone
+
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "task_id": task_id,
+        "chosen_mode": chosen_mode,
+        "suggested_mode": suggested_mode,
+        "diff_lines": diff_stats.get("diff_lines", 0),
+        "file_count": diff_stats.get("file_count", 0),
+        "has_logic": diff_stats.get("has_logic", False),
+    }
+
+    log_path = Path(OVERRIDES_LOG)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(log_path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry, separators=(",", ":")) + "\n")
+
+    # Auto-rotate: keep only the last _MAX_LOG_LINES
+    with open(log_path, "r", encoding="utf-8") as fh:
+        lines = fh.readlines()
+    if len(lines) > _MAX_LOG_LINES:
+        with open(log_path, "w", encoding="utf-8") as fh:
+            fh.writelines(lines[-_MAX_LOG_LINES:])
+
+
+def get_mode_overrides(limit: int = 20) -> list[dict]:
+    """Return the most recent N override entries from the telemetry log.
+
+    Each entry is a dict with keys: timestamp, task_id, chosen_mode,
+    suggested_mode, diff_lines, file_count, has_logic.
+    """
+    log_path = Path(OVERRIDES_LOG)
+    if not log_path.exists():
+        return []
+
+    with open(log_path, "r", encoding="utf-8") as fh:
+        all_lines = fh.readlines()
+
+    recent = all_lines[-limit:] if limit > 0 else all_lines
+    entries = []
+    for line in recent:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entries.append(json.loads(line))
+        except json.JSONDecodeError:
+            pass
+    return entries
+
+
 def get_cost_estimate(phase_mode: str) -> dict:
     """Return cost estimate dict for a phase mode."""
     return _MODE_COST_ESTIMATES.get(phase_mode.lower(), _MODE_COST_ESTIMATES["full"])
@@ -179,8 +256,38 @@ def classify_phase_mode(title: str, description: str = "", diff_text: str = "") 
     return "full"
 
 
+def _compute_diff_stats(diff_text: str) -> dict:
+    """Compute diff statistics: changed_lines, file_count, has_logic."""
+    lines = diff_text.splitlines()
+    added = sum(1 for l in lines if l.startswith("+") and not l.startswith("+++"))
+    removed = sum(1 for l in lines if l.startswith("-") and not l.startswith("---"))
+    changed_lines = added + removed
+    files: set[str] = set()
+    for l in lines:
+        if l.startswith("+++ b/") or l.startswith("--- a/"):
+            path = l[6:].strip()
+            if path and path != "/dev/null":
+                files.add(path)
+    diff_lower = diff_text.lower()
+    kw_check = []
+    for kw in _LOGIC_KEYWORDS:
+        if kw.endswith(" "):
+            if kw.rstrip() in diff_lower:
+                kw_check.append(kw)
+                break
+        else:
+            if re.search(r"\b" + re.escape(kw) + r"\b", diff_lower):
+                kw_check.append(kw)
+                break
+    return {
+        "diff_lines": changed_lines,
+        "file_count": len(files),
+        "has_logic": bool(kw_check),
+    }
+
+
 def validate_mode_fit(
-    phase_mode: str, diff_text: str = "", file_count: int = 0
+    phase_mode: str, diff_text: str = "", file_count: int = 0, task_id: str = ""
 ) -> tuple[bool, str, str]:
     """Returns (valid, reason, suggested_mode).
 
@@ -197,20 +304,21 @@ def validate_mode_fit(
         if not diff_text or not diff_text.strip():
             if file_count == 0:
                 return True, "", ""
+            diff_stats = _compute_diff_stats("")
+            _log_mode_override(task_id, mode, "full", diff_stats)
             return False, "Empty diff but files already touched", "full"
 
-        lines = diff_text.splitlines()
-        added = sum(1 for l in lines if l.startswith("+") and not l.startswith("+++"))
-        removed = sum(1 for l in lines if l.startswith("-") and not l.startswith("---"))
-        changed_lines = added + removed
+        diff_stats = _compute_diff_stats(diff_text)
+        changed_lines = diff_stats["diff_lines"]
 
         if changed_lines > 3:
             cost_micro = get_cost_estimate("micro")["api_calls"]
             cost_full = get_cost_estimate("full")["api_calls"]
+            _log_mode_override(task_id, mode, "full", diff_stats)
             return False, f"micro mode requires <=3 changed lines (got {changed_lines}) — full mode ({cost_full} API calls) recommended", "full"
 
         files: set[str] = set()
-        for l in lines:
+        for l in diff_text.splitlines():
             if l.startswith("+++ b/") or l.startswith("--- a/"):
                 path = l[6:].strip()
                 if path and path != "/dev/null":
@@ -218,8 +326,10 @@ def validate_mode_fit(
         if len(files) > 1:
             cost_micro = get_cost_estimate("micro")["api_calls"]
             cost_full = get_cost_estimate("full")["api_calls"]
+            _log_mode_override(task_id, mode, "full", diff_stats)
             return False, f"micro mode requires <=1 file (got {len(files)}) — full mode ({cost_full} API calls) recommended", "full"
         if len(files) == 0:
+            _log_mode_override(task_id, mode, "full", diff_stats)
             return False, "No file paths found in diff", "full"
 
         diff_lower = diff_text.lower()
@@ -237,6 +347,7 @@ def validate_mode_fit(
         if has_logic:
             cost_micro = get_cost_estimate("micro")["api_calls"]
             cost_full = get_cost_estimate("full")["api_calls"]
+            _log_mode_override(task_id, mode, "full", diff_stats)
             return False, f"micro mode cannot contain logic keywords (if/for/while/class/etc) — full mode ({cost_full} API calls) recommended", "full"
 
         return True, "", ""
@@ -246,36 +357,17 @@ def validate_mode_fit(
         if not diff_text or not diff_text.strip():
             return True, "", ""
 
-        lines = diff_text.splitlines()
-        added = sum(1 for l in lines if l.startswith("+") and not l.startswith("+++"))
-        removed = sum(1 for l in lines if l.startswith("-") and not l.startswith("---"))
-        changed_lines = added + removed
-
-        files: set[str] = set()
-        for l in lines:
-            if l.startswith("+++ b/") or l.startswith("--- a/"):
-                path = l[6:].strip()
-                if path and path != "/dev/null":
-                    files.add(path)
-
-        diff_lower = diff_text.lower()
-        kw_check = []
-        for kw in _LOGIC_KEYWORDS:
-            if kw.endswith(" "):
-                if kw.rstrip() in diff_lower:
-                    kw_check.append(kw)
-                    break
-            else:
-                if re.search(r"\b" + re.escape(kw) + r"\b", diff_lower):
-                    kw_check.append(kw)
-                    break
-        has_logic = bool(kw_check)
+        diff_stats = _compute_diff_stats(diff_text)
+        changed_lines = diff_stats["diff_lines"]
+        file_count = diff_stats["file_count"]
+        has_logic = diff_stats["has_logic"]
 
         # If it looks like it should be micro, suggest it
-        if changed_lines <= 3 and len(files) <= 1 and not has_logic:
+        if changed_lines <= 3 and file_count <= 1 and not has_logic:
             cost_micro = get_cost_estimate("micro")["api_calls"]
             cost_full = get_cost_estimate("full")["api_calls"]
-            return False, f"full mode ({cost_full} API calls) applied to trivial change ({changed_lines} lines, {len(files)} file) — micro mode ({cost_micro} API calls) suggested", "micro"
+            _log_mode_override(task_id, mode, "micro", diff_stats)
+            return False, f"full mode ({cost_full} API calls) applied to trivial change ({changed_lines} lines, {file_count} file) — micro mode ({cost_micro} API calls) suggested", "micro"
 
         return True, "", ""
 
