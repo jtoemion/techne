@@ -108,6 +108,18 @@ _FAST_KEYWORDS = frozenset([
     "document", "readme", "comment", "typo",
 ])
 
+# Per-mode cost estimates (agent API calls per task)
+_MODE_COST_ESTIMATES = {
+    "micro": {"api_calls": 4, "notes": "IMPLEMENT → CONTEXT_GUARD → VERIFY → EVAL"},
+    "fast": {"api_calls": 7, "notes": "IMPLEMENT → CG → CRITIQUE → REVIEW → VERIFY → EVAL → RETRO"},
+    "full": {"api_calls": 11, "notes": "RECALL → IMPLEMENT → CG → CRITIQUE → REVIEW → VERIFY → EVAL → RETRO → CONCLUDE → REFRESH → DONE"},
+}
+
+
+def get_cost_estimate(phase_mode: str) -> dict:
+    """Return cost estimate dict for a phase mode."""
+    return _MODE_COST_ESTIMATES.get(phase_mode.lower(), _MODE_COST_ESTIMATES["full"])
+
 
 def classify_phase_mode(title: str, description: str = "", diff_text: str = "") -> str:
     """Classify the appropriate phase mode for a task.
@@ -193,7 +205,9 @@ def validate_mode_fit(
         changed_lines = added + removed
 
         if changed_lines > 3:
-            return False, f"micro mode requires <=3 changed lines (got {changed_lines})", "full"
+            cost_micro = get_cost_estimate("micro")["api_calls"]
+            cost_full = get_cost_estimate("full")["api_calls"]
+            return False, f"micro mode requires <=3 changed lines (got {changed_lines}) — full mode ({cost_full} API calls) recommended", "full"
 
         files: set[str] = set()
         for l in lines:
@@ -202,7 +216,9 @@ def validate_mode_fit(
                 if path and path != "/dev/null":
                     files.add(path)
         if len(files) > 1:
-            return False, f"micro mode requires <=1 file (got {len(files)})", "full"
+            cost_micro = get_cost_estimate("micro")["api_calls"]
+            cost_full = get_cost_estimate("full")["api_calls"]
+            return False, f"micro mode requires <=1 file (got {len(files)}) — full mode ({cost_full} API calls) recommended", "full"
         if len(files) == 0:
             return False, "No file paths found in diff", "full"
 
@@ -219,7 +235,9 @@ def validate_mode_fit(
                     break
         has_logic = bool(kw_check)
         if has_logic:
-            return False, "micro mode cannot contain logic keywords (if/for/while/class/etc)", "full"
+            cost_micro = get_cost_estimate("micro")["api_calls"]
+            cost_full = get_cost_estimate("full")["api_calls"]
+            return False, f"micro mode cannot contain logic keywords (if/for/while/class/etc) — full mode ({cost_full} API calls) recommended", "full"
 
         return True, "", ""
 
@@ -255,7 +273,9 @@ def validate_mode_fit(
 
         # If it looks like it should be micro, suggest it
         if changed_lines <= 3 and len(files) <= 1 and not has_logic:
-            return False, f"full mode applied to trivial change ({changed_lines} lines, {len(files)} file)", "micro"
+            cost_micro = get_cost_estimate("micro")["api_calls"]
+            cost_full = get_cost_estimate("full")["api_calls"]
+            return False, f"full mode ({cost_full} API calls) applied to trivial change ({changed_lines} lines, {len(files)} file) — micro mode ({cost_micro} API calls) suggested", "micro"
 
         return True, "", ""
 

@@ -9,7 +9,7 @@ import sys, os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "harness"))
 
-from pipeline_enforcer import classify_phase_mode, validate_mode_fit
+from pipeline_enforcer import classify_phase_mode, validate_mode_fit, get_cost_estimate
 
 
 # ── classify_phase_mode tests ─────────────────────────────────────────────────
@@ -187,29 +187,123 @@ class TestValidateModeFit:
         assert valid is True
 
 
+# ── get_cost_estimate tests ───────────────────────────────────────────────────
+
+class TestGetCostEstimate:
+    def test_micro_cost(self):
+        """micro → 4 API calls"""
+        result = get_cost_estimate("micro")
+        assert result["api_calls"] == 4
+        assert "IMPLEMENT" in result["notes"]
+
+    def test_fast_cost(self):
+        """fast → 7 API calls"""
+        result = get_cost_estimate("fast")
+        assert result["api_calls"] == 7
+        assert "CRITIQUE" in result["notes"]
+
+    def test_full_cost(self):
+        """full → 11 API calls"""
+        result = get_cost_estimate("full")
+        assert result["api_calls"] == 11
+        assert "RECALL" in result["notes"]
+
+    def test_unknown_mode_returns_full(self):
+        """unknown mode → defaults to full estimate"""
+        result = get_cost_estimate("foobar")
+        assert result["api_calls"] == 11
+
+    def test_case_insensitive(self):
+        """mode lookup is case-insensitive"""
+        assert get_cost_estimate("MICRO")["api_calls"] == 4
+        assert get_cost_estimate("Fast")["api_calls"] == 7
+        assert get_cost_estimate("FULL")["api_calls"] == 11
+
+
+# ── validate_mode_fit cost message tests ──────────────────────────────────────
+
+class TestValidateModeFitCostMessages:
+    def test_micro_too_many_lines_includes_cost(self):
+        """mismatch reason includes API call count"""
+        diff = (
+            "--- a/foo.py\n+++ b/foo.py\n"
+            "+line1\n+line2\n+line3\n+line4\n+line5\n+line6\n+line7\n+line8\n"
+        )
+        valid, reason, suggested = validate_mode_fit("micro", diff, 1)
+        assert valid is False
+        assert "11" in reason  # full mode API calls
+        assert "API calls" in reason
+        assert suggested == "full"
+
+    def test_micro_multi_file_includes_cost(self):
+        """multi-file micro mismatch includes cost"""
+        diff = (
+            "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1,2 @@\n+def foo(): pass\n"
+            "--- a/bar.py\n+++ b/bar.py\n@@ -1 +1,2 @@\n+def bar(): pass\n"
+        )
+        valid, reason, suggested = validate_mode_fit("micro", diff, 2)
+        assert valid is False
+        assert "11" in reason
+        assert "API calls" in reason
+
+    def test_full_trivial_includes_cost(self):
+        """full on trivial change includes both costs in message"""
+        diff = "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1,2 @@\n-# old\n+# new"
+        valid, reason, suggested = validate_mode_fit("full", diff, 1)
+        assert valid is False
+        assert "11" in reason
+        assert "4" in reason
+        assert "API calls" in reason
+
+
 # ── Integration: OrchestratorLoop.recommend_mode ───────────────────────────────
 
 class TestRecommendMode:
-    def test_recommend_mode_method(self):
-        """recommend_mode wires to classify_phase_mode"""
+    def test_recommend_mode_returns_micro_with_cost(self):
+        """recommend_mode returns cost info for micro"""
         from task_db import TaskDB
         from orchestrator_loop import OrchestratorLoop
 
         db = TaskDB(":memory:")
         loop = OrchestratorLoop(db)
 
-        # Trivial → micro (title must not contain fast-keywords)
         diff = "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1,2 @@\n+# typo"
-        assert loop.recommend_mode("update foo", "", diff) == "micro"
+        result = loop.recommend_mode("update foo", "", diff)
+        assert "micro" in result
+        assert "4" in result
+        assert "7" in result
+        assert "11" in result
 
-        # Review task → fast
-        assert loop.recommend_mode("review PR", "", "") == "fast"
+    def test_recommend_mode_returns_fast_with_cost(self):
+        """recommend_mode returns cost info for fast"""
+        from task_db import TaskDB
+        from orchestrator_loop import OrchestratorLoop
 
-        # Complex → full
+        db = TaskDB(":memory:")
+        loop = OrchestratorLoop(db)
+
+        result = loop.recommend_mode("review PR", "", "")
+        assert "fast" in result
+        assert "4" in result
+        assert "7" in result
+        assert "11" in result
+
+    def test_recommend_mode_returns_full_with_cost(self):
+        """recommend_mode returns cost info for full"""
+        from task_db import TaskDB
+        from orchestrator_loop import OrchestratorLoop
+
+        db = TaskDB(":memory:")
+        loop = OrchestratorLoop(db)
+
         complex_diff = (
             "--- a/svc.py\n+++ a/svc.py\n"
             "+class Svc:\n"
             "+    def run(self):\n"
             "+        pass\n"
         )
-        assert loop.recommend_mode("implement service", "", complex_diff) == "full"
+        result = loop.recommend_mode("implement service", "", complex_diff)
+        assert "full" in result
+        assert "4" in result
+        assert "7" in result
+        assert "11" in result

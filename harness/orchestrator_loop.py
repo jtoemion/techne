@@ -59,7 +59,7 @@ from pathlib import Path
 from typing import Optional
 
 from task_db import TaskDB
-from pipeline_enforcer import PipelineEnforcer, PHASE_DESCRIPTIONS, classify_phase_mode, validate_mode_fit
+from pipeline_enforcer import PipelineEnforcer, PHASE_DESCRIPTIONS, classify_phase_mode, validate_mode_fit, get_cost_estimate
 from reward_log import RewardLog
 from prompt_evolution import PromptEvolution
 from gate_evolution import GateEvolution
@@ -146,9 +146,14 @@ class OrchestratorLoop:
         """Pre-flight recommendation: suggest the appropriate phase mode for a task.
 
         Agents can call this BEFORE creating the task to get the recommended mode.
-        Returns one of: "micro", "fast", "full".
+        Returns a message with the recommended mode and cost estimates for all modes.
         """
-        return classify_phase_mode(title, description, diff)
+        mode = classify_phase_mode(title, description, diff)
+        cost = get_cost_estimate(mode)
+        micro_cost = get_cost_estimate("micro")["api_calls"]
+        fast_cost = get_cost_estimate("fast")["api_calls"]
+        full_cost = get_cost_estimate("full")["api_calls"]
+        return f"Recommended: {mode} ({cost['api_calls']} API calls) — micro (4) vs fast (7) vs full (11)"
 
     def has_work(self, task_id: str) -> bool:
         """Check if a task still has phases to run."""
