@@ -676,7 +676,8 @@ class OrchestratorLoop:
         Auto-advance: if the diff is ≤10 lines and tests pass, skip HITL and
         advance directly to VERIFY — trivial changes don't need human review.
         """
-        is_hard_fail = "HARD_FAIL" in review.upper()
+        # Strict: only HARD_FAIL at the START of the review counts, not mid-sentence
+        is_hard_fail = review.upper().lstrip().startswith("HARD_FAIL")
 
         # ── Patch 1: Skip HITL for trivial changes ──────────────────────────
         # Trivial = ≤10 lines added, tests already passed (verified by the
@@ -1225,7 +1226,7 @@ class OrchestratorLoop:
             # DOCS: detected by prefix — but we only need to know it exists
             # (too many valid formats: "DOCS: NOT_NEEDED: ...", "DOCS: docs/X.md updated")
 
-        has_docs = any(l.strip().lower().startswith("docs") for l in result.splitlines())
+        has_docs = any(l.strip().lower().startswith("docs:") for l in result.splitlines())
         has_context = context_line is not None
 
         missing = []
@@ -1271,7 +1272,7 @@ class OrchestratorLoop:
         context_updated = ".techne/context" in ctx_lower and "not_needed" not in ctx_lower
         if context_updated:
             # SHA must appear ON THE CONTEXT LINE specifically
-            has_sha = bool(re.search(r"sha[:\s]+[0-9a-f]{7,40}", ctx_lower))
+            has_sha = bool(re.search(r"sha[:\s]+[0-9a-f]{40}", ctx_lower))
             if not has_sha:
                 return (
                     "CONCLUDE missing SHA proof. The CONTEXT line claims .techne/context "

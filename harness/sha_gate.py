@@ -53,7 +53,7 @@ def gate_test_output(
 
     lower = content.lower()
 
-    failure_patterns = ["npm err!", "error ts", "✗ failed", " failed "]
+    failure_patterns = ["npm err!", "error ts", "✗ failed", "FAILED ", " failure", " failed."]
     for pat in failure_patterns:
         if pat in lower:
             preview = content[:600].replace("\n", "↵ ")
