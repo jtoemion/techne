@@ -53,12 +53,13 @@ DEFAULT_DB = MEMORY_DIR / "rewards.db"
 
 # Reward component weights (sum = 1.0)
 WEIGHTS = {
-    "gate_pass": 0.25,
+    "gate_pass": 0.20,
     "test_pass": 0.25,
     "review_clean": 0.20,
     "critique_hit": 0.15,
-    "scope_clean": 0.10,
+    "scope_clean": 0.05,
     "attempt_efficiency": 0.05,
+    "gate_violations": 0.10,
 }
 
 
@@ -159,6 +160,7 @@ class RewardLog:
         scope_clean: bool,
         attempt_count: int,
         skill: str = "",
+        gate_violations: int = 0,
     ) -> Reward:
         """Record a reward. Computes composite score and cross-agent scores."""
         reward_id = _new_id()
@@ -175,6 +177,7 @@ class RewardLog:
             critique_accuracy=critique_acc,
             scope_clean=scope_clean,
             attempt_count=attempt_count,
+            gate_violations=gate_violations,
         )
 
         reward = Reward(
@@ -545,8 +548,14 @@ def _composite_score(
     critique_accuracy: float,
     scope_clean: bool,
     attempt_count: int,
+    gate_violations: int = 0,
 ) -> float:
-    """Weighted composite score (0-1)."""
+    """Weighted composite score (0-1).
+
+    The gate_violations penalty is applied multiplicatively to the weighted sum
+    of the other components. Each violation costs 15% (1 violation → 0.85,
+    2 → 0.70, 3 → 0.55, etc.). Records with 0 violations get penalty = 1.0.
+    """
     gate = 1.0 if gate_pass else 0.0
     test = 1.0 if test_pass else 0.0
     review = 1.0 if not review_findings else max(0.0, 1.0 - len(review_findings) * 0.2)
@@ -555,7 +564,10 @@ def _composite_score(
     # invariant holds even if a caller passes attempt_count < 1.
     attempts = max(0.0, min(1.0, 1.0 - (attempt_count - 1) * 0.25))
 
-    return (
+    # Each gate violation reduces the score by 15%; 0 violations = no penalty.
+    violation_penalty = max(0.0, 1.0 - gate_violations * 0.15)
+
+    weighted_sum = (
         WEIGHTS["gate_pass"] * gate +
         WEIGHTS["test_pass"] * test +
         WEIGHTS["review_clean"] * review +
@@ -563,6 +575,8 @@ def _composite_score(
         WEIGHTS["scope_clean"] * scope +
         WEIGHTS["attempt_efficiency"] * attempts
     )
+
+    return violation_penalty * weighted_sum
 
 
 def _critique_accuracy(predictions: list[str], findings: list[str]) -> float:

@@ -281,6 +281,50 @@ def test_backward_compatibility():
     os.remove(log.db_path)
 
 
+def test_gate_violations_penalty():
+    """Penalize recovered gate violations: 3 violations scores lower than 0."""
+    print("\n[gate_violations — penalty reduces composite score]")
+    log = _fresh_log()
+
+    # Perfect record except for gate_violations count
+    base_kwargs = dict(
+        task_type="auth",
+        prompt_variant="v1",
+        gate_pass=True,
+        test_pass=True,
+        review_findings=[],
+        critique_predictions=[],
+        scope_clean=True,
+        attempt_count=1,
+    )
+
+    # Record with no violations
+    r0 = log.record(**base_kwargs, task_id="t0", gate_violations=0)
+    # Record with 3 violations (should be 0.55x weighted_sum)
+    r3 = log.record(**base_kwargs, task_id="t3", gate_violations=3)
+
+    check("0 violations yields higher score than 3 violations", r0.composite_score > r3.composite_score)
+
+    # Verify the penalty math: 1 - 3*0.15 = 0.55
+    # weighted_sum = 0.20 + 0.25 + 0.20 + 0.15 + 0.05 + 0.05 = 0.90
+    # 0 violations: 1.0 * 0.90 = 0.90
+    # 3 violations: 0.55 * 0.90 = 0.495
+    check("0 violations score ≈ 0.90", abs(r0.composite_score - 0.90) < 0.001)
+    check("3 violations score ≈ 0.495", abs(r3.composite_score - 0.495) < 0.001)
+
+    # 1 violation = 0.85 penalty
+    r1 = log.record(**base_kwargs, task_id="t1", gate_violations=1)
+    check("1 violation score ≈ 0.765", abs(r1.composite_score - 0.765) < 0.001)
+
+    # Backward compat: gate_violations defaults to 0 when not passed
+    r_default = log.record(**base_kwargs, task_id="t_default", gate_violations=0)
+    check("default (no arg) gate_violations=0 yields full score",
+          abs(r_default.composite_score - 0.90) < 0.001)
+
+    log.close()
+    os.remove(log.db_path)
+
+
 # ── P4: skill field ────────────────────────────────────────────────────────
 
 
@@ -409,6 +453,7 @@ if __name__ == "__main__":
     test_compute_advantage_sequential_then_batch()
     test_repeated_compute_advantage()
     test_backward_compatibility()
+    test_gate_violations_penalty()
     # P4
     test_skill_field_in_reward_record()
     test_high_advantage_skills_groups_by_task_type_and_skill()

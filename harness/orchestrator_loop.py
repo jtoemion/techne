@@ -1053,6 +1053,7 @@ class OrchestratorLoop:
             critique_predictions=self._critique_predictions.get(task_id, []),
             scope_clean=self._scope_clean.get(task_id, False),  # real: focus/scope/intent
             attempt_count=max(1, task.attempt if task else 1),  # >=1: a terminal task ran at least once
+            gate_violations=self._gate_violations.get(task_id, 0),
         )
         # ── Patch 4: ensure .gitignore and prune artifacts on DONE ──────
         if task and task.status == "DONE":
