@@ -206,25 +206,6 @@ Subagents have a configurable timeout (default 600s, set via `delegation.task_ti
 3. **Revert and redo** — if the subagent was stuck (e.g., trying to fix a non-existent bug as in the stale closure case), revert all changes with `git checkout -- <files>` and either re-dispatch with tighter constraints or mark the bug as a false positive.
 4. **Prevention** — keep individual subagent tasks small enough to complete within timeout. A task that requires 50+ tool calls (reading many files, making many patches, running tests repeatedly) will likely time out. Break it into smaller tasks.
 
-## False-positive detection: when a reported bug doesn't actually exist
-
-Before fixing a bug, verify it exists by reading the code first. Some bugs reported by automated scans are false positives — the code may already have the fix but the reporter didn't notice.
-
-**InkForge stale-closure example (2026-06-21):**
-A bug was reported as "TipTapEditorWithAutosave flushSave captures stale sceneId — saves content to wrong scene after scene switch." But reading line 31-32 of the file showed:
-```typescript
-const sceneIdRef = useRef(sceneId);
-sceneIdRef.current = sceneId;
-```
-And line 52:
-```typescript
-const currentSceneId = sceneIdRef.current;
-```
-
-The fix was already in place. The bug report was wrong. If a subagent was dispatched to fix this, it would timeout trying to find a bug that doesn't exist.
-
-**Pattern:** Before dispatching a fix for any bug, read the affected code first. If the fix pattern (ref-based capture, dependency array, null guard) is already in place, mark the bug as a false positive and cancel the task. Do NOT dispatch a subagent to fix a non-bug — the subagent will spin on it and time out.
-
 ## Context hash tracking across batches
 
 After each batch of fixes, update `.techne/context/context_hash.txt`:
