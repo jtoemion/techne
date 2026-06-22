@@ -60,6 +60,33 @@ DATABASE ← DAL ← SERVICE ← (HTTP/SSE) ← HOOKS ← UI
 
 Cross-layer rule: never skip a layer. HOOKS talk to SERVICE via HTTP, not directly to DAL. UI never calls DAL directly.
 
+## Workspace-Aware Monorepo Slicing
+
+When the codebase is a monorepo with multiple workspaces (e.g., client/, server/, shared/), each workspace maps to the 5-layer architecture differently. One project workspace may cover multiple architectural layers.
+
+**InkForge example (client/ + server/ + shared/ monorepo):**
+
+| Workspace | Layers it contains |
+|-----------|-------------------|
+| **client/** | UI + HOOKS |
+| **server/** | SERVICE + DAL + DATABASE |
+| **shared/** | Shared types, constants — referenced by SERVICE and HOOKS |
+
+**Within client/:**
+| Directory | Layer | Responsibility |
+|-----------|-------|---------------|
+| `features/*.tsx`, `app/`, `main.tsx` | UI | Screens, components, routes |
+| `stores/`, `lib/apiClient.ts`, `lib/sseClient.ts` | HOOKS | State, data fetching, SSE |
+
+**Within server/:**
+| Directory | Layer | Responsibility |
+|-----------|-------|---------------|
+| `agents/`, `lib/` (llmService, contextPool, config, wordCount) | SERVICE | Business logic, AI agents |
+| `routes/` | DAL | HTTP handlers, CRUD, validation |
+| `db/schema.ts`, `db/migrator.ts` | DATABASE | Schema, migrations |
+
+**Bug triage rule of thumb:** When a bug involves client-side request paths, check both the client file (UI/HOOKS) AND the server route (DAL). API prefix mismatches (double /api, wrong path) often span the client/server boundary and belong to both the UI and DAL layers in the bug report.
+
 ## For the report summary
 
 ```
