@@ -752,3 +752,178 @@ class TestDetectSensitiveChange:
         assert is_sensitive is False
         assert matched == []
 
+
+# ── Mode-enforcement: _submit_implement returns FAILED on mismatch ──────────────
+
+class TestModeMismatchEnforcement:
+    """Mode mismatch in _submit_implement must produce FAILED, not BLOCK_HITL."""
+
+    def test_micro_mode_on_8line_diff_fails_task(self):
+        """micro mode with 8-line diff → task is FAILED, not BLOCK_HITL."""
+        import tempfile
+        import sys
+        from pathlib import Path
+
+        TESTS_DIR = Path(__file__).parent
+        ROOT = TESTS_DIR.parent
+        sys.path.insert(0, str(ROOT / "harness"))
+        sys.path.insert(0, str(TESTS_DIR))
+
+        from task_db import TaskDB
+        from orchestrator_loop import OrchestratorLoop, LoopAction
+
+        db = TaskDB(tempfile.NamedTemporaryFile(suffix=".db", delete=False).name)
+        loop = OrchestratorLoop(db)
+
+        # Create a task with micro mode
+        task = db.create_task(
+            "add comment to helper",
+            description="tiny change",
+            discipline="tdd",
+            tags=["test"],
+            phase_mode="micro",
+        )
+
+        # Simulate IMPLEMENT phase with an 8-line diff (too large for micro)
+        impl_diff = "\n".join(
+            f"+line{n}" for n in range(8)
+        )
+        full_diff = f"--- a/foo.py\n+++ b/foo.py\n@@ -1 +1,8 @@\n-# old\n{impl_diff}\n"
+
+        outcome = loop._submit_implement(task.id, full_diff)
+
+        # Must be FAILED, not BLOCK_HITL
+        assert outcome.action == LoopAction.FAILED, (
+            f"Expected FAILED but got {outcome.action.value}. "
+            "Mode mismatch must NOT offer 'continue anyway'."
+        )
+        assert "Mode mismatch" in outcome.message
+        assert "micro" in outcome.message or "full" in outcome.message.lower()
+        assert task.id == outcome.task_id
+
+    def test_full_mode_on_1line_comment_fails_task(self):
+        """full mode on 1-line comment → task is FAILED with suggested mode in message."""
+        import tempfile
+        import sys
+        from pathlib import Path
+
+        TESTS_DIR = Path(__file__).parent
+        ROOT = TESTS_DIR.parent
+        sys.path.insert(0, str(ROOT / "harness"))
+        sys.path.insert(0, str(TESTS_DIR))
+
+        from task_db import TaskDB
+        from orchestrator_loop import OrchestratorLoop, LoopAction
+
+        db = TaskDB(tempfile.NamedTemporaryFile(suffix=".db", delete=False).name)
+        loop = OrchestratorLoop(db)
+
+        # Create a task with full mode but a trivial diff
+        task = db.create_task(
+            "implement complex feature",
+            description="complex multi-file change",
+            discipline="tdd",
+            tags=["test"],
+            phase_mode="full",
+        )
+        # Mark RECALL complete so _submit_implement reaches the mode-mismatch check
+        # For "full" mode, RECALL artifact must include "workshop_context:"
+        loop.enforcer.mark_complete(
+            task.id, "RECALL", agent="test", summary="ok",
+            findings="WORKSHOP_CONTEXT: some workshop artifact",
+        )
+
+        # Simulate IMPLEMENT phase with a 1-line comment diff (trivial for full)
+        trivial_diff = "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1,2 @@\n-# old\n+# new comment\n"
+
+        outcome = loop._submit_implement(task.id, trivial_diff)
+
+        # Must be FAILED
+        assert outcome.action == LoopAction.FAILED, (
+            f"Expected FAILED but got {outcome.action.value}. "
+            "Mode mismatch must NOT offer 'continue anyway'."
+        )
+        # Message must mention the suggested mode
+        assert "micro" in outcome.message, (
+            f"Message should suggest 'micro' but got: {outcome.message}"
+        )
+        assert "Re-create" in outcome.message or "phase_mode" in outcome.message, (
+            f"Message should instruct to re-create with correct mode: {outcome.message}"
+        )
+
+    def test_mode_mismatch_does_not_set_options(self):
+        """FAILED outcome for mode mismatch must NOT offer options (no 'continue anyway')."""
+        import tempfile
+        import sys
+        from pathlib import Path
+
+        TESTS_DIR = Path(__file__).parent
+        ROOT = TESTS_DIR.parent
+        sys.path.insert(0, str(ROOT / "harness"))
+        sys.path.insert(0, str(TESTS_DIR))
+
+        from task_db import TaskDB
+        from orchestrator_loop import OrchestratorLoop, LoopAction
+
+        db = TaskDB(tempfile.NamedTemporaryFile(suffix=".db", delete=False).name)
+        loop = OrchestratorLoop(db)
+
+        task = db.create_task("tiny fix", description="", discipline="tdd", tags=["test"],
+                               phase_mode="micro")
+
+        # 8-line diff triggers mode mismatch
+        large_diff = "\n".join(f"+line{n}" for n in range(8))
+        full_diff = f"--- a/foo.py\n+++ b/foo.py\n@@ -1 +1,8 @@\n-# old\n{large_diff}\n"
+
+        outcome = loop._submit_implement(task.id, full_diff)
+
+        # Must be FAILED with no options
+        assert outcome.action == LoopAction.FAILED
+        # No options allowed — the whole point is no bypass
+        assert outcome.options is None, (
+            f"Mode mismatch FAILED must not have options, but got: {outcome.options}"
+        )
+        assert outcome.question == "", (
+            "Mode mismatch FAILED must not have a HITL question"
+        )
+
+    def test_mode_mismatch_still_logs_override(self, tmp_path, monkeypatch):
+        """Override is still logged even though the outcome is now FAILED."""
+        import pipeline_enforcer
+        import tempfile
+        import sys
+        from pathlib import Path
+
+        TESTS_DIR = Path(__file__).parent
+        ROOT = TESTS_DIR.parent
+        sys.path.insert(0, str(ROOT / "harness"))
+        sys.path.insert(0, str(TESTS_DIR))
+
+        monkeypatch.setattr(pipeline_enforcer, "OVERRIDES_LOG", tmp_path / "mode_overrides.log")
+        monkeypatch.setattr(pipeline_enforcer, "_MAX_LOG_LINES", 1000)
+
+        from task_db import TaskDB
+        from orchestrator_loop import OrchestratorLoop, LoopAction
+
+        db = TaskDB(tempfile.NamedTemporaryFile(suffix=".db", delete=False).name)
+        loop = OrchestratorLoop(db)
+
+        task = db.create_task("tiny fix", description="", discipline="tdd", tags=["test"],
+                               phase_mode="micro")
+
+        large_diff = "\n".join(f"+line{n}" for n in range(8))
+        full_diff = f"--- a/foo.py\n+++ b/foo.py\n@@ -1 +1,8 @@\n-# old\n{large_diff}\n"
+
+        outcome = loop._submit_implement(task.id, full_diff)
+
+        assert outcome.action == LoopAction.FAILED
+
+        # Override should still be logged
+        log_file = tmp_path / "mode_overrides.log"
+        assert log_file.exists(), "Override should still be logged even with FAILED outcome"
+        import json
+        content = log_file.read_text()
+        entries = [json.loads(line) for line in content.strip().split("\n") if line]
+        assert any(e["task_id"] == task.id and e["chosen_mode"] == "micro" and e["suggested_mode"] == "full"
+                   for e in entries), "Override telemetry should record the mismatch"
+

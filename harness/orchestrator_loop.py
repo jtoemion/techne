@@ -468,14 +468,11 @@ class OrchestratorLoop:
                 suggested,
                 diff_stats,
             )
-            suggestion = f" Suggested: {suggested}" if suggested else ""
             outcome = LoopOutcome(
-                action=LoopAction.BLOCK_HITL,
+                action=LoopAction.FAILED,
                 phase="IMPLEMENT",
                 task_id=task_id,
-                message=f"(!) Mode mismatch: {reason}.{suggestion}",
-                question=f"Phase mode '{task.phase_mode if task else 'full'}' mismatch — {reason}. Use {suggested} mode instead?",
-                options=[suggested, "continue anyway"],
+                message=f"Mode mismatch: {reason}. Task FAILED. Re-create with phase_mode='{suggested}'.",
             )
             self._print_phase_summary("IMPLEMENT", task_id, outcome)
             return outcome
