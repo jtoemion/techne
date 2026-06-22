@@ -73,7 +73,8 @@ For the full 10-phase pipeline implementation details, context injection pattern
 - `docs/host-integration-guide.md` — **mandatory reading for the host agent**. Operational contract covering install, the mandatory pipeline, Receptionist dispatch protocol, and quick reference card. Read before doing any work through Techne.
 - `references/orchestrator-pipeline-fixes.md`
 - `references/orchestrator-recall-workshop-contract.md` — structured RECALL output contract, workshop retrieval packet, agent mappings, phase_mode propagation
-- `references/web-runtime-blank-page-debugging.md`
+- `references/file-authorship-convention.md` — don't overwrite existing docs, create separate files
+- `references/improve-architecture-pitfalls.md` — post-bug-hunt sequencing, YAGNI assessment, candidate format
 - `references/convex-array-membership-queries.md` — safe pattern for learner/evidence membership queries
 - `references/maintainability-audit-context-refresh.md` — repo re-exploration + context refresh workflow for long-term maintainability audits
 
