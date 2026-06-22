@@ -72,6 +72,7 @@ PHASES = [
     "CONTEXT_GUARD",
     "CRITIQUE",
     "REVIEW",
+    "APPROVAL",
     "VERIFY",
     "EVAL",
     "RETRO",
@@ -92,6 +93,7 @@ TRANSITIONS = {
     "CONTEXT_GUARD":["CRITIQUE", "BLOCKED", "FAILED"],       # audit done → critique, or fail
     "CRITIQUE":     ["REVIEW", "BLOCKED", "FAILED"],         # critique done → review, or fail
     "REVIEW":       ["VERIFY", "BLOCKED", "IMPLEMENT", "FAILED"],  # review: pass→verify, hardfail→re-implement
+    "APPROVAL":     ["VERIFY", "BLOCKED", "IMPLEMENT", "FAILED"],  # approval: approve→verify, reject→failed, modify→re-implement
     "VERIFY":       ["EVAL", "BLOCKED", "IMPLEMENT", "FAILED"],    # verify: pass→eval(score), fail→re-implement
     "EVAL":         ["RETRO", "FAILED"],                     # deterministic 100-pt score → reflect
     "RETRO":        ["CONCLUDE", "FAILED"],                  # reflect on the score → conclude
@@ -101,6 +103,27 @@ TRANSITIONS = {
     "FAILED":       [],                                      # terminal
 }
 
+# Heavy-mode transitions: full pipeline with APPROVAL HITL between REVIEW and VERIFY
+HEAVY_TRANSITIONS = {
+    None:           ["RECALL"],
+    "PENDING":      ["RECALL"],
+    "BLOCKED":      ["IMPLEMENT", "DEBUG", "VERIFY", "REVIEW", "APPROVAL", "EVAL"],
+    "DEBUG":        ["IMPLEMENT"],
+    "RECALL":       ["IMPLEMENT", "BLOCKED", "FAILED"],
+    "IMPLEMENT":    ["CONTEXT_GUARD", "BLOCKED", "FAILED"],
+    "CONTEXT_GUARD":["CRITIQUE", "BLOCKED", "FAILED"],
+    "CRITIQUE":     ["REVIEW", "BLOCKED", "FAILED"],
+    "REVIEW":       ["APPROVAL", "BLOCKED", "IMPLEMENT", "FAILED"],  # review → APPROVAL (not directly to VERIFY)
+    "APPROVAL":     ["VERIFY", "BLOCKED", "IMPLEMENT", "FAILED"],    # approval: approve→verify, reject→failed, modify→re-implement
+    "VERIFY":       ["EVAL", "BLOCKED", "IMPLEMENT", "FAILED"],
+    "EVAL":         ["RETRO", "FAILED"],
+    "RETRO":        ["CONCLUDE", "FAILED"],
+    "CONCLUDE":     ["REFRESH_CONTEXT", "FAILED"],
+    "REFRESH_CONTEXT": ["DONE", "FAILED"],
+    "DONE":         [],
+    "FAILED":       [],
+}
+
 # Human-readable phase descriptions (for subagent prompts)
 PHASE_DESCRIPTIONS = {
     "RECALL": "Recall durable context from Honcho for this task title and tags. Run honcho_search or honcho_context and return the excerpts.",
@@ -108,6 +131,7 @@ PHASE_DESCRIPTIONS = {
     "CONTEXT_GUARD": "Scan changes, record audit trail (file inventory, scope check)",
     "CRITIQUE": "Predict emergent bugs from the implementation diff",
     "REVIEW": "Security/correctness/gate compliance review",
+    "APPROVAL": "Human approval required for sensitive changes (auth/billing/data migration). Review changes and approve, reject, or request modifications.",
     "VERIFY": "Run tests, capture real output",
     "EVAL": "Score the run deterministically (100-point eval report)",
     "RETRO": "Reflect on the run — lessons, recurrence, skill-edit proposals",
@@ -133,11 +157,19 @@ _FAST_KEYWORDS = frozenset([
     "document", "readme", "comment", "typo",
 ])
 
+# HEAVY-mode keywords — sensitive changes that require explicit human approval
+_HEAVY_KEYWORDS = frozenset([
+    "auth", "billing", "payment", "migration",
+    "password", "role", "permission", "credential",
+    "secret", "token",
+])
+
 # Per-mode cost estimates (agent API calls per task)
 _MODE_COST_ESTIMATES = {
-    "micro": {"api_calls": 4, "notes": "IMPLEMENT → CONTEXT_GUARD → VERIFY → EVAL"},
+    "micro": {"api_calls": 4, "notes": "IMPLEMENT → CG → VERIFY → EVAL"},
     "fast": {"api_calls": 7, "notes": "IMPLEMENT → CG → CRITIQUE → REVIEW → VERIFY → EVAL → RETRO"},
     "full": {"api_calls": 11, "notes": "RECALL → IMPLEMENT → CG → CRITIQUE → REVIEW → VERIFY → EVAL → RETRO → CONCLUDE → REFRESH → DONE"},
+    "heavy": {"api_calls": 12, "notes": "RECALL → IMPLEMENT → CG → CRITIQUE → REVIEW → APPROVAL → VERIFY → EVAL → RETRO → CONCLUDE → REFRESH → DONE"},
 }
 
 
@@ -457,14 +489,21 @@ def classify_phase_mode(title: str, description: str = "", diff_text: str = "") 
       (if, for, while, switch, function, class, import, export, return, async, await, try, catch)
     - FAST: Task is review-only, audit-only, verification-only, or documentation-only
       (keywords: review, audit, verify, check, inspect, document, README, comment, typo in title)
+    - HEAVY: Sensitive changes — auth, billing, payment, migration, password, role, permission,
+      credential, secret, token (in title or description) — requires explicit human approval
     - FULL: Everything else — code changes with logic, multi-file, complex work
     """
     combined = f"{title} {description}".lower()
 
-    # Check fast-mode indicators
+    # Check fast-mode indicators first
     for kw in _FAST_KEYWORDS:
         if kw in combined:
             return "fast"
+
+    # Check heavy-mode (sensitive) indicators — overrides other modes
+    for kw in _HEAVY_KEYWORDS:
+        if kw in combined:
+            return "heavy"
 
     # If no diff to analyze yet, default to full
     if not diff_text or not diff_text.strip():
@@ -505,6 +544,37 @@ def classify_phase_mode(title: str, description: str = "", diff_text: str = "") 
         return "micro"
 
     return "full"
+
+
+def detect_sensitive_change(files_changed: list[str], diff_text: str = "") -> tuple[bool, list[str]]:
+    """Detect if a change touches sensitive files/subsystems.
+
+    Returns (is_sensitive, matched_files) where matched_files lists the
+    files from files_changed that match heavy keywords (in filename or path).
+    """
+    matched: list[str] = []
+    diff_lower = diff_text.lower() if diff_text else ""
+
+    for f in files_changed:
+        f_lower = f.lower()
+        for kw in _HEAVY_KEYWORDS:
+            if kw in f_lower:
+                matched.append(f)
+                break
+
+    # Also check diff content for heavy keywords in changed file names
+    if diff_text:
+        for l in diff_text.splitlines():
+            if l.startswith("+++ b/") or l.startswith("--- a/"):
+                path = l[6:].strip()
+                if path:
+                    for kw in _HEAVY_KEYWORDS:
+                        if kw in path.lower():
+                            if path not in matched:
+                                matched.append(path)
+                            break
+
+    return bool(matched), matched
 
 
 def _compute_diff_stats(diff_text: str) -> dict:
@@ -883,6 +953,12 @@ class PipelineEnforcer:
                 findings=findings, mistakes_found=mistakes_found,
             )
             self._overwrite_last_action(task_id, "REVIEW")
+        elif phase == "APPROVAL":
+            self.db._log_event(
+                task_id, agent, "APPROVAL", summary[:200],
+                findings=findings, verdict=verdict,
+            )
+            self._overwrite_last_action(task_id, "APPROVAL")
         elif phase == "VERIFY":
             self.db.verify_task(
                 task_id, agent=agent,

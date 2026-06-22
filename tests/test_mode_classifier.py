@@ -9,7 +9,7 @@ import sys, os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "harness"))
 
-from pipeline_enforcer import classify_phase_mode, validate_mode_fit, get_cost_estimate
+from pipeline_enforcer import classify_phase_mode, validate_mode_fit, get_cost_estimate, detect_sensitive_change
 
 
 # ── classify_phase_mode tests ─────────────────────────────────────────────────
@@ -93,6 +93,26 @@ class TestClassifyPhaseMode:
     def test_full_no_diff_defaults_full(self):
         """No diff provided, no fast keywords → full"""
         assert classify_phase_mode("build new feature", "add a new module", "") == "full"
+
+    def test_classify_phase_mode_recommends_heavy_for_auth(self):
+        """Task with 'auth' in title → heavy"""
+        assert classify_phase_mode("add auth middleware", "", "") == "heavy"
+
+    def test_classify_phase_mode_recommends_heavy_for_migration(self):
+        """Task with 'migration' in title → heavy"""
+        assert classify_phase_mode("run data migration", "", "") == "heavy"
+
+    def test_classify_phase_mode_heavy_for_billing(self):
+        """Task with 'billing' in title → heavy"""
+        assert classify_phase_mode("update billing module", "", "") == "heavy"
+
+    def test_classify_phase_mode_heavy_for_token(self):
+        """Task with 'token' in description → heavy"""
+        assert classify_phase_mode("add refresh token", "add token handling", "") == "heavy"
+
+    def test_classify_phase_mode_heavy_in_description(self):
+        """Heavy keyword in description → heavy"""
+        assert classify_phase_mode("fix bug", "changes to auth module", "") == "heavy"
 
 
 # ── validate_mode_fit tests ───────────────────────────────────────────────────
@@ -207,6 +227,12 @@ class TestGetCostEstimate:
         result = get_cost_estimate("full")
         assert result["api_calls"] == 11
         assert "RECALL" in result["notes"]
+
+    def test_heavy_cost(self):
+        """heavy → 12 API calls (full + 1 APPROVAL)"""
+        result = get_cost_estimate("heavy")
+        assert result["api_calls"] == 12
+        assert "APPROVAL" in result["notes"]
 
     def test_unknown_mode_returns_full(self):
         """unknown mode → defaults to full estimate"""
@@ -620,3 +646,56 @@ class TestAnalyzeOverridePatterns:
         insights = loop.get_learning_insights(threshold=3)
         assert len(insights) > 0
         assert any("relax" in s.lower() for s in insights)
+
+
+# ── detect_sensitive_change tests ─────────────────────────────────────────────
+
+class TestDetectSensitiveChange:
+    def test_detect_auth_in_filename(self):
+        """Files with 'auth' in path → sensitive"""
+        files = ["src/auth/login.py", "lib/auth.py"]
+        is_sensitive, matched = detect_sensitive_change(files, "")
+        assert is_sensitive is True
+        assert len(matched) > 0
+        assert all("auth" in f for f in matched)
+
+    def test_detect_billing_in_filename(self):
+        """Files with 'billing' in path → sensitive"""
+        files = ["src/billing/stripe.py", "payments.py"]
+        is_sensitive, matched = detect_sensitive_change(files, "")
+        assert is_sensitive is True
+        assert any("billing" in f for f in matched)
+
+    def test_detect_migration_in_filename(self):
+        """Files with 'migration' in path → sensitive"""
+        files = ["db/migrate.py", "migrations/001_add_users.py"]
+        is_sensitive, matched = detect_sensitive_change(files, "")
+        assert is_sensitive is True
+        assert any("migration" in f for f in matched)
+
+    def test_detect_password_in_filename(self):
+        """Files with 'password' in path → sensitive"""
+        files = ["config.py", "passwords.py"]
+        is_sensitive, matched = detect_sensitive_change(files, "")
+        assert is_sensitive is True
+
+    def test_detect_ignore_normal_files(self):
+        """Normal files (README, .md) → not sensitive"""
+        files = ["README.md", "docs/guide.md", "tests/test_foo.py"]
+        is_sensitive, matched = detect_sensitive_change(files, "")
+        assert is_sensitive is False
+        assert matched == []
+
+    def test_detect_multiple_sensitive_keywords(self):
+        """Multiple keywords matched → all returned"""
+        files = ["auth/token.py", "billing/payment.py", "db/migration.py"]
+        is_sensitive, matched = detect_sensitive_change(files, "")
+        assert is_sensitive is True
+        assert len(matched) >= 2
+
+    def test_detect_sensitive_change_empty_inputs(self):
+        """Empty files and diff → not sensitive"""
+        is_sensitive, matched = detect_sensitive_change([], "")
+        assert is_sensitive is False
+        assert matched == []
+

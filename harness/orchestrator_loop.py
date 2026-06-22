@@ -59,7 +59,7 @@ from pathlib import Path
 from typing import Optional
 
 from task_db import TaskDB
-from pipeline_enforcer import PipelineEnforcer, PHASE_DESCRIPTIONS, classify_phase_mode, validate_mode_fit, get_cost_estimate, _log_mode_override, _compute_diff_stats
+from pipeline_enforcer import PipelineEnforcer, PHASE_DESCRIPTIONS, classify_phase_mode, validate_mode_fit, get_cost_estimate, _log_mode_override, _compute_diff_stats, detect_sensitive_change
 from reward_log import RewardLog
 from prompt_evolution import PromptEvolution
 from gate_evolution import GateEvolution
@@ -153,7 +153,8 @@ class OrchestratorLoop:
         micro_cost = get_cost_estimate("micro")["api_calls"]
         fast_cost = get_cost_estimate("fast")["api_calls"]
         full_cost = get_cost_estimate("full")["api_calls"]
-        return f"Recommended: {mode} ({cost['api_calls']} API calls) — micro (4) vs fast (7) vs full (11)"
+        heavy_cost = get_cost_estimate("heavy")["api_calls"]
+        return f"Recommended: {mode} ({cost['api_calls']} API calls) — micro ({micro_cost}) vs fast ({fast_cost}) vs full ({full_cost}) vs heavy ({heavy_cost})"
 
     def has_work(self, task_id: str) -> bool:
         """Check if a task still has phases to run."""
@@ -238,6 +239,15 @@ class OrchestratorLoop:
             if last in ("DONE", "FAILED"):
                 return last
 
+        # For heavy mode: REVIEW → APPROVAL → VERIFY (human approval before verify)
+        # Uses standard full pipeline but inserts APPROVAL between REVIEW and VERIFY
+        if phase_mode == "heavy":
+            HEAVY_NEXT = {
+                "REVIEW": "APPROVAL",
+            }
+            if last in HEAVY_NEXT:
+                return HEAVY_NEXT[last]
+
         try:
             return PHASES[PHASES.index(last) + 1]
         except (ValueError, IndexError):
@@ -290,6 +300,8 @@ class OrchestratorLoop:
             return self._submit_conclude(task_id, result)
         elif phase == "REFRESH_CONTEXT":
             return self._submit_refresh_context(task_id, result)
+        elif phase == "APPROVAL":
+            return self._submit_approval(task_id, result)
         elif phase == "DEBUG":
             return self._submit_debug(task_id, result)
         else:
@@ -696,12 +708,83 @@ class OrchestratorLoop:
         self._review_result[task_id] = review_verdict
         # Record review findings for cross-agent scoring
         self._review_findings[task_id] = _extract_findings(review)
-        outcome = LoopOutcome(
-            action=LoopAction.RUN_PHASE, phase="VERIFY", task_id=task_id,
-            message="Review passed — advancing to verify",
-        )
+        # Heavy mode: after REVIEW, require explicit APPROVAL before VERIFY
+        task = self.db.get_task(task_id)
+        if task and task.phase_mode == "heavy":
+            outcome = LoopOutcome(
+                action=LoopAction.BLOCK_HITL, phase="APPROVAL", task_id=task_id,
+                question=f"Task passed REVIEW but requires approval before verification. Changes touch sensitive files. Approve to proceed to VERIFY?",
+                options=["approve", "reject", "modify"],
+            )
+        else:
+            outcome = LoopOutcome(
+                action=LoopAction.RUN_PHASE, phase="VERIFY", task_id=task_id,
+                message="Review passed — advancing to verify",
+            )
         self._print_phase_summary("REVIEW", task_id, outcome)
         return outcome
+
+    def _submit_approval(self, task_id: str, approval_text: str) -> LoopOutcome:
+        """Process APPROVAL phase: approve → VERIFY, reject → FAILED, modify → IMPLEMENT.
+
+        The approval_text is the human/policy decision. Options are:
+          - "approve" (or contains "approve") → advance to VERIFY
+          - "reject" (or contains "reject") → mark FAILED
+          - "modify" (or contains "modify") → reset to IMPLEMENT for rework
+        """
+        task = self.db.get_task(task_id)
+        d = approval_text.lower()
+
+        if "approve" in d:
+            # Build approval question with sensitive files context
+            diff = self._diff.get(task_id, "")
+            changed_files = self._extract_files(diff)
+            is_sensitive, sensitive_files = detect_sensitive_change(changed_files, diff)
+            files_str = ", ".join(sensitive_files) if sensitive_files else "sensitive changes"
+            self.enforcer.mark_complete(
+                task_id, "APPROVAL",
+                agent="human",
+                summary=f"Approved: {approval_text[:100]}",
+                findings=f"Approved sensitive changes: {files_str}",
+            )
+            outcome = LoopOutcome(
+                action=LoopAction.RUN_PHASE, phase="VERIFY", task_id=task_id,
+                message=f"Approval granted — advancing to verify",
+            )
+            self._print_phase_summary("APPROVAL", task_id, outcome)
+            return outcome
+
+        elif "reject" in d:
+            self.enforcer.mark_complete(
+                task_id, "APPROVAL",
+                agent="human",
+                summary=f"Rejected: {approval_text[:100]}",
+                findings=f"Rejected sensitive change",
+            )
+            self.enforcer.fail(task_id, agent="human", reason=f"Approval rejected: {approval_text[:200]}")
+            outcome = LoopOutcome(
+                action=LoopAction.FAILED, phase="FAILED", task_id=task_id,
+                message=f"Approval rejected — task failed",
+            )
+            self._print_phase_summary("APPROVAL", task_id, outcome)
+            return outcome
+
+        else:
+            # "modify" or any other decision → reset to IMPLEMENT for rework
+            self.enforcer.mark_complete(
+                task_id, "APPROVAL",
+                agent="human",
+                summary=f"Modification requested: {approval_text[:100]}",
+                findings=f"Human requested modifications before approval",
+            )
+            # Reset to PENDING so IMPLEMENT can be re-run
+            self.db.reset_task(task_id, to_status="PENDING")
+            outcome = LoopOutcome(
+                action=LoopAction.RUN_PHASE, phase="IMPLEMENT", task_id=task_id,
+                message="Modification requested — returning to implement for rework",
+            )
+            self._print_phase_summary("APPROVAL", task_id, outcome)
+            return outcome
 
     def _submit_verify(self, task_id: str, test_output: str) -> LoopOutcome:
         """Process test output. Done if the SHA gate passes, retry/escalate if not."""
