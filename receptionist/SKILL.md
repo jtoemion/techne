@@ -37,6 +37,7 @@ INTAKE → CLASSIFY → PLAN → TICKET → DISPATCH → VERIFY REPORT → UPDAT
 > for a reproducible-failure fix). Both produce a diff, both go through the full
 > pipeline — no carve-out.**
 
+- The `/techne` command (commands/techne.toml) is the explicit invocation of this rule — use it to dispatch any task directly through the RECALL→DONE pipeline.
 - EXPLORE runs first, automatically followed by IMPLEMENT in the same turn, **only** when the host doesn't have enough context to write the ticket itself.
 - SCOUT applies the same way, for external/API unfamiliarity.
 - The only work that stays outside Techne's pipeline entirely is read-only analysis, research, or planning that will never produce a diff.

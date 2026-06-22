@@ -1,0 +1,2 @@
+description = "Run the current task through Techne's enforced pipeline (RECALL through DONE), with per-phase summaries and a completion indicator."
+prompt = "Run this task through Techne: {{args}}. Dispatch via delegate_task with MODE: IMPLEMENT (set FIX_OF if this is a fix, per docs/plans/techne-build-guide-patch-001.md §P5.1). Every phase prints a one-line [PHASE_NAME] summary. If the pipeline doesn't reach DONE, print the completion indicator showing exactly what finished and what didn't."

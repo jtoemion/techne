@@ -214,7 +214,13 @@ The Receptionist dispatches in exactly three modes:
 subagent's report must then additionally include: root cause statement, the
 specific failure being fixed, and regression risk note. Omit for net-new work.
 
-### 4.4 ReceptionistEnforcer gates
+### 4.4 `/techne` — explicit pipeline dispatch
+
+Use the `/techne` command (commands/techne.toml) to invoke the full RECALL→DONE
+pipeline directly for any task. It is the explicit form of the automatic
+dispatch rule in §2.1.
+
+### 4.5 ReceptionistEnforcer gates
 
 `harness/receptionist_enforcer.py` (docs/plans/) enforces Receptionist protocol
 rules mechanically — mode exclusivity, one-retry-max, verify-before-close,

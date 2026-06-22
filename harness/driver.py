@@ -155,17 +155,21 @@ def _drive_task(loop, task, model: ModelFn, run_tests: TestFn, on_hitl, max_step
             on_submit(task, phase, outcome)
         action = outcome.action
         if action == LoopAction.DONE:
+            print(loop.summarize_incomplete(tid))
             return TaskRun(tid, task.title, "DONE")
         if action == LoopAction.FAILED:
+            print(loop.summarize_incomplete(tid))
             return TaskRun(tid, task.title, "FAILED", outcome.message)
         if action == LoopAction.BLOCK_HITL:
             if on_hitl is None:                        # no human → stop this task safely
+                print(loop.summarize_incomplete(tid))
                 return TaskRun(tid, task.title, "BLOCKED", outcome.question, outcome.options)
             loop.unblock(tid, on_hitl(outcome))        # human/policy decided → resume
             phase = loop.next_phase(tid)               # resume at the correct phase
             continue
         # RUN_PHASE / RETRY (/ ESCALATE) → the handler set the next phase to run
         phase = outcome.phase
+    print(loop.summarize_incomplete(tid))
     return TaskRun(tid, task.title, "HALTED", f"exceeded {max_steps} steps")
 
 

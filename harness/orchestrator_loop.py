@@ -310,6 +310,14 @@ class OrchestratorLoop:
         """Human-readable summary of all task states."""
         return self.enforcer.dashboard()
 
+    # ── Phase summary printer ─────────────────────────────────────────────
+
+    def _print_phase_summary(self, phase: str, task_id: str, outcome: LoopOutcome) -> None:
+        """Print a one-line per-phase summary with bracketed phase tag and (!) for non-clean outcomes."""
+        CLEAN_ACTIONS = {LoopAction.RUN_PHASE, LoopAction.DONE}
+        marker = " (!)" if outcome.action not in CLEAN_ACTIONS else ""
+        print(f"[{phase}]{marker} {outcome.message} -> {outcome.action.value.upper()}")
+
     # ── Phase submission handlers ────────────────────────────────────────
 
     def _submit_recall(self, task_id: str, result: str) -> LoopOutcome:
@@ -320,34 +328,40 @@ class OrchestratorLoop:
         """
         task = self.db.get_task(task_id)
         if not result or len(result.strip()) < 20:
-            return LoopOutcome(
+            outcome = LoopOutcome(
                 action=LoopAction.RETRY, phase="RECALL", task_id=task_id,
                 message=(
                     "RECALL produced no usable context. Include HONCHO_CONTEXT and "
                     "WORKSHOP_CONTEXT lines backed by real recall output."
                 ),
             )
+            self._print_phase_summary("RECALL", task_id, outcome)
+            return outcome
 
         recall_lower = result.lower()
         conclusion_id = check_honcho_logged()
         has_honcho = conclusion_id is not None
         has_workshop = "workshop_context:" in recall_lower
         if not has_honcho:
-            return LoopOutcome(
+            outcome = LoopOutcome(
                 action=LoopAction.RETRY, phase="RECALL", task_id=task_id,
                 message=(
                     "RECALL missing HONCHO_CONTEXT line. Return structured proof like "
                     "'HONCHO_CONTEXT: <durable context>'."
                 ),
             )
+            self._print_phase_summary("RECALL", task_id, outcome)
+            return outcome
         if task and task.phase_mode != "fast" and not has_workshop:
-            return LoopOutcome(
+            outcome = LoopOutcome(
                 action=LoopAction.RETRY, phase="RECALL", task_id=task_id,
                 message=(
                     "RECALL missing WORKSHOP_CONTEXT line. Run the workshop retrieval "
                     "packet and name the context docs/files you used."
                 ),
             )
+            self._print_phase_summary("RECALL", task_id, outcome)
+            return outcome
 
         self.enforcer.mark_complete(
             task_id, "RECALL",
@@ -356,10 +370,12 @@ class OrchestratorLoop:
             findings=result,
         )
 
-        return LoopOutcome(
+        outcome = LoopOutcome(
             action=LoopAction.RUN_PHASE, phase="IMPLEMENT", task_id=task_id,
             message="Context recalled — advancing to implement",
         )
+        self._print_phase_summary("RECALL", task_id, outcome)
+        return outcome
 
     def _submit_implement(self, task_id: str, diff: str) -> LoopOutcome:
         """Process implementer output. Check gates, retry or advance."""
@@ -370,21 +386,25 @@ class OrchestratorLoop:
         history = self.db.get_task_history(task_id)
         has_recall = any(e.action == "RECALL" for e in history)
         if not has_recall and (task and task.phase_mode not in ("fast", "micro")):
-            return LoopOutcome(
+            outcome = LoopOutcome(
                 action=LoopAction.RETRY, phase="IMPLEMENT", task_id=task_id,
                 message="RECALL phase required: run honcho_search or honcho_context first to recall durable context.",
             )
+            self._print_phase_summary("IMPLEMENT", task_id, outcome)
+            return outcome
         if task and task.phase_mode not in ("fast", "micro"):
             latest_recall = next((e for e in reversed(history) if e.action == "RECALL"), None)
             recall_findings = (latest_recall.findings if latest_recall else "") or ""
             if "workshop_context:" not in recall_findings.lower():
-                return LoopOutcome(
+                outcome = LoopOutcome(
                     action=LoopAction.RETRY, phase="IMPLEMENT", task_id=task_id,
                     message=(
                         "IMPLEMENT blocked: latest RECALL artifact does not reference "
                         "WORKSHOP_CONTEXT. Re-run RECALL with the workshop retrieval packet first."
                     ),
                 )
+                self._print_phase_summary("IMPLEMENT", task_id, outcome)
+                return outcome
 
         # Check if the result looks like a valid diff
         has_diff = bool(diff.strip()) and ("@@ " in diff or "--- " in diff)
@@ -422,10 +442,12 @@ class OrchestratorLoop:
         )
         self._impl_retry_counts[task_id] = 0
 
-        return LoopOutcome(
+        outcome = LoopOutcome(
             action=LoopAction.RUN_PHASE, phase="CONTEXT_GUARD", task_id=task_id,
             message="Implementation complete — advancing to context-guard",
         )
+        self._print_phase_summary("IMPLEMENT", task_id, outcome)
+        return outcome
 
     def _submit_context_guard(self, task_id: str, audit: str) -> LoopOutcome:
         """Process context-guard output. Validate punch list, then advance.
@@ -442,7 +464,7 @@ class OrchestratorLoop:
             or ("docs:" in audit_lower and ("context" in audit_lower or "not_needed" in audit_lower))
         )
         if not has_punch_list:
-            return LoopOutcome(
+            outcome = LoopOutcome(
                 action=LoopAction.RETRY, phase="CONTEXT_GUARD", task_id=task_id,
                 message=(
                     "CONTEXT_GUARD output missing CONCLUDE PUNCH LIST. "
@@ -451,6 +473,8 @@ class OrchestratorLoop:
                     "This is required — CONCLOSE cannot close without it."
                 ),
             )
+            self._print_phase_summary("CONTEXT_GUARD", task_id, outcome)
+            return outcome
 
         self.enforcer.mark_complete(
             task_id, "CONTEXT_GUARD",
@@ -461,14 +485,18 @@ class OrchestratorLoop:
         # Micro mode: skip CRITIQUE and REVIEW — go directly to VERIFY
         task = self.db.get_task(task_id)
         if task and task.phase_mode == "micro":
-            return LoopOutcome(
+            outcome = LoopOutcome(
                 action=LoopAction.RUN_PHASE, phase="VERIFY", task_id=task_id,
                 message="Audit complete — advancing to verify (micro mode)",
             )
-        return LoopOutcome(
+            self._print_phase_summary("CONTEXT_GUARD", task_id, outcome)
+            return outcome
+        outcome = LoopOutcome(
             action=LoopAction.RUN_PHASE, phase="CRITIQUE", task_id=task_id,
             message="Audit complete — advancing to critique",
         )
+        self._print_phase_summary("CONTEXT_GUARD", task_id, outcome)
+        return outcome
 
     def _submit_debug(self, task_id: str, diff: str) -> LoopOutcome:
         """A debugger session produced a corrected implementation. Reset to a fresh
@@ -510,7 +538,7 @@ class OrchestratorLoop:
                 ],
                 context=critique[:500],
             )
-            return LoopOutcome(
+            outcome = LoopOutcome(
                 action=LoopAction.BLOCK_HITL, phase="CRITIQUE", task_id=task_id,
                 question=f"CRITICAL issue found: {critical_line[:150]}",
                 options=[
@@ -519,6 +547,8 @@ class OrchestratorLoop:
                     "Block and re-implement",
                 ],
             )
+            self._print_phase_summary("CRITIQUE", task_id, outcome)
+            return outcome
 
         self.enforcer.mark_complete(
             task_id, "CRITIQUE",
@@ -531,10 +561,12 @@ class OrchestratorLoop:
         self._critique_predictions[task_id] = _extract_findings(critique)
         follow_ups = self._create_critique_follow_up_tasks(task_id, critique)
         suffix = f"; created {len(follow_ups)} follow-up task(s)" if follow_ups else ""
-        return LoopOutcome(
+        outcome = LoopOutcome(
             action=LoopAction.RUN_PHASE, phase="REVIEW", task_id=task_id,
             message=f"Critique clean — advancing to review{suffix}",
         )
+        self._print_phase_summary("CRITIQUE", task_id, outcome)
+        return outcome
 
     def _submit_review(self, task_id: str, review: str) -> LoopOutcome:
         """Process review output. Retry on HARD_FAIL, else advance.
@@ -560,17 +592,21 @@ class OrchestratorLoop:
                 )
                 self._review_result[task_id] = "PASS"
                 self._review_findings[task_id] = _extract_findings(review)
-                return LoopOutcome(
+                outcome = LoopOutcome(
                     action=LoopAction.RUN_PHASE, phase="VERIFY", task_id=task_id,
                     message="Review passed (trivial diff) — advancing to verify",
                 )
+                self._print_phase_summary("REVIEW", task_id, outcome)
+                return outcome
         # ── end Patch 1 ──────────────────────────────────────────────────────
 
         if is_hard_fail:
             self._retry_counts[task_id] = self._retry_counts.get(task_id, 0) + 1
 
             if self._retry_counts[task_id] >= MAX_TOTAL_RETRIES:
-                return self._escalate_to_debugger(task_id, "reviewer HARD_FAIL after max retries")
+                outcome = self._escalate_to_debugger(task_id, "reviewer HARD_FAIL after max retries")
+                self._print_phase_summary("REVIEW", task_id, outcome)
+                return outcome
 
             # Block for HITL — let human decide
             self.enforcer.block_for_hitl(
@@ -583,7 +619,7 @@ class OrchestratorLoop:
                 ],
                 context=review[:500],
             )
-            return LoopOutcome(
+            outcome = LoopOutcome(
                 action=LoopAction.BLOCK_HITL, phase="REVIEW", task_id=task_id,
                 question=f"Review failed: {review[:150]}",
                 options=[
@@ -592,6 +628,8 @@ class OrchestratorLoop:
                     "Override and proceed",
                 ],
             )
+            self._print_phase_summary("REVIEW", task_id, outcome)
+            return outcome
 
         review_verdict = "PASS" if "PASS" in review else "SOFT_FAIL"
         self.enforcer.mark_complete(
@@ -604,10 +642,12 @@ class OrchestratorLoop:
         self._review_result[task_id] = review_verdict
         # Record review findings for cross-agent scoring
         self._review_findings[task_id] = _extract_findings(review)
-        return LoopOutcome(
+        outcome = LoopOutcome(
             action=LoopAction.RUN_PHASE, phase="VERIFY", task_id=task_id,
             message="Review passed — advancing to verify",
         )
+        self._print_phase_summary("REVIEW", task_id, outcome)
+        return outcome
 
     def _submit_verify(self, task_id: str, test_output: str) -> LoopOutcome:
         """Process test output. Done if the SHA gate passes, retry/escalate if not."""
@@ -623,7 +663,9 @@ class OrchestratorLoop:
             self._retry_counts[task_id] = self._retry_counts.get(task_id, 0) + 1
 
             if self._retry_counts[task_id] >= MAX_TOTAL_RETRIES:
-                return self._escalate_to_debugger(task_id, "tests failing after max retries")
+                outcome = self._escalate_to_debugger(task_id, "tests failing after max retries")
+                self._print_phase_summary("VERIFY", task_id, outcome)
+                return outcome
 
             # Block for HITL — tests failing
             self.enforcer.block_for_hitl(
@@ -636,7 +678,7 @@ class OrchestratorLoop:
                 ],
                 context=test_output[:500],
             )
-            return LoopOutcome(
+            outcome = LoopOutcome(
                 action=LoopAction.BLOCK_HITL, phase="VERIFY", task_id=task_id,
                 question=f"Tests failing: {test_output[:150]}",
                 options=[
@@ -645,6 +687,8 @@ class OrchestratorLoop:
                     "Override and proceed",
                 ],
             )
+            self._print_phase_summary("VERIFY", task_id, outcome)
+            return outcome
 
         self.enforcer.mark_complete(
             task_id, "VERIFY",
@@ -654,10 +698,12 @@ class OrchestratorLoop:
         )
 
         # Tests passed — score the run (EVAL) before reflecting (RETRO).
-        return LoopOutcome(
+        outcome = LoopOutcome(
             action=LoopAction.RUN_PHASE, phase="EVAL", task_id=task_id,
             message="Verified — advancing to eval (deterministic score)",
         )
+        self._print_phase_summary("VERIFY", task_id, outcome)
+        return outcome
 
     def _submit_eval(self, task_id: str, _ignored: str = "") -> LoopOutcome:
         """EVAL phase — the deterministic 100-point score. No model: computed from the
@@ -673,15 +719,19 @@ class OrchestratorLoop:
                 summary=f"Micro-mode pipeline complete (eval {report.total}/100)",
             )
             self._record_reward(task_id)
-            return LoopOutcome(
+            outcome = LoopOutcome(
                 action=LoopAction.DONE, phase="DONE", task_id=task_id,
                 message=f"Scored {report.total}/100 ({report.grade}) — micro pipeline complete",
             )
+            self._print_phase_summary("EVAL", task_id, outcome)
+            return outcome
 
-        return LoopOutcome(
+        outcome = LoopOutcome(
             action=LoopAction.RUN_PHASE, phase="RETRO", task_id=task_id,
             message=f"Scored {report.total}/100 ({report.grade}) — advancing to retro",
         )
+        self._print_phase_summary("EVAL", task_id, outcome)
+        return outcome
 
     def _submit_retro(self, task_id: str, reflection: str) -> LoopOutcome:
         """RETRO phase — record the run's reflection, then advance to CONCLUDE.
@@ -694,13 +744,15 @@ class OrchestratorLoop:
         """
         # Gate: reject checkbox retros
         if len(reflection.strip()) < 100:
-            return LoopOutcome(
+            outcome = LoopOutcome(
                 action=LoopAction.RETRY, phase="RETRO", task_id=task_id,
                 message=(
                     "RETRO too short (< 100 chars). Answer the 7 questions, reference "
                     "completed phases, and record lessons learned. This is not a checkbox."
                 ),
             )
+            self._print_phase_summary("RETRO", task_id, outcome)
+            return outcome
 
         # Gate: must reference at least one completed phase (shows it looked at the run)
         history = self.db.get_task_history(task_id)
@@ -708,7 +760,7 @@ class OrchestratorLoop:
         reflection_lower = reflection.lower()
         referenced = [p for p in completed_phases if p.lower() in reflection_lower]
         if not referenced:
-            return LoopOutcome(
+            outcome = LoopOutcome(
                 action=LoopAction.RETRY, phase="RETRO", task_id=task_id,
                 message=(
                     "RETRO doesn't reference any completed phase. "
@@ -716,6 +768,8 @@ class OrchestratorLoop:
                     "Reference what happened — what went well, what broke, what to change."
                 ),
             )
+            self._print_phase_summary("RETRO", task_id, outcome)
+            return outcome
 
         self.enforcer.mark_complete(
             task_id, "RETRO", agent="retro",
@@ -732,15 +786,19 @@ class OrchestratorLoop:
                 task_id, "DONE", agent="retro",
                 summary=f"Fast-mode pipeline complete (eval {total}/100)",
             )
-            return LoopOutcome(
+            outcome = LoopOutcome(
                 action=LoopAction.DONE, phase="DONE", task_id=task_id,
                 message=f"Reflection recorded (eval {total}/100) — pipeline complete (fast mode)",
             )
+            self._print_phase_summary("RETRO", task_id, outcome)
+            return outcome
 
-        return LoopOutcome(
+        outcome = LoopOutcome(
             action=LoopAction.RUN_PHASE, phase="CONCLUDE", task_id=task_id,
             message=f"Reflection recorded (eval {total}/100) — advancing to conclude",
         )
+        self._print_phase_summary("RETRO", task_id, outcome)
+        return outcome
 
     def _submit_conclude(self, task_id: str, result: str) -> LoopOutcome:
         """CONCLUDE phase — durable write-back and context/doc closure.
@@ -751,10 +809,12 @@ class OrchestratorLoop:
         """
         validation_error = self._validate_conclude_proof(result, task_id)
         if validation_error:
-            return LoopOutcome(
+            outcome = LoopOutcome(
                 action=LoopAction.RETRY, phase="CONCLUDE", task_id=task_id,
                 message=validation_error,
             )
+            self._print_phase_summary("CONCLUDE", task_id, outcome)
+            return outcome
 
         self.enforcer.mark_complete(
             task_id, "CONCLUDE", agent="concluder",
@@ -777,10 +837,12 @@ class OrchestratorLoop:
 
         report = self._eval.get(task_id)
         total = report.total if report else 0
-        return LoopOutcome(
+        outcome = LoopOutcome(
             action=LoopAction.RUN_PHASE, phase="REFRESH_CONTEXT", task_id=task_id,
             message=f"Conclusion recorded (eval {total}/100) — advancing to context refresh",
         )
+        self._print_phase_summary("CONCLUDE", task_id, outcome)
+        return outcome
 
     def _submit_refresh_context(self, task_id: str, result: str = "") -> LoopOutcome:
         """REFRESH_CONTEXT phase — rebuild generated workshop artifacts.
@@ -803,10 +865,12 @@ class OrchestratorLoop:
                 summary="Fast-mode pipeline complete — context refresh skipped",
             )
             self._record_reward(task_id)
-            return LoopOutcome(
+            outcome = LoopOutcome(
                 action=LoopAction.DONE, phase="DONE", task_id=task_id,
                 message="Context refresh skipped (fast mode) — task complete",
             )
+            self._print_phase_summary("REFRESH_CONTEXT", task_id, outcome)
+            return outcome
 
         # ── Patch 3: Graceful skip when no .techne/config.yaml ─────────────
         config_path = ROOT / ".techne" / "config.yaml"
@@ -817,10 +881,12 @@ class OrchestratorLoop:
                 findings="",
             )
             self._record_reward(task_id)
-            return LoopOutcome(
+            outcome = LoopOutcome(
                 action=LoopAction.DONE, phase="DONE", task_id=task_id,
                 message="Context refresh skipped (no workshop config) — task complete",
             )
+            self._print_phase_summary("REFRESH_CONTEXT", task_id, outcome)
+            return outcome
         # ── end Patch 3 ─────────────────────────────────────────────────
 
         # Get touched files from CONTEXT_GUARD's punch list
@@ -837,21 +903,25 @@ class OrchestratorLoop:
 
         proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if proc.returncode != 0:
-            return LoopOutcome(
+            outcome = LoopOutcome(
                 action=LoopAction.RETRY, phase="REFRESH_CONTEXT", task_id=task_id,
                 message=(
                     f"REFRESH_CONTEXT failed: "
                     f"{(proc.stderr or proc.stdout or 'unknown error').strip()[:200]}"
                 ),
             )
+            self._print_phase_summary("REFRESH_CONTEXT", task_id, outcome)
+            return outcome
 
         try:
             payload = json.loads(proc.stdout)
         except json.JSONDecodeError:
-            return LoopOutcome(
+            outcome = LoopOutcome(
                 action=LoopAction.RETRY, phase="REFRESH_CONTEXT", task_id=task_id,
                 message="REFRESH_CONTEXT failed: script output is not valid JSON",
             )
+            self._print_phase_summary("REFRESH_CONTEXT", task_id, outcome)
+            return outcome
 
         self.enforcer.mark_complete(
             task_id, "REFRESH_CONTEXT", agent="refresh_context",
@@ -862,10 +932,12 @@ class OrchestratorLoop:
             findings=json.dumps(payload),
         )
         self._record_reward(task_id)
-        return LoopOutcome(
+        outcome = LoopOutcome(
             action=LoopAction.DONE, phase="DONE", task_id=task_id,
             message="Context refreshed — task complete",
         )
+        self._print_phase_summary("REFRESH_CONTEXT", task_id, outcome)
+        return outcome
 
     def _log_retro_learn_trigger(self, task_id: str, recurrence: dict,
                                  ledger_counts: dict) -> None:
@@ -1216,13 +1288,17 @@ class OrchestratorLoop:
         total = self._retry_counts.get(task_id, 0) + 1
         self._retry_counts[task_id] = total
         if total >= MAX_TOTAL_RETRIES:
-            return self._escalate_to_debugger(
+            outcome = self._escalate_to_debugger(
                 task_id, f"'{name}' failing after max retries"
             )
-        return LoopOutcome(
+            self._print_phase_summary("IMPLEMENT", task_id, outcome)
+            return outcome
+        outcome = LoopOutcome(
             action=LoopAction.RETRY, phase="IMPLEMENT", task_id=task_id,
             message=f"[{name}] failed (attempt {self._impl_retry_counts[task_id]}): {reason[:120]}",
         )
+        self._print_phase_summary("IMPLEMENT", task_id, outcome)
+        return outcome
 
     def _escalate_to_debugger(self, task_id: str, reason: str) -> LoopOutcome:
         """
@@ -1489,6 +1565,101 @@ class OrchestratorLoop:
     def get_best_variant(self, task_type: str, agent: str = "implementer") -> str | None:
         """Get the best-performing variant name for a task type."""
         return self.reward_log.best_variant(task_type)
+
+    # ── Phase-mode-aware expected phases ──────────────────────────────────
+
+    def _expected_phases(self, task_id: str) -> list[str]:
+        """Return the ordered list of phases this task is expected to complete."""
+        task = self.db.get_task(task_id)
+        mode = task.phase_mode if task else "full"
+
+        if mode == "fast":
+            # Skip RECALL, CONCLUDE, REFRESH_CONTEXT
+            skip = {"RECALL", "CONCLUDE", "REFRESH_CONTEXT"}
+        elif mode == "micro":
+            # Only: IMPLEMENT → CONTEXT_GUARD → VERIFY → EVAL → DONE
+            return ["IMPLEMENT", "CONTEXT_GUARD", "VERIFY", "EVAL", "DONE"]
+        else:
+            skip = set()
+
+        from pipeline_enforcer import PHASES
+        return [p for p in PHASES if p not in skip]
+
+    # ── Completion indicator ──────────────────────────────────────────────
+
+    def summarize_incomplete(self, task_id: str) -> str:
+        """
+        Human-readable completion indicator for a task.
+
+        ✓ TASK COMPLETE: <id> — RECALL → ... → DONE (N/N phases)
+        ⚠ TASK INCOMPLETE: <id>
+        Completed: RECALL → IMPLEMENT → ...
+        Stuck at: REVIEW (BLOCK_HITL — escalated after 3 retries)
+        Never reached: VERIFY, EVAL, RETRO, CONCLUDE, REFRESH_CONTEXT, DONE
+
+        Respects phase_mode so skipped phases don't appear in "Never reached".
+        """
+        from pipeline_enforcer import PHASES
+
+        task = self.db.get_task(task_id)
+        history = self.db.get_task_history(task_id)
+
+        # Completed phases: exclude HARD_FAIL verdicts (those phases were attempted but failed)
+        completed = [
+            e.action for e in history
+            if e.action in PHASES and e.verdict not in ("HARD_FAIL",)
+        ]
+        # Deduplicate in order of first completion
+        seen: set[str] = set()
+        unique_completed: list[str] = []
+        for p in completed:
+            if p not in seen:
+                seen.add(p)
+                unique_completed.append(p)
+
+        expected = self._expected_phases(task_id)
+
+        # Is the task done?
+        if task and task.status == "DONE":
+            completed_str = " → ".join(unique_completed) if unique_completed else "none"
+            total = len(expected)
+            return f"✓ TASK COMPLETE: {task_id} — {completed_str} ({total}/{total} phases)"
+
+        # Not done — figure out where it got stuck
+        # The stuck phase is the last completed phase (or "none")
+        stuck_at = unique_completed[-1] if unique_completed else "none"
+
+        # Count retries on the stuck phase to build the reason string
+        retry_count = 0
+        if stuck_at != "none":
+            retry_count = sum(
+                1 for e in history
+                if e.action == stuck_at and e.verdict in ("SOFT_FAIL", "HARD_FAIL")
+            )
+
+        # Check if there's a HITL block recorded (hitl_request events have verdict='BLOCK')
+        hitl_block = next(
+            (e for e in reversed(history) if e.action == "hitl_request" and e.verdict == "BLOCK"),
+            None,
+        )
+        if hitl_block is not None:
+            reason = f"{stuck_at} (BLOCK_HITL — escalated after {retry_count} retries)"
+        elif stuck_at != "none":
+            reason = stuck_at
+        else:
+            reason = "none"
+
+        never_reached = [p for p in expected if p not in set(unique_completed)]
+        never_str = ", ".join(never_reached) if never_reached else "none"
+
+        completed_str = " → ".join(unique_completed) if unique_completed else "none"
+        lines = [
+            f"⚠ TASK INCOMPLETE: {task_id}",
+            f"Completed: {completed_str}",
+            f"Stuck at: {reason}",
+            f"Never reached: {never_str}",
+        ]
+        return "\n".join(lines)
 
     def post_run_evolve(self) -> dict:
         """
