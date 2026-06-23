@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# next — shell wrapper for scripts/next.py
+#
+# Symlink or copy this to the project root so `./next` works.
+# Or add the techne repo's scripts/ directory to PATH.
+#
+# This script finds the .techne/ directory by walking up from CWD,
+# then runs next.py from the techne repo.
+
+set -euo pipefail
+
+# Find the techne repo (where scripts/next.py lives)
+TECHNE_REPO=""
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# If this script lives inside the techne repo, use its scripts/
+if [[ -f "$SCRIPT_DIR/scripts/next.py" ]]; then
+    TECHNE_REPO="$SCRIPT_DIR"
+elif [[ -f "$SCRIPT_DIR/../scripts/next.py" ]]; then
+    TECHNE_REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
+elif [[ -d "$HOME/repos/techne" ]] && [[ -f "$HOME/repos/techne/scripts/next.py" ]]; then
+    TECHNE_REPO="$HOME/repos/techne"
+else
+    echo "Error: cannot find techne repo (scripts/next.py)" >&2
+    echo "Searched: relative to script, and ~/repos/techne" >&2
+    exit 1
+fi
+
+exec python3 "$TECHNE_REPO/scripts/next.py" "$@"
