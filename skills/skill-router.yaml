@@ -220,6 +220,12 @@ routing:
     weight: 45
     note: "Production tool — diagnose pipeline health before debugging tasks."
 
+  - id: "task-gardener"
+    condition: "task gardener, cleanup artifacts, purge tasks, compact db, rotate logs, clean pipeline"
+    skill_path: "skills/task-gardener/SKILL.md"
+    weight: 44
+    note: "Production tool — purge old artifacts, rotate logs, compact DB, check .gitignore leaks."
+
   - id: "approval"
     condition: "approve changes, heavy mode, sensitive change, phase approval"
     skill_path: "skills/approval/SKILL.md"
