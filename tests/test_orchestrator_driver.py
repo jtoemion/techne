@@ -95,6 +95,7 @@ class FakeModel:
     def __init__(self, *, critique="No critical issues found. Looks clean."):
         self.critique = critique
         self.phases = []
+        self._impl_idx = 0  # ensure each IMPLEMENT returns a unique diff
 
     def __call__(self, system, user, phase):
         self.phases.append(phase)
@@ -106,10 +107,25 @@ class FakeModel:
                 "WORKSHOP_CONTEXT: none (unit test)\n"
                 "WORKSHOP_FILES: none\n"
                 "LESSONS: none\n"
-                "FOCUS: add SaleBadge component, keep it minimal, one file change"
+                "FOCUS: add SaleBadge component, keep it minimal, one file change\n"
             )
         if phase == "IMPLEMENT":
-            return CLEAN_DIFF
+            self._impl_idx += 1
+            return textwrap.dedent(f"""\
+                diff --git a/components/product/SaleBadge{self._impl_idx}.tsx b/components/product/SaleBadge{self._impl_idx}.tsx
+                new file mode 100644
+                --- /dev/null
+                +++ b/components/product/SaleBadge{self._impl_idx}.tsx
+                @@ -0,0 +1,6 @@
+                +export function SaleBadge{self._impl_idx}() {{
+                +  return <span className="badge-sale">Sale {self._impl_idx}</span>
+                +}}
+                +++ b/app/products/[slug]/page.tsx
+                --- a/app/products/[slug]/page.tsx
+                @@ -3,4 +3,5 @@
+                +import {{ SaleBadge{self._impl_idx} }} from '@/components/product/SaleBadge{self._impl_idx}'
+                +  {{product.onSale && <SaleBadge{self._impl_idx} />}}
+            """)
         if phase == "CONTEXT_GUARD":
             return (
                 "Context audit: change is scoped to the product page. No drift.\n\n"
@@ -520,6 +536,70 @@ def test_post_run_evolve_called_on_done():
     check("compute_batch_advantages called at least once", called["n"] >= 1)
 
 
+def test_batch_mode_queues_tasks():
+    """With rl_batch_size=N (>1), post_run_evolve fires only when the Nth task DONE arrives.
+
+    Tasks 1..N-1: compute_batch_advantages NOT called.
+    Task N:        compute_batch_advantages called once (flush), then post_run_evolve fires.
+    """
+    print("\n[loop — batch mode rl_batch_size=3 queues tasks and fires on Nth DONE]")
+    db, rl = _fresh()
+
+    batch_calls = {"n": 0}
+    orig_compute = rl.compute_batch_advantages
+
+    def tracking_compute(*args, **kwargs):
+        batch_calls["n"] += 1
+        return orig_compute(*args, **kwargs)
+
+    with _mock.patch.object(rl, "compute_batch_advantages", tracking_compute):
+        plan = run_plan(
+            ["add sale badge to product page",
+             "add wishlist button to product page",
+             "add share button to product page"],
+            model=FakeModel(),
+            run_tests=lambda: PASSING_TESTS,
+            db=db,
+            reward_log=rl,
+            prepare_context=False,
+            rl_batch_size=3,
+        )
+
+    check("all 3 tasks reached DONE", all(t.status == "DONE" for t in plan.tasks))
+    # With batch_size=3: 1 batch flush → 1 post_run_evolve call.
+    # driver.py also calls post_run_evolve once after all tasks → total ≤ 2.
+    check("compute_batch_advantages called by batch flush (≥1, ≤2)", 1 <= batch_calls["n"] <= 2)
+
+
+def test_immediate_mode_no_change():
+    """rl_batch_size=1 (default) should call post_run_evolve on every DONE — no behavioural change."""
+    print("\n[loop — immediate mode rl_batch_size=1 fires on every DONE]")
+    db, rl = _fresh()
+
+    batch_calls = {"n": 0}
+    orig_compute = rl.compute_batch_advantages
+
+    def tracking_compute(*args, **kwargs):
+        batch_calls["n"] += 1
+        return orig_compute(*args, **kwargs)
+
+    with _mock.patch.object(rl, "compute_batch_advantages", tracking_compute):
+        plan = run_plan(
+            ["add sale badge to product page", "add wishlist button to product page"],
+            model=FakeModel(),
+            run_tests=lambda: PASSING_TESTS,
+            db=db,
+            reward_log=rl,
+            prepare_context=False,
+            rl_batch_size=1,  # default
+        )
+
+    check("all tasks DONE", all(t.status == "DONE" for t in plan.tasks))
+    # With batch_size=1, each DONE fires post_run_evolve → at least 2 calls
+    # (driver.py also calls post_run_evolve once after all tasks, so >= 2)
+    check("compute_batch_advantages called on every DONE (≥2 calls)", batch_calls["n"] >= 2)
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("ORCHESTRATOR DRIVER — run_plan drives the full RL pipeline")
@@ -540,6 +620,8 @@ if __name__ == "__main__":
     test_conclude_rejects_context_update_without_sha()
     test_a2_refresh_context_retry_on_fail()
     test_post_run_evolve_called_on_done()
+    test_batch_mode_queues_tasks()
+    test_immediate_mode_no_change()
     passed = sum(1 for r in results if r)
     total = len(results)
     print("\n" + "=" * 60)

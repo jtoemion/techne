@@ -880,6 +880,71 @@ def test_analyze_override_patterns_at_threshold(tmp_path, monkeypatch):
     check("at-threshold entries: patterns returned", isinstance(patterns, list))
 
 
+def test_record_logs_win_to_reward_md(tmp_path):
+    """RewardLog.record() writes CLEAN/SOLVED entries to reward.md on success."""
+    print("\n[reward_log — record() writes CLEAN/SOLVED to reward.md]")
+
+    # Point reward.md at a temp file so we can inspect it
+    import reward as reward_module
+    orig_reward_file = reward_module.REWARD_FILE
+    reward_module.REWARD_FILE = tmp_path / "reward.md"
+
+    db_file = tmp_path / "rewards.db"
+    log = reward_log.RewardLog(str(db_file))
+    try:
+        # First attempt → CLEAN win
+        log.record(
+            task_id="t_clean_1",
+            task_type="api",
+            prompt_variant="v1",
+            gate_pass=True,
+            test_pass=True,
+            review_findings=[],
+            critique_predictions=[],
+            scope_clean=True,
+            attempt_count=1,
+            skill="implementer",
+        )
+        content_clean = reward_module.REWARD_FILE.read_text(encoding="utf-8")
+        check("CLEAN entry written on first-attempt pass", "CLEAN" in content_clean and "api task t_clean_1" in content_clean)
+
+        # Second attempt → SOLVED win
+        log.record(
+            task_id="t_solved_1",
+            task_type="auth",
+            prompt_variant="v2",
+            gate_pass=True,
+            test_pass=True,
+            review_findings=[],
+            critique_predictions=[],
+            scope_clean=True,
+            attempt_count=3,
+            skill="diagnose",
+        )
+        content_solved = reward_module.REWARD_FILE.read_text(encoding="utf-8")
+        check("SOLVED entry written on retry pass", "SOLVED" in content_solved and "auth task t_solved_1" in content_solved and "recovered after 3 attempts" in content_solved)
+
+        # Failed gate → no win entry
+        reward_module.REWARD_FILE.write_text("# REWARD\n<!-- New entries go below this line -->\n", encoding="utf-8")
+        log.record(
+            task_id="t_fail",
+            task_type="ui",
+            prompt_variant="v1",
+            gate_pass=False,
+            test_pass=False,
+            review_findings=[],
+            critique_predictions=[],
+            scope_clean=True,
+            attempt_count=1,
+        )
+        content_fail = reward_module.REWARD_FILE.read_text(encoding="utf-8")
+        check("no CLEAN/SOLVED entry when gate fails", content_fail.count("CLEAN") == 0 and content_fail.count("SOLVED") == 0)
+
+        log.close()
+    finally:
+        reward_module.REWARD_FILE = orig_reward_file
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("REWARD (positive signal) — TEST")

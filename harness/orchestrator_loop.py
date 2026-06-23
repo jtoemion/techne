@@ -69,6 +69,7 @@ from _loop_types import (
 from evaluator import evaluate_pipeline_run, EvalReport
 from checkpoint import check_honcho_logged
 from grpo import propose_grpo_edits
+from trajectory_queue import BatchedRLQueue
 
 
 class OrchestratorLoop:
@@ -82,6 +83,7 @@ class OrchestratorLoop:
         db: TaskDB,
         enforcer: PipelineEnforcer | None = None,
         reward_log: RewardLog | None = None,
+        rl_batch_size: int = 1,
     ):
         self.db = db
         self.enforcer = enforcer or PipelineEnforcer(db)
@@ -98,6 +100,19 @@ class OrchestratorLoop:
         self.reward_log = reward_log or RewardLog()
         self.evolution = PromptEvolution(self.reward_log)
         self.gate_evolution = GateEvolution(self.reward_log)
+
+        # Batched RL queue — only created when rl_batch_size > 1.
+        # In default mode (rl_batch_size=1) we evolve on every DONE task.
+        self._rl_batch_size = rl_batch_size
+        self._rl_queue: BatchedRLQueue | None = (
+            BatchedRLQueue(
+                batch_size=rl_batch_size,
+                reward_log=self.reward_log,
+                post_run_evolve=self.post_run_evolve,
+            )
+            if rl_batch_size > 1
+            else None
+        )
 
         # Per-task artifacts for reward computation
         self._critique_predictions: dict[str, list[str]] = {}  # task_id -> predictions
@@ -230,29 +245,29 @@ class OrchestratorLoop:
             )
 
         if phase == "RECALL":
-            return self._submit_recall(task_id, result)
+            outcome = self._submit_recall(task_id, result)
         elif phase == "IMPLEMENT":
-            return self._submit_implement(task_id, result)
+            outcome = self._submit_implement(task_id, result)
         elif phase == "CONTEXT_GUARD":
-            return self._submit_context_guard(task_id, result)
+            outcome = self._submit_context_guard(task_id, result)
         elif phase == "CRITIQUE":
-            return self._submit_critique(task_id, result)
+            outcome = self._submit_critique(task_id, result)
         elif phase == "REVIEW":
-            return self._submit_review(task_id, result)
+            outcome = self._submit_review(task_id, result)
         elif phase == "VERIFY":
-            return self._submit_verify(task_id, result)
+            outcome = self._submit_verify(task_id, result)
         elif phase == "EVAL":
-            return self._submit_eval(task_id, result)
+            outcome = self._submit_eval(task_id, result)
         elif phase == "RETRO":
-            return self._submit_retro(task_id, result)
+            outcome = self._submit_retro(task_id, result)
         elif phase == "CONCLUDE":
-            return self._submit_conclude(task_id, result)
+            outcome = self._submit_conclude(task_id, result)
         elif phase == "REFRESH_CONTEXT":
-            return self._submit_refresh_context(task_id, result)
+            outcome = self._submit_refresh_context(task_id, result)
         elif phase == "APPROVAL":
-            return self._submit_approval(task_id, result)
+            outcome = self._submit_approval(task_id, result)
         elif phase == "DEBUG":
-            return self._submit_debug(task_id, result)
+            outcome = self._submit_debug(task_id, result)
         else:
             outcome = LoopOutcome(
                 action=LoopAction.DONE, phase=phase, task_id=task_id,
@@ -262,14 +277,34 @@ class OrchestratorLoop:
         # After task reaches DONE, trigger RL/GRPO computation (fire-and-forget).
         # Non-blocking: RL failures must never prevent the submit return value from
         # propagating to the host/loop driver.
-        try:
-            evo = self.post_run_evolve()
-            if evo.get("grpo_proposed"):
-                logging.getLogger(__name__).info(
-                    "[rl] GRPO proposed %d edits", len(evo["grpo_proposed"])
-                )
-        except Exception:
-            pass  # RL failures are non-blocking
+        #
+        # Batched mode (rl_batch_size > 1): queue the outcome and only fire
+        # post_run_evolve when the batch is full.  Immediate mode (default,
+        # rl_batch_size=1): evolve on every DONE — no behavioural change.
+        if outcome.action == LoopAction.DONE:
+            if self._rl_queue is not None:
+                # Batch mode: queue, then flush and evolve when full.
+                self._rl_queue.add(task_id, outcome.message)
+                if self._rl_queue.is_full():
+                    self._rl_queue.flush()
+                    try:
+                        evo = self._rl_queue._post_run_evolve()
+                        if evo.get("grpo_proposed"):
+                            logging.getLogger(__name__).info(
+                                "[rl] GRPO proposed %d edits", len(evo["grpo_proposed"])
+                            )
+                    except Exception:
+                        pass  # RL failures are non-blocking
+            else:
+                # Immediate mode (default): evolve on every DONE task.
+                try:
+                    evo = self.post_run_evolve()
+                    if evo.get("grpo_proposed"):
+                        logging.getLogger(__name__).info(
+                            "[rl] GRPO proposed %d edits", len(evo["grpo_proposed"])
+                        )
+                except Exception:
+                    pass  # RL failures are non-blocking
 
         return outcome
 

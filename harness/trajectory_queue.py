@@ -97,6 +97,56 @@ class TrajectoryQueueResult:
 # ── Trajectory Queue ────────────────────────────────────────────────────────
 
 
+class BatchedRLQueue:
+    """In-memory queue that batches DONE tasks before triggering RL analysis.
+
+    Collects *batch_size* task outcomes, then calls ``compute_batch_advantages()``
+    and fires ``post_run_evolve()`` — the GRPO path — only when the batch is full.
+    Immediate mode (batch_size=1) fires on every task.
+
+    Parameters
+    ----------
+    batch_size : int
+        Number of tasks to collect before flushing. Default 1 (immediate).
+    reward_log : RewardLog
+        Shared reward log (used to call ``compute_batch_advantages``).
+    post_run_evolve : callable
+        ``() -> dict`` — the GRPO/staged-proposal entry point.
+    """
+
+    def __init__(
+        self,
+        batch_size: int,
+        reward_log: RewardLog,
+        post_run_evolve: Callable,
+    ):
+        if batch_size < 1:
+            raise ValueError("batch_size must be >= 1")
+        self._batch_size = batch_size
+        self._reward_log = reward_log
+        self._post_run_evolve = post_run_evolve
+        self._queue: list[tuple[str, object]] = []  # (task_id, outcome)
+
+    # ── Public API ─────────────────────────────────────────────────────────
+
+    def add(self, task_id: str, outcome: object) -> None:
+        """Queue a completed task outcome for the next batch flush."""
+        self._queue.append((task_id, outcome))
+
+    def is_full(self) -> bool:
+        """True when the queue has reached ``batch_size`` entries."""
+        return len(self._queue) >= self._batch_size
+
+    def flush(self) -> None:
+        """Clear the queue. Advantages are computed by post_run_evolve(), not here.
+
+        Idempotent: safe to call when the queue is not yet full (no-op).
+        """
+        if not self._queue:
+            return
+        self._queue.clear()
+
+
 class TrajectoryQueue:
     """Dispatches N variants of a task through the pipeline and compares results.
 

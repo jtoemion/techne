@@ -213,6 +213,30 @@ class RewardLog:
              reward.reviewer_coverage, reward.skill),
         )
         self._conn.commit()
+
+        # Also log human-readable win to reward.md so RewardLog.record() is the
+        # single entry point — callers no longer need to call reward.log_clean /
+        # reward.log_solved separately (the dual-system problem is solved).
+        try:
+            from reward import log_clean, log_solved
+            skill_tag = reward.skill or "none"
+            # CLEAN: all gates + tests passed on first attempt
+            if gate_pass and test_pass and attempt_count == 1:
+                log_clean(
+                    what=f"{task_type} task {task_id}",
+                    skill=skill_tag,
+                    gate="all_gates",
+                )
+            # SOLVED: passed after retries
+            elif gate_pass and test_pass and attempt_count > 1:
+                log_solved(
+                    what=f"{task_type} task {task_id} (recovered after {attempt_count} attempts)",
+                    skill=skill_tag,
+                    gate="all_gates",
+                )
+        except Exception:
+            pass  # reward.md logging is non-blocking
+
         return reward
 
     # ── Queries for prompt evolution ─────────────────────────────────────

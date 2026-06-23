@@ -123,6 +123,7 @@ def run_plan(
     project_root: Path = ROOT,
     evolve: bool = True,
     max_steps_per_task: int = 40,
+    rl_batch_size: int = 1,
 ) -> PlanResult:
     """Drive a GROUP of tasks through the full OrchestratorLoop RL pipeline.
 
@@ -146,7 +147,7 @@ def run_plan(
         ensure_context(project_root)
 
     db = db or TaskDB()
-    loop = OrchestratorLoop(db, reward_log=reward_log)
+    loop = OrchestratorLoop(db, reward_log=reward_log, rl_batch_size=rl_batch_size)
 
     runs = []
     for spec in tasks:
