@@ -4,7 +4,7 @@ description: Deep diagnostic agent. Called when the implementer fails repeatedly
 model: claude-sonnet-4-6
 skills:
   - skills/debug/SKILL.md
-  - skills/diagnose/SKILL.md
+  - skills/diagnose.md
   - skills/diagnose/feedback-loop.md
 tools: Read, Glob, Grep, Edit, Write, Bash
 ---

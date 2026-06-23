@@ -29,6 +29,7 @@ class LoopState:
     created_at: str       # ISO timestamp
     updated_at: str       # ISO timestamp
     summary: str = ""     # plain-language summary from the last ./next run
+    phase_timeout_min: int = 30  # max minutes in this phase before stall alert
 
     def next_phase(self) -> Optional[str]:
         """Return the next phase, or None if already at DONE."""

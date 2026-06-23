@@ -32,6 +32,8 @@ from next_state import (
     LoopState, read_state, write_state, state_path, loop_dir,
     PHASE_SEQUENCE, artifact_path_for,
 )
+from audit_chain import AuditEntry, append_entry as audit_append
+from datetime import datetime, timezone
 
 
 # ── Coloured terminal output ─────────────────────────────────────────────────
@@ -406,6 +408,23 @@ def main() -> int:
         state.summary = summary
         state.phase = next_phase or state.phase
         write_state(state, cwd)
+
+        # Append to audit chain
+        try:
+            audit_entry = AuditEntry(
+                seq=0,
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                task_id=state.task_id,
+                phase=state.phase,
+                gates=[{"name": r.name, "passed": r.passed, "detail": r.detail} for r in results],
+                summary=summary,
+                prev_hash="0" * 64,
+            )
+            audit_append(audit_entry)
+        except Exception:
+            # Audit append failure should not block phase advancement
+            pass
+
         return 0
     else:
         # Record the failed summary but do NOT advance

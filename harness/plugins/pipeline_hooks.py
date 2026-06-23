@@ -47,6 +47,17 @@ def install_pipeline_hooks(
     # Store task_id in a mutable container so it can be updated
     ctx = {"task_id": task_id}
 
+    # ── Block writes to .techne/audit/ ─────────────────────────────────────
+    _AUDIT_DIR_NAME = ".techne"
+    _AUDIT_SUBDIR = "audit"
+
+    def _is_audit_path(path_str: str) -> bool:
+        """Check if a path targets the audit directory."""
+        from pathlib import Path
+        p = Path(path_str)
+        parts = p.parts
+        return _AUDIT_DIR_NAME in parts and _AUDIT_SUBDIR in parts
+
     def pre_gate_hook(diff: str, meta: "GateMeta") -> None:
         """Before each gate: verify phase + inject context."""
         tid = ctx["task_id"]
