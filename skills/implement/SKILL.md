@@ -1,67 +1,50 @@
 ---
 name: implement
-description: Code implementation rules — unified diff format, YAGNI constraints, gate requirements, and pre-write checklist.
+description: Use when about to make changes outside task scope or produce prose instead of a diff. Symptom-based: agent reaches for "while I'm here" or starts writing explanatory text instead of @@ diff markers.
+triggers:
+  - implement
+  - write code
+  - produce diff
+  - make changes
 ---
 
-# Implement — Subagent Skill
+# Implement
 
-You are the Implementer. You receive a task spec and produce a code diff that satisfies it. You operate under strict skill rules — violating them means your output is rejected by the gate and you must redo the work.
+One line: Violating the letter violates the spirit — scope creep is the #1 source of rejected diffs.
 
-This phase is responsible for the actual code change. All downstream phases (context-guard, critique, review, verify) depend on the quality of your diff. A sloppy diff — one that is oversized, malformed, or violates typing rules — corrupts the pipeline.
+## Lead — Output Format Gate
 
-## Required Output
-
-Return the **raw unified diff only**. No preamble, no explanation, no markdown fences. The conductor reads your stdout and parses the diff.
-
-```
---- a/path/to/file.ts
-+++ b/path/to/file.ts
-@@ -N,N +N,N @@ optional context line
-- removed line
-+ added line
+```text
+All changes via @@...@@ diff markers. Minimum change — YAGNI.
+Gate: reject if no @@ markers or prose替代diff.
 ```
 
-## Gate Requirements
+## Body
 
-- **Mode validation** — confirm the task spec is loaded and understood before writing
-- **Diff stats** — after `git diff --unified=3`, review line counts (reject if >20 source lines without explicit justification)
-- **File count** — no new files unless the task explicitly requires them; no files modified outside scope
-- **Typing compliance** — no `any`, `unknown as`, or broad casts unless the pre-edit file already used that exact escape hatch
+```text
+1. Diff only. No prose paragraphs in output.
+2. YAGNI: implement exactly what the task requires, nothing more.
+3. No "cleanup", no "refactor", no "while I'm here" additions.
+4. If you find something broken, note it — do not fix it unless it's the task.
+```
 
-## Hard Constraints
+## Rationalization Table
 
-- Never output prose-only — the gate rejects non-diff output
-- Never introduce `any` or `unknown as` casts
-- Never add `console.log` to production code paths
-- Never modify files outside the task's stated scope
-- Never use `redirect()` outside `middleware.ts`
-- Never import from `next/router` — use `next/navigation` in App Router
-- Never use `getServerSideProps` — use async server components
+| Excuse | Reality |
+|--------|---------|
+| "I'll clean up this one extra file since I'm here" | Scope creep. The task is the task. File another. |
+| "This refactor will make the code better" | That's a second task. File it. |
+| "Might as well fix this too" | You might not. The reviewer might not want it. Ask. |
+| "The code is ugly but functional" | File a separate improvement issue. Don't fix it unprompted. |
 
-## Before-Writing Checklist
+## Red Flags — STOP
 
-1. Read `skills/typescript/SKILL.md` — all typing rules apply
-2. Read `skills/nextjs/SKILL.md` — framework conventions
-3. Read `harness/memory/mistakes.md` — check if this task type has caused past gate failures
-4. Read only the files directly relevant to the task (use Glob/Grep to locate them)
-5. Confirm the task scope is bounded — if it is not, ask for clarification before writing
+- "while I'm here" → stop. Stay in scope.
+- "might as well fix this too" → stop. File it, don't do it.
+- "let me refactor" → stop. That's a different task.
+- Writing prose instead of diff → stop. Use @@ markers.
 
-## YAGNI Rules
+## Next Steps
 
-- Make the **minimum change needed** — no refactors, no cleanup outside the task scope
-- No new files unless the bug/feature demands it
-- No adding tests for uncovered paths — that is a separate task
-- If you spot a second bug, note it but do not fix it in this task
-- Count your source lines before submitting — if >10 lines, reconsider
-
-## Diff Format Requirements
-
-- Unified diff with `@@` markers and context lines
-- Minimum 3 lines of context around changes
-- File paths relative to repo root
-- No binary file changes unless explicitly required
-- Diff must be parseable by standard diff tools
-
-## What To Do On Gate Rejection
-
-The conductor sends you the gate failure reason verbatim. Read it. Fix **only** the specific violation. Do not re-read all files — you already have context. Return the corrected diff.
+- Diff written, scope confirmed → `skills/context-guard/SKILL.md`
+- Back to `skills/skill-router.yaml`

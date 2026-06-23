@@ -1,33 +1,57 @@
 ---
 name: conductor
-description: Orchestrates the Techne pipeline — routes tasks to the right phase agents, manages phase transitions, and enforces pipeline discipline.
+description: Use when orchestrating a pipeline, driving a task through phases, or running phase conductor. WHEN-TO-USE only, no workflow summary.
+triggers:
+  - "orchestrate"
+  - "run pipeline"
+  - "drive task"
+  - "phase conductor"
 ---
-# Conductor — Pipeline Orchestration
 
-The conductor is the heart of the Techne pipeline. It receives a task, determines the correct phase sequence based on phase_mode, and drives each phase agent to completion.
+# Conductor
 
-## Phase Routing
+One line: The phase_mode exists for a reason — use it. Never skip phases; the micro/fast modes exist so you don't have to.
 
-| Phase Mode | Sequence |
-|------------|----------|
-| micro | IMPLEMENT → CONTEXT_GUARD → VERIFY → EVAL → DONE |
-| fast | IMPLEMENT → CONTEXT_GUARD → CRITIQUE → REVIEW → VERIFY → EVAL → RETRO → DONE |
-| full | RECALL → IMPLEMENT → CONTEXT_GUARD → CRITIQUE → REVIEW → VERIFY → EVAL → RETRO → CONCLUDE → REFRESH_CONTEXT → DONE |
-| heavy | full + APPROVAL after REVIEW |
+## Lead — Phase Mode Routing
 
-## Phase Dispatching
+```text
+phase_mode determines sequence:
+  micro  → IMPLEMENT → RETRO (small, low risk)
+  fast   → IMPLEMENT → VERIFY → RETRO
+  full   → PREFLIGHT → IMPLEMENT → VERIFY → REVIEW → RETRO
+  heavy  → PREFLIGHT → IMPLEMENT → VERIFY → REVIEW → APPROVAL → RETRO
 
-Each phase agent is loaded from `agents/<phase>.md`. The conductor:
-1. Calls `next_phase(task_id)` to get the next phase
-2. Loads the corresponding agent definition
-3. Injects context (task details, previous phase outputs, Honcho state)
-4. Dispatches execution via delegate_task
-5. Calls `submit(task_id, phase, result)` to process the gate
-6. Repeats until DONE or FAILED
+Never skip phases. Use the mode that fits, not the one that skips.
+```
 
-## Key Responsibilities
+## Body
 
-- Maintain phase sequence integrity (no skipping)
-- Inject proper context for each phase
-- Escalate on repeated failure (3 retries per phase → debugger)
-- Ensure Honcho checkpoint after every phase
+```text
+Conductor responsibilities:
+  - Route to correct phase by mode
+  - Collect gate results from harness
+  - Enforce phase ordering (do not advance on FAIL)
+  - Log failures to memory/mistakes.md
+
+Exit on FAIL → retry same agent (max 3) → halt if persistent.
+```
+
+## Rationalization Table
+
+| Excuse | Reality |
+|--------|---------|
+| "This is small, I'll just implement it directly without going through all phases" | micro mode exists for small changes. Use it. Don't skip the pipe. |
+| "I don't need preflight for a quick fix" | If the mode requires it, you need it. Fast mode exists so you don't have to skip. |
+| "I'll skip review on this one" | Review is part of full/heavy modes. If you need to skip it, change the mode. |
+| "Verification is optional" | No phase is optional by name. The mode determines which are required. |
+
+## Red Flags — STOP
+
+- "this doesn't need the pipe" — use micro/fast mode instead
+- "I'll just do it directly" — pick a mode and run it
+- Advancing to next phase when current phase returned FAIL
+- Using heavy mode and skipping the APPROVAL gate
+
+## Next Steps
+
+- All phases complete for mode → `skills/skill-router.yaml`

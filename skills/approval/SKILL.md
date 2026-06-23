@@ -1,32 +1,56 @@
 ---
 name: approval
-description: Heavy mode HITL approval gate. Human reviews critical changes (auth, billing, migration, credentials) before verification.
+description: Use when approving heavy-mode changes, reviewing sensitive modifications, or running phase approval. WHEN-TO-USE only, no workflow summary.
+triggers:
+  - "approve changes"
+  - "heavy mode"
+  - "sensitive change"
+  - "phase approval"
 ---
-# Approval — Human Review Gate
 
-Triggered automatically in heavy mode for sensitive changes. The human must explicitly approve, reject, or request modifications before the pipeline continues.
+# Approval
 
-## When It Triggers
+One line: Approval exists because human judgment is required — read the diff before approving. Auto-approve is a lie.
 
-Heavy mode activates when changes touch sensitive keywords:
-- auth, authentication, login, password, session
-- billing, payment, subscription, pricing
-- migration, data-migration, schema-change
-- credential, secret, token, api-key
-- role, permission, rbac, access-control
+## Lead — Three Exit Paths
 
-## Exit Paths
+```text
+APPROVE  → VERIFY + proceed to next phase
+REJECT   → FAILED + halt, report reason
+MODIFY   → IMPLEMENT + re-submit for approval
 
-| Decision | Action |
-|----------|--------|
-| approve | Advance to VERIFY |
-| reject | FAILED — task stopped |
-| modify | Return to IMPLEMENT with feedback |
+Read the diff before any decision. "Looks safe" is not an approval.
+```
 
-## Review Checklist
+## Body
 
-- [ ] Change is scoped to the task definition?
-- [ ] No credential/token leakage in diff?
-- [ ] Backward compatible?
-- [ ] Tests cover the change?
-- [ ] Migration has rollback plan?
+```text
+Approval gates (heavy mode only):
+  - Diff read and understood
+  - Risk to critical paths assessed
+  - Rollback plan identified
+  - Exit path documented
+
+Approve only what you can explain. Reject what you cannot.
+```
+
+## Rationalization Table
+
+| Excuse | Reality |
+|--------|---------|
+| "The change is safe, approval is just a formality" | Approval exists because human judgment is required. Formality is a lie. |
+| "Auto-approve this, it's low risk" | Low risk still requires a human to read the diff and confirm. |
+| "Looks safe from the description" | The description is not the diff. Read the actual changes. |
+| "I trust the implementer" | Trust is not verification. The gate exists for a reason. |
+
+## Red Flags — STOP
+
+- "auto-approve" or "approve by default"
+- "just a formality" — it's not
+- Approving without reading the diff
+- "looks safe" without assessing the actual changes
+- Skipping approval in heavy mode
+
+## Next Steps
+
+- Decision made (approve/reject/modify) → report to conductor → `skills/skill-router.yaml`

@@ -136,6 +136,90 @@ routing:
     skill_path: "skills/svelte.md"
     weight: 50
 
+  - id: "recall"
+    condition: "search honcho, recall context, run recall, honcho_search, honcho_context"
+    skill_path: "skills/recall/SKILL.md"
+    weight: 55
+    note: "Pipeline phase — context retrieval before IMPLEMENT."
+
+  - id: "implement"
+    condition: "produce diff, write code, implement change, execute task"
+    skill_path: "skills/implement/SKILL.md"
+    weight: 54
+    note: "Pipeline phase — code implementation with YAGNI + diff gate."
+
+  - id: "context-guard"
+    condition: "audit scope, check docs, run context guard, punch list"
+    skill_path: "skills/context-guard/SKILL.md"
+    weight: 53
+    note: "Pipeline phase — verify docs/context updated alongside code."
+
+  - id: "critique"
+    condition: "critique changes, analyze findings, run critique, predict bugs"
+    skill_path: "skills/critique/SKILL.md"
+    weight: 52
+    note: "Pipeline phase — find problems before review. CRITICAL blocks HITL."
+
+  - id: "review"
+    condition: "review code, run review, check implementation, security review"
+    skill_path: "skills/review/SKILL.md"
+    weight: 51
+    note: "Pipeline phase — formal code review. HARD_FAIL only at start."
+
+  - id: "verify"
+    condition: "verify changes, run tests, check build, sha gate, test output"
+    skill_path: "skills/verify/SKILL.md"
+    weight: 50
+    note: "Pipeline phase — test verification + SHA gate."
+
+  - id: "eval"
+    condition: "evaluate task, score result, run eval, phase eval"
+    skill_path: "skills/eval/SKILL.md"
+    weight: 49
+    note: "Pipeline phase — score task across 5 dimensions."
+
+  - id: "retro"
+    condition: "write retro, reflect on task, log lessons, phase retro"
+    skill_path: "skills/retro/SKILL.md"
+    weight: 48
+    note: "Pipeline phase — substantive retro with metrics/action items."
+
+  - id: "conclude"
+    condition: "conclude task, write back, honcho conclude, close task"
+    skill_path: "skills/conclude/SKILL.md"
+    weight: 47
+    note: "Pipeline phase — Honcho write-back + close punch list."
+
+  - id: "refresh-context"
+    condition: "refresh context, update amortization, phase refresh"
+    skill_path: "skills/refresh-context/SKILL.md"
+    weight: 46
+    note: "Pipeline phase — refresh .techne/context files after changes."
+
+  - id: "debug"
+    condition: "debug issue, diagnose failure, fix bug, phase debug"
+    skill_path: "skills/debug/SKILL.md"
+    weight: 50
+    note: "Pipeline phase — systematic debugging with RED-first."
+
+  - id: "preflight"
+    condition: "preflight, prepare context, context amortization, phase preflight"
+    skill_path: "skills/preflight/SKILL.md"
+    weight: 93
+    note: "Pipeline phase — context preparation before every task."
+
+  - id: "conductor"
+    condition: "orchestrate, run pipeline, drive task, phase conductor"
+    skill_path: "skills/conductor/SKILL.md"
+    weight: 40
+    note: "Pipeline phase — orchestrate phase sequence by phase_mode."
+
+  - id: "approval"
+    condition: "approve changes, heavy mode, sensitive change, phase approval"
+    skill_path: "skills/approval/SKILL.md"
+    weight: 49
+    note: "Pipeline phase — HITL approval for heavy mode."
+
   - id: "implementer"
     condition: "implement, add feature, build, create component, fix, refactor, change"
     skill_path: "skills/implementer.md"

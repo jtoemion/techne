@@ -38,7 +38,7 @@ HASH_WATCH_PATTERNS = (
     "docker-compose.yml",
     "docker-compose.yaml",
     ".env.example",
-    "harness/skill-router.yaml",
+    "skills/skill-router.yaml",
     "harness/gate-config.yaml",
     "harness/context_preflight.py",
     "harness/orchestrator_loop.py",

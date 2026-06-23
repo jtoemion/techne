@@ -1,59 +1,48 @@
 ---
 name: recall
-description: Honcho context retrieval and workshop packet assembly for pipeline initialization.
+description: Use when about to skip Honcho search and implement from memory instead. Symptom-based: agent has context in conversation and reaches for "I already know" rather than searching.
+triggers:
+  - search honcho
+  - recall context
+  - run recall
 ---
 
-# Recall — Subagent Skill
+# Recall
 
-You are the Recaller. You produce structured recall output that grounds the implementation in durable context. You must search two sources:
+One line: Violating the letter violates the spirit — you do not have durable facts until you search.
 
-1. **Honcho** — durable user/workflow context via `honcho_search` or `honcho_context`
-2. **Workshop** — the `.techne/context` retrieval packet injected into your prompt
+## Lead — Required Output Lines
 
-Without this phase, the implementer works blind. RECALL is the pipeline's memory — it surfaces relevant past decisions, mistakes, and context before code is written.
-
-## Required Output
-
-Return the following structure. Every field is required.
-
-```
-HONCHO_CONTEXT: <durable context you recalled from Honcho — must be a real excerpt>
-WORKSHOP_CONTEXT: <comma-separated .techne/context docs used, or "none">
-WORKSHOP_FILES: <comma-separated files surfaced by retrieval, or "none">
-LESSONS: <relevant lessons/mistakes/decisions from memory, or "none">
-FOCUS: <2-4 lines on what IMPLEMENT should touch/avoid — specific to this task>
+```text
+HONCHO_CONTEXT: <from honcho search>
+WORKSHOP_CONTEXT: <from honcho search>
 ```
 
-## Gate Requirements
+Both lines MUST appear in your output before implementation begins. Gate rejects without them.
 
-- **HONCHO_CONTEXT must be real** — must contain a real excerpt from `honcho_search` or `honcho_context`. Never a placeholder, never fabricated.
-- **WORKSHOP_CONTEXT must reference actual files** — if the retrieval packet is empty, explicitly say "none". Do not fabricate paths.
-- **FOCUS must be task-specific** — not a generic instruction. It must narrow what IMPLEMENT touches based on this task's context.
-- **Minimum output length** — if total output is under 20 characters, the gate rejects it
+## Body
 
-## Honcho Search Protocol
-
-```
-honcho_context(peer='user')  # get current session context
-honcho_search(topic='<relevant topic>')  # search durable memory by topic
+```text
+1. Run: honcho search <task-keywords>
+2. Pull HONCHO_CONTEXT + WORKSHOP_CONTEXT lines verbatim into your output
+3. Proceed only after both lines are present
 ```
 
-Run these at the start of every recall. Surface:
-- Previous attempts at similar tasks (and why they failed)
-- User preferences or constraints stated in prior sessions
-- Architectural decisions recorded in Honcho
-- Past mistakes relevant to this task type
+## Rationalization Table
 
-## What IMPLEMENT Checks
+| Excuse | Reality |
+|--------|---------|
+| "I already know the context from the conversation" | Conversation context is not durable. The model forgets mid-session. |
+| "Honcho is slow, I'll just implement" | Honcho is indexed. Slow is 2 seconds. Wrong is 20 minutes. |
+| "The user just told me what to do" | User intent is in Honcho. What they told you is their gloss, not the spec. |
 
-IMPLEMENT will reject your output if:
-- HONCHO_CONTEXT line is missing or empty
-- WORKSHOP_CONTEXT line is missing (for full-mode tasks)
-- Output is under 20 characters total
+## Red Flags — STOP
 
-## Common Pitfalls
+- "I already know this" → stop. Search honcho.
+- "Let me skip recall and just implement" → stop. Search honcho.
+- "The context is clear from the conversation" → stop. Search honcho.
 
-- **Fabricating Honcho context** — never invent excerpts. If Honcho has nothing relevant, say "HONCHO_CONTEXT: none"
-- **Generic FOCUS** — "be careful" is not a focus. Narrow the implementation by specifying what to touch and what to avoid.
-- **Forgetting WORKSHOP_CONTEXT** — even if no context files were found, the line must be present (use "none")
-- **Not searching before asserting** — run `honcho_search` for the task domain before concluding "none"
+## Next Steps
+
+- Honcho search complete → `skills/implement/SKILL.md`
+- Back to `skills/skill-router.yaml`

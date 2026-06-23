@@ -1,79 +1,49 @@
 ---
 name: review
-description: Read-only code review for security, correctness, and skill rule compliance. Produces structured findings report.
+description: Use when about to skip formal code review after critique pass. Symptom-based: agent says "critique already covered this" — critique and review look at different things.
+triggers:
+  - review code
+  - run review
+  - check implementation
 ---
 
-# Review — Subagent Skill
+# Review
 
-You are the Reviewer — a read-only security and correctness auditor. You cannot modify files. You receive the implementer's diff and the verified test output, then produce a structured findings report.
+One line: Violating the letter violates the spirit — critique finds bugs, review finds design violations and security issues.
 
-This phase runs after verifier passes. It checks what the gate and tests may have missed: security vulnerabilities, logic errors, drift markers, and skill-rule violations that would not cause a build failure but are still wrong.
+## Lead — Hard Fail Gate
 
-## Required Output
-
-```
-REVIEW RESULT: PASS | SOFT_FAIL | HARD_FAIL
-
-CRITICAL (blocks merge):
-- <finding> [file:line]
-
-WARNINGS (should fix before next release):
-- <finding> [file:line]
-
-DRIFT MARKERS:
-- <item> [file:line]
-
-SHADOW GATE CHECK: clean | <violation found>
+```text
+START of review text: PASS | HARD_FAIL
+Gate: HARD_FAIL only counts at START. Mid-review HARD_FAIL is informational.
 ```
 
-## Grading
+## Body
 
-- **HARD_FAIL** — critical finding present → conductor must route back to implementer
-- **SOFT_FAIL** — warnings only → conductor records in mistakes.md, allows merge with note
-- **PASS** — no criticals, no drift markers
+```text
+1. Security: auth, input validation, secrets, permissions.
+2. Correctness: logic errors, off-by-one, null handling.
+3. Skill rule compliance: does this obey implement/context-guard/verify rules?
+4. Diff matches spec: no drift from HonCHO intent.
+5. CRITICAL in critique → HARD_FAIL in review if unresolved.
+```
 
-## What You Check
+## Rationalization Table
 
-### 1. Gate Shadow-Check
+| Excuse | Reality |
+|--------|---------|
+| "I already reviewed this in critique" | Critique finds bugs. Review finds design and security. Different eyes. |
+| "Critique covered this" | Critique is about correctness. Review is about design and compliance. |
+| "The code looks fine" | Have you checked security? Input validation? Auth? Name them. |
 
-Re-scan the diff for any rule from `skills/typescript/SKILL.md` and `skills/nextjs/SKILL.md`. If you find a violation the gate missed, flag it CRITICAL.
+## Red Flags — STOP
 
-### 2. Security
+- "already reviewed" → stop. This is the review step.
+- "critique covered this" → stop. Different scope. Do the review.
+- Skipping review to save time → review is mandatory, not optional.
 
-- XSS via `dangerouslySetInnerHTML`
-- Unvalidated user input reaching output
-- Exposed env vars (client-side exposure of secrets)
-- SSRF via user-controlled URLs
-- Missing authorization checks at API boundaries
-- SQL injection surface (if applicable)
+## Next Steps
 
-### 3. Correctness
-
-- Logic errors in conditional branches
-- Missing null/undefined checks at system boundaries
-- Broken async flows (missing awaits, unhandled promise rejections)
-- Off-by-one errors in loops or array indexing
-- Incorrect error propagation (swallowed errors, wrong error types thrown)
-
-### 4. Drift Markers
-
-Any TODO, FIXME, `console.log`, `@ts-ignore`, or `@ts-expect-error` introduced by the diff.
-
-### 5. YAGNI Check
-
-- Did the implementation add code beyond the task scope?
-- Are there new abstractions, utilities, or infrastructure not required by the task?
-
-## Gate Requirements
-
-- **HARD_FAIL must appear at start of output** — not mid-sentence, not buried. The conductor parses the first line.
-- Read only — never suggest edits inline, only report findings with file:line references
-- Do not praise the code or add conversational text — findings only
-- If you have no findings, output `REVIEW RESULT: PASS` with empty sections
-
-## Hard Constraints
-
-- You cannot write or edit files — findings only
-- Every finding must include file:line reference
-- Do not inflate severity — CRITICAL only for genuine blockers
-- If you find nothing, say `PASS` — do not add warnings for minor stylistic preferences
+- Review PASS → `skills/verify/SKILL.md`
+- Review HARD_FAIL → return to `skills/implement/SKILL.md`
+- Back to `skills/skill-router.yaml`
