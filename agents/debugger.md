@@ -2,6 +2,7 @@
 name: debugger
 description: Deep diagnostic agent. Called when the implementer fails repeatedly or the critique finds critical issues. Builds a feedback loop, isolates root cause, and produces a targeted fix.
 model: claude-sonnet-4-6
+skills: [skills/debug/SKILL.md]
 tools: Read, Glob, Grep, Edit, Write, Bash
 skills:
   - diagnose

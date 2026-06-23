@@ -2,6 +2,7 @@
 name: recaller
 description: Searches Honcho for durable context and runs the workshop retrieval packet before IMPLEMENT begins.
 model: claude-sonnet-4-6
+skills: [skills/recall/SKILL.md]
 tools: Read, Bash
 ---
 

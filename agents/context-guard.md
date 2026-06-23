@@ -2,6 +2,7 @@
 name: context-guard
 description: Audits every change AND keeps the project's docs/ + .techne/context HOT — recall the canonical docs going in, conclude by updating the ones the change made stale. Source-code read-only; docs/ + .techne/context are its to maintain.
 model: claude-sonnet-4-6
+skills: [skills/context-guard/SKILL.md]
 tools: Read, Glob, Grep, Bash, Write
 ---
 

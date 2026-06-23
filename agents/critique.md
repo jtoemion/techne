@@ -2,6 +2,7 @@
 name: critique
 description: Predicts emergent bugs and failure modes from an implementation. Runs after context-guard records changes. Does not fix — only diagnoses potential problems.
 model: claude-sonnet-4-6
+skills: [skills/critique/SKILL.md]
 tools: Read, Glob, Grep
 ---
 

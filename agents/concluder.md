@@ -2,6 +2,7 @@
 name: concluder
 description: Writes durable conclusions to Honcho after IMPLEMENT passes gates and RETRO completes.
 model: claude-sonnet-4-6
+skills: [skills/conclude/SKILL.md]
 tools: Read, Bash
 ---
 

@@ -2,6 +2,7 @@
 name: implementer
 description: Writes and edits code based on a task spec. Use for any code change — features, bug fixes, refactors. Always reads the skill files before touching any file.
 model: claude-sonnet-4-6
+skills: [skills/implement/SKILL.md]
 tools: Read, Glob, Grep, Edit, Write, Bash
 ---
 

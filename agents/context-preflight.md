@@ -2,6 +2,7 @@
 name: context-preflight
 description: Mandatory context preparation before every Techne task. Creates or refreshes .techne/context files and selected context packs before IMPLEMENT.
 model: claude-sonnet-4-6
+skills: [skills/preflight/SKILL.md]
 tools: Read, Glob, Grep, Write, Bash
 ---
 

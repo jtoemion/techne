@@ -2,6 +2,7 @@
 name: retro
 description: Retrospective agent — runs 7-question retro from quick-retro format, reads mistakes.md, proposes skill file updates. Runs at end of every pipeline, pass or fail.
 model: claude-haiku-4-5-20251001
+skills: [skills/retro/SKILL.md]
 tools: Read, Write
 ---
 

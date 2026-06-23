@@ -2,6 +2,7 @@
 name: reviewer
 description: Read-only code review for security, correctness, and skill rule compliance. Use after verifier passes. Cannot write or edit files — findings only.
 model: claude-sonnet-4-6
+skills: [skills/review/SKILL.md]
 tools: Read, Glob, Grep
 ---
 

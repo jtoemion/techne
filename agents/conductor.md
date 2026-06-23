@@ -2,6 +2,7 @@
 name: conductor
 description: Orchestrates the full build pipeline. Delegates all execution to specialized subagents — never writes or edits files itself. Use when starting a feature, fix, or refactor that needs implementation + verification + review in sequence.
 model: claude-sonnet-4-6
+skills: [skills/conductor/SKILL.md]
 tools: Agent
 ---
 

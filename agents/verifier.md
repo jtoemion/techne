@@ -2,6 +2,7 @@
 name: verifier
 description: Runs tests and captures real output to a file. Produces test_output.txt which the SHA gate then hashes. Use after implementer completes — never before.
 model: claude-sonnet-4-6
+skills: [skills/verify/SKILL.md]
 tools: Read, Bash
 ---
 
