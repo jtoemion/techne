@@ -12,7 +12,7 @@ import argparse, os, sqlite3, subprocess, sys, time
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-DEFAULT_DB = ROOT / "techne" / "tasks.db"
+DEFAULT_DB = ROOT / ".techne" / "memory" / "tasks.db"
 
 def fmtage(ts: float | None) -> str:
     if ts is None:

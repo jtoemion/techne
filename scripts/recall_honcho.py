@@ -26,6 +26,7 @@ def main():
         print("WORKSHOP_CONTEXT: none")
     print("LESSONS: none")
     print("FOCUS: (determine from task)")
+    sys.exit(0)
 
 if __name__ == "__main__":
     main()

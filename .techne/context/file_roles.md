@@ -9,7 +9,7 @@ Top-level module map (file counts are a rough size signal):
   harness/                 96 files   pipeline engine + gates + RL
   memory/                  24 files   runtime ledgers (mistakes/reward/eval)
   references/              30 files   
-  scripts/                 16 files   helper scripts
+  scripts/                 17 files   helper scripts
   skills/                 108 files   routed skill cards (the discipline library)
   techne/                   1 files   
-  tests/                  110 files   test suite
+  tests/                  124 files   test suite

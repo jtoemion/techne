@@ -13,7 +13,7 @@ import argparse, sqlite3, sys, json, time
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-DEFAULT_DB = ROOT / "techne" / "tasks.db"
+DEFAULT_DB = ROOT / ".techne" / "memory" / "tasks.db"
 STATE_FILE = ROOT / ".techne" / "memory" / "harness-state.json"
 
 VALID_PHASES = ("RECALL", "IMPLEMENT", "CONTEXT_GUARD", "CRITIQUE", "REVIEW",

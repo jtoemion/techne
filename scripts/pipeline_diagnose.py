@@ -57,8 +57,9 @@ def status_color(s: str) -> str:
 
 # ── Default paths ─────────────────────────────────────────────────────────────
 
-DEFAULT_DB = Path.home() / "repos" / "techne" / ".techne" / "memory" / "tasks.db"
-DEFAULT_OVERRIDES = Path.home() / "repos" / "techne" / ".techne" / "memory" / "mode_overrides.log"
+ROOT = Path(__file__).parent.parent
+DEFAULT_DB = ROOT / ".techne" / "memory" / "tasks.db"
+DEFAULT_OVERRIDES = ROOT / ".techne" / "memory" / "mode_overrides.log"
 
 
 # ── Shared DB opener ──────────────────────────────────────────────────────────

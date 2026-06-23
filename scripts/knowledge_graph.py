@@ -19,7 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 WIKILINKS = ROOT / ".techne" / "memory" / "wikilinks.json"
-TASKS_DB = ROOT / "techne" / "tasks.db"
+TASKS_DB = ROOT / ".techne" / "memory" / "tasks.db"
 MISTAKES = ROOT / ".techne" / "memory" / "mistakes.md"
 
 def load_wikilinks() -> dict:
@@ -55,10 +55,14 @@ def cmd_phases():
     if not db.exists():
         print("No tasks.db — no phase data.")
         return
-    conn = sqlite3.connect(str(db))
-    cur = conn.execute("SELECT phase, status, COUNT(*) FROM tasks GROUP BY phase, status")
-    rows = cur.fetchall()
-    conn.close()
+    try:
+        conn = sqlite3.connect(str(db))
+        cur = conn.execute("SELECT phase, status, COUNT(*) FROM tasks GROUP BY phase, status")
+        rows = cur.fetchall()
+        conn.close()
+    except sqlite3.OperationalError as e:
+        print(f"DB schema issue — cannot query phases: {e}")
+        return
     if not rows:
         print("No phase data.")
         return

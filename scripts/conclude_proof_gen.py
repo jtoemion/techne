@@ -30,6 +30,7 @@ def main():
     print(f"HONCHO: honcho://conclusion/{honcho_id}")
     print(f"DOCS: {args.docs}")
     print(f"CONTEXT: .techne/context/context_hash.txt refreshed sha:{sha}")
+    sys.exit(0)
 
 if __name__ == "__main__":
     main()

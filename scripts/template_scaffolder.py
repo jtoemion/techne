@@ -161,6 +161,7 @@ def main():
     parser.add_argument("--with-script", action="store_true", help="Also scaffold a script")
     args = parser.parse_args()
     scaffold(args.name, args.type, args.description, args.with_script)
+    sys.exit(0)
 
 if __name__ == "__main__":
     main()
