@@ -17,14 +17,13 @@ ROOT = TESTS_DIR.parent
 sys.path.insert(0, str(ROOT / "harness"))
 sys.path.insert(0, str(TESTS_DIR))
 
-# Suppress real .techne/context git-state check and subprocess calls.
+# Suppress real .techne/context git-state check.
 _mock.patch.object(
     __import__("orchestrator_loop", fromlist=["OrchestratorLoop"]).OrchestratorLoop,
     "_get_uncommitted_context_files",
     return_value=[],
 ).start()
-_mock.patch("subprocess.run", lambda *a, **k: type("Proc", (), {"returncode": 0, "stdout": "{}", "stderr": ""})()).start()
-_mock.patch("orchestrator_loop.check_honcho_logged", return_value="auto-honcho-123").start()
+_mock.patch("checkpoint.check_honcho_logged", return_value="auto-honcho-123").start()
 
 from orchestrator_loop import OrchestratorLoop, LoopOutcome, LoopAction
 from task_db import TaskDB
@@ -234,7 +233,7 @@ def test_conclude_proof_summary_has_proof_keyword(capsys, monkeypatch):
     # Patch check_honcho_logged to return truthy (simulatesHoncho was logged)
     # and _get_uncommitted_context_files to return [] (no uncommitted changes)
     with _mock.patch.object(loop, "_get_uncommitted_context_files", return_value=[]):
-            result = "HONCHO: done\nDOCS: updated\nCONTEXT: .techne/context refreshed sha:abc1234"
+            result = "HONCHO: done\nDOCS: updated\nCONTEXT: .techne/context refreshed sha:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
             outcome = loop._submit_conclude(task_id, result)
 
     captured = capsys.readouterr()

@@ -8,11 +8,10 @@ The self parameter refers to the OrchestratorLoop instance.
 from __future__ import annotations
 
 from _loop_types import LoopAction, LoopOutcome, MAX_PHASE_RETRIES
-from orchestrator_loop import (
-    run_gates, measure_scope, validate_mode_fit,
-    _compute_diff_stats, _log_mode_override,
-    check_honcho_logged,
+from pipeline_enforcer import (
+    validate_mode_fit, _compute_diff_stats, _log_mode_override,
 )
+from enforcement import run_gates, measure_scope
 
 
 # ── RECALL ─────────────────────────────────────────────────────────────────
@@ -42,6 +41,7 @@ def _submit_recall(self, task_id: str, result: str) -> LoopOutcome:
         return outcome
 
     recall_lower = result.lower()
+    from checkpoint import check_honcho_logged
     conclusion_id = check_honcho_logged()
     has_honcho = conclusion_id is not None
     has_workshop = "workshop_context:" in recall_lower
@@ -133,8 +133,18 @@ def _submit_implement(self, task_id: str, diff: str) -> LoopOutcome:
             task_id, "diff", "implementer produced no valid diff"
         )
 
+    # ── Hard gate check (runs BEFORE lane-switch, always) ──────────────
+    # Gates are merge blockers — they must fire regardless of mode-fit
+    # decisions. A gate-violating diff is rejected without any lane switch.
+    self._diff[task_id] = diff
+    gate = run_gates(diff, self.registry)
+    self._gate_pass[task_id] = gate.passed
+    if not gate.passed:
+        self._gate_violations[task_id] = self._gate_violations.get(task_id, 0) + 1
+        return self._impl_retry_or_escalate(task_id, gate.gate_name, gate.violation)
+
     # ── Phase-mode fit validation ───────────────────────────────────────
-    # After we have a real diff, verify the chosen phase_mode matches the work.
+    # After gates pass, verify the chosen phase_mode matches the work.
     # Extract file count from the diff for validate_mode_fit.
     file_count = len(_extract_files(diff))
     valid, reason, suggested = validate_mode_fit(
@@ -166,16 +176,8 @@ def _submit_implement(self, task_id: str, diff: str) -> LoopOutcome:
         self._print_phase_summary("IMPLEMENT", task_id, outcome)
         return outcome
 
-    # ── Real deterministic enforcement (the merge with conductor) ──────
-    # Run the same hard gates conductor runs, so the RL reward signal
-    # reflects real enforcement, not hardcoded True. Scope/intent is only
-    # measured once the gates pass — a rejected diff is not advanced.
-    self._diff[task_id] = diff
-    gate = run_gates(diff, self.registry)
-    self._gate_pass[task_id] = gate.passed
-    if not gate.passed:
-        self._gate_violations[task_id] = self._gate_violations.get(task_id, 0) + 1
-        return self._impl_retry_or_escalate(task_id, gate.gate_name, gate.violation)
+    # ── Scope/intent check ──────────────────────────────────────────────
+    # Scope is only measured once gates pass and mode-fit is confirmed.
 
     task_text = f"{task.title} {task.description}".strip()
     scope = measure_scope(task_text, diff)

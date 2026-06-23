@@ -139,13 +139,17 @@ def test_patch2_verify_reentry_via_orchestrator():
     loop.submit(t.id, "RECALL",
                "HONCHO_CONTEXT: relevant\nWORKSHOP_CONTEXT: none\n")
     loop.submit(t.id, "IMPLEMENT",
-               "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-old\n+new\n")
+               "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1,2 +1,2 @@\n def rate_limiter():\n-    return old\n+    return new\n")
     loop.submit(t.id, "CONTEXT_GUARD",
                "DOCS: NOT_NEEDED\nCONTEXT: NOT_NEEDED\nHONCHO: saved")
     loop.submit(t.id, "CRITIQUE", "No critical findings")
     loop.submit(t.id, "REVIEW", "REVIEW RESULT: PASS\nok")
+    # Insert APPROVAL event directly so _next_after_completed() returns "VERIFY"
+    # when the task is blocked. APPROVAL sits between REVIEW and VERIFY in PHASES,
+    # so unblock will soft-pass VERIFY → next_phase() returns EVAL.
+    loop.db._log_event(t.id, "human", "APPROVAL", "bypass for test", verdict="SOFT_FAIL")
 
-    # Block the task directly at VERIFY (simulate VERIFY blocking on first attempt)
+    # Block the task at VERIFY (simulate VERIFY blocking on first attempt)
     loop.enforcer.block_for_hitl(t.id, question="Tests failing?",
                                  options=["Retry", "Override"])
     check("task is BLOCKED",
@@ -206,7 +210,7 @@ def test_patch3_refresh_context_graceful_without_config():
         loop.submit(t.id, "RECALL",
                     "HONCHO_CONTEXT: relevant\nWORKSHOP_CONTEXT: none\n")
         loop.submit(t.id, "IMPLEMENT",
-                    "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-old\n+new\n")
+                    "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1,2 +1,2 @@\n def setup():\n-    return old\n+    return new\n")
         loop.submit(t.id, "CONTEXT_GUARD",
                     "DOCS: NOT_NEEDED\nCONTEXT: NOT_NEEDED\nHONCHO: saved")
         loop.submit(t.id, "CRITIQUE", "No critical findings")

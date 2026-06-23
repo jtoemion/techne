@@ -72,7 +72,7 @@ class TestCompletionIndicator(unittest.TestCase):
     # ── Test 1: ✓ TASK COMPLETE — all phases done ──────────────────────────
 
     def test_done_full_mode_shows_checkmark_and_all_phases(self):
-        """A full-mode task at DONE prints ✓ with the full 11-phase pipeline."""
+        """A full-mode task at DONE prints ✓ with the full 12-phase pipeline."""
         task = self.db.create_task("full task", phase_mode="full")
         events = [
             _make_event(task.id, "recaller", "RECALL"),
@@ -93,7 +93,7 @@ class TestCompletionIndicator(unittest.TestCase):
 
         self.assertTrue(result.startswith("✓"), f"Expected ✓ but got: {result}")
         self.assertIn("TASK COMPLETE", result)
-        self.assertIn("(11/11 phases)", result)
+        self.assertIn("(12/12 phases)", result)
         # Every phase should appear in the completion chain
         for phase in ("RECALL", "IMPLEMENT", "CONTEXT_GUARD", "CRITIQUE",
                       "REVIEW", "VERIFY", "EVAL", "RETRO", "CONCLUDE",

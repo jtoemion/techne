@@ -28,7 +28,7 @@ _spec.loader.exec_module(plugin)
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 @pytest.fixture
-def mock_ctx():
+def mock_ctx(monkeypatch):
     """Create a mock Hermes plugin context."""
     ctx = MagicMock()
     # Register hooks by tracking what @ctx.on returns
@@ -48,6 +48,10 @@ def mock_ctx():
     plugin.register(ctx)
     ctx._hooks = hooks
     ctx._commands = commands
+
+    # Isolate from the real tasks.db — returning None simulates no DB found.
+    # Tests that need an active task mock _has_active_task or the DB directly.
+    monkeypatch.setattr(plugin, "_find_tasks_db", lambda: None)
     return ctx
 
 
@@ -230,7 +234,7 @@ class TestPreToolCallHook:
         result = hook(tool_name="write_file", tool_input={"path": "src/main.py"})
         assert result is not None
         assert result["action"] == "block"
-        assert "no active task" in result["message"]
+        assert "no active task" in result["message"] or "no task database" in result["message"]
 
     def test_hook_allows_write_to_techne(self, active_plugin):
         """Writes to .techne/ paths bypass enforcement."""

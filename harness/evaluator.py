@@ -1,7 +1,7 @@
 """
 evaluator.py — scores every pipeline run across 5 dimensions.
 
-Called by conductor.py after every pipeline completion (pass or fail).
+Called by orchestrator_loop after every pipeline completion (pass or fail).
 Reads checkpoint state, mistakes log, and run log to produce a graded
 evaluation report with actionable recommendations.
 
@@ -303,7 +303,7 @@ def evaluate_pipeline_run(
     retro_questions: int = 7,
 ) -> EvalReport:
     """
-    Evaluate a pipeline run. Called by conductor.py after every completion.
+    Evaluate a pipeline run. Called by orchestrator_loop after every completion.
     Returns the EvalReport with all scores and formatted output.
     """
     report = EvalReport(task, pipeline_number)

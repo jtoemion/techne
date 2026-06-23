@@ -54,18 +54,11 @@ from pathlib import Path
 from typing import Optional
 
 from task_db import TaskDB
-from pipeline_enforcer import (
-    PipelineEnforcer, PHASE_DESCRIPTIONS, classify_phase_mode,
-    validate_mode_fit, get_cost_estimate, _log_mode_override,
-    _compute_diff_stats, detect_sensitive_change,
-)
+from pipeline_enforcer import PipelineEnforcer, PHASE_DESCRIPTIONS
 from reward_log import RewardLog
 from prompt_evolution import PromptEvolution
 from gate_evolution import GateEvolution
 from enforcement import build_registry, run_gates, measure_scope, verify_tests
-from pipeline_enforcer import (
-    validate_mode_fit, _log_mode_override, _compute_diff_stats, detect_sensitive_change,
-)
 from _loop_types import (
     LoopAction, LoopOutcome,
     HARNESS_DIR, ROOT, AGENTS_DIR,
@@ -124,20 +117,6 @@ class OrchestratorLoop:
         # Per-phase timeout tracking: {task_id: {phase: start_time}}
         self._phase_started_at: dict[str, dict[str, float]] = {}
 
-    def recommend_mode(self, title: str, description: str = "", diff: str = "") -> str:
-        """Pre-flight recommendation: suggest the appropriate phase mode for a task.
-
-        Agents can call this BEFORE creating the task to get the recommended mode.
-        Returns a message with the recommended mode and cost estimates for all modes.
-        """
-        mode = classify_phase_mode(title, description, diff)
-        cost = get_cost_estimate(mode)
-        micro_cost = get_cost_estimate("micro")["api_calls"]
-        fast_cost = get_cost_estimate("fast")["api_calls"]
-        full_cost = get_cost_estimate("full")["api_calls"]
-        heavy_cost = get_cost_estimate("heavy")["api_calls"]
-        return f"Recommended: {mode} ({cost['api_calls']} API calls) — micro ({micro_cost}) vs fast ({fast_cost}) vs full ({full_cost}) vs heavy ({heavy_cost})"
-
     def has_work(self, task_id: str) -> bool:
         """Check if a task still has phases to run."""
         task = self.db.get_task(task_id)
@@ -158,10 +137,6 @@ class OrchestratorLoop:
         one after it in PHASES (not that phase again — that bug made the loop re-submit
         IMPLEMENT forever). EVAL runs inside VERIFY's handler, so the host never runs it.
 
-        phase_mode controls the starting phase:
-          - "full" (default): starts at RECALL (10-phase pipeline)
-          - "fast": starts at IMPLEMENT (skip RECALL+CONCLUDE, for review-only tasks)
-
         The PENDING short-circuit only fires when no phase has been completed yet for
         this run. The earlier code returned RECALL whenever status==PENDING, which
         trapped the loop after RECALL mark_complete (RECALL's mark_complete only logs
@@ -172,7 +147,6 @@ class OrchestratorLoop:
         from pipeline_enforcer import PHASES
 
         task = self.db.get_task(task_id)
-        phase_mode = task.phase_mode if task else "full"
 
         # A PENDING task that has been reset (e.g. after a debugger/re-implement
         # unblock) should resume at the correct starting phase, NOT at the phase
@@ -183,58 +157,35 @@ class OrchestratorLoop:
                 e.action for e in self.db.get_task_history(task_id)
                 if e.action in PHASES and e.verdict not in ("HARD_FAIL",)
             }
-            if phase_mode in ("fast", "micro"):
-                return "IMPLEMENT"
             if "RECALL" not in completed:
                 return "RECALL"
             return "IMPLEMENT"
 
-        # A reset task (PENDING, e.g. after a debugger/re-implement unblock) resumes at
-        # RECALL (or IMPLEMENT for fast mode) even though stale completed-phase events linger in history.
-        # BUT: only treat PENDING as "reset" if no phase has been completed for this run.
         last = self.enforcer.get_phase(task_id)
-        if last is None and task and task.status == "PENDING":
-            return "IMPLEMENT" if phase_mode in ("fast", "micro") else "RECALL"
         if last is None:
-            return "IMPLEMENT" if phase_mode in ("fast", "micro") else "RECALL"
+            return "RECALL"
         if last in ("DONE", "FAILED", "HALT"):
             return last
-
-        # For fast mode, skip RECALL, CONCLUDE, and REFRESH_CONTEXT phases
-        if phase_mode == "fast":
-            next_phase = PHASES[PHASES.index(last) + 1] if last in PHASES else "IMPLEMENT"
-            if next_phase in ("RECALL", "CONCLUDE", "REFRESH_CONTEXT"):
-                return PHASES[PHASES.index(next_phase) + 1] if next_phase in PHASES else "DONE"
-
-        # For micro mode: IMPLEMENT → CONTEXT_GUARD → VERIFY → EVAL → DONE
-        # Skip RECALL, CRITIQUE, REVIEW, RETRO, CONCLUDE, REFRESH_CONTEXT
-        if phase_mode == "micro":
-            if last is None:
-                return "IMPLEMENT"
-            MICRO_NEXT = {
-                "IMPLEMENT": "CONTEXT_GUARD",
-                "CONTEXT_GUARD": "VERIFY",
-                "VERIFY": "EVAL",
-                "EVAL": "DONE",
-            }
-            if last in MICRO_NEXT:
-                return MICRO_NEXT[last]
-            if last in ("DONE", "FAILED", "HALT"):
-                return last
-
-        # For heavy mode: REVIEW → APPROVAL → VERIFY (human approval before verify)
-        # Uses standard full pipeline but inserts APPROVAL between REVIEW and VERIFY
-        if phase_mode == "heavy":
-            HEAVY_NEXT = {
-                "REVIEW": "APPROVAL",
-            }
-            if last in HEAVY_NEXT:
-                return HEAVY_NEXT[last]
 
         try:
             return PHASES[PHASES.index(last) + 1]
         except (ValueError, IndexError):
             return "DONE"
+
+    def recommend_mode(self, task_title: str, task_desc: str, diff: str) -> str:
+        """Recommend a phase_mode based on diff characteristics.
+
+        Returns a summary string with the recommended mode and all cost estimates.
+        Kept for backward compatibility until phase_mode migration.
+        """
+        from pipeline_enforcer import classify_phase_mode, get_cost_estimate
+        mode = classify_phase_mode(task_title, task_desc, diff)
+        costs = {m: get_cost_estimate(m) for m in ("micro", "fast", "full")}
+        summary = f"Recommended: {mode}. "
+        summary += " ".join(
+            f"{m}={c['api_calls']} calls" for m, c in costs.items()
+        )
+        return summary
 
     def get_prompt(self, task_id: str, phase: str) -> dict:
         """

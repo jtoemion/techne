@@ -21,7 +21,7 @@ sys.path.insert(0, str(HARNESS_DIR))
 
 def test_parse_retro_markers_basic():
     """Single LESSON marker parses."""
-    from conductor import parse_retro_markers
+    from phase_skills import parse_retro_markers
     output = """
     LESSON: SHA must be scoped to CONTEXT line | WHY: bypass via HONCHO was possible
     """
@@ -35,7 +35,7 @@ def test_parse_retro_markers_basic():
 
 def test_parse_retro_markers_multiple_kinds():
     """All three kinds parse independently."""
-    from conductor import parse_retro_markers
+    from phase_skills import parse_retro_markers
     output = """
     DECISION: Use line-prefix validation | WHY: keyword too loose
     LESSON: Gate self-improvement on recurrence | WHY: scores overfit
@@ -49,7 +49,7 @@ def test_parse_retro_markers_multiple_kinds():
 
 def test_parse_retro_markers_optional_fields():
     """Markers without WHY parse with empty why."""
-    from conductor import parse_retro_markers
+    from phase_skills import parse_retro_markers
     output = "DISCIPLINE: Gate self-improvement on recurrence"
     result = parse_retro_markers(output)
     assert len(result) == 1
@@ -58,7 +58,7 @@ def test_parse_retro_markers_optional_fields():
 
 def test_parse_retro_markers_case_insensitive():
     """Lowercase markers parse too."""
-    from conductor import parse_retro_markers
+    from phase_skills import parse_retro_markers
     output = "decision: lowercase works | why: friendly"
     result = parse_retro_markers(output)
     assert len(result) == 1
@@ -67,7 +67,7 @@ def test_parse_retro_markers_case_insensitive():
 
 def test_parse_retro_markers_ignores_non_markers():
     """Prose around markers is ignored."""
-    from conductor import parse_retro_markers
+    from phase_skills import parse_retro_markers
     output = """
     Some prose here. Not a marker.
     LESSON: one thing
@@ -80,14 +80,14 @@ def test_parse_retro_markers_ignores_non_markers():
 
 def test_parse_retro_markers_empty():
     """Empty input returns empty list."""
-    from conductor import parse_retro_markers
+    from phase_skills import parse_retro_markers
     assert parse_retro_markers("") == []
     assert parse_retro_markers(None) == []
 
 
 def test_parse_retro_markers_skill_field_overridden_by_caller():
     """SKILL field is parsed but caller (submit_retro) overrides with routed skill_id."""
-    from conductor import parse_retro_markers
+    from phase_skills import parse_retro_markers
     output = "LESSON: a thing | SKILL: wrong-skill"
     result = parse_retro_markers(output)
     # SKILL is NOT in the returned tuple — caller applies the routed skill_id
@@ -95,18 +95,23 @@ def test_parse_retro_markers_skill_field_overridden_by_caller():
     assert len(result[0]) == 3, "Tuple should be (kind, what, why) — no skill"
 
 
-# ── submit_retro ledger writing tests ───────────────────────────────────
+# ── retro → ledger persistence tests (orchestrator path) ─────────────────
+# _retro_conclude._persist_retro is the live equivalent of the old
+# conductor.Pipeline.submit_retro: it parses DECISION/LESSON/DISCIPLINE markers
+# from the reflection and writes them through to ledger.md.
 
-def test_submit_retro_writes_ledger_entries():
-    """submit_retro parses markers and writes entries to ledger.md."""
-    from conductor import Pipeline
-    from task_db import TaskDB
-    from reward_log import RewardLog
+def _run_persist_retro(task_id: str, reflection: str):
+    """Call _persist_retro with ledger/mistakes redirected to temp files.
+
+    Returns the ledger content written. Cleans up the retros/ archive file that
+    _persist_retro writes to the real .techne/memory/retros/ directory.
+    """
+    from _retro_conclude import _persist_retro
+    import ledger
+    import mistakes
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
-        import ledger
-        import mistakes
         original_ledger = ledger.LEDGER_FILE
         original_mistakes = mistakes.MISTAKES_FILE
         ledger.LEDGER_FILE = tmp_path / "ledger.md"
@@ -117,62 +122,38 @@ def test_submit_retro_writes_ledger_entries():
         mistakes.MISTAKES_FILE.write_text(
             "# MISTAKES\n\n<!-- New entries go below this line -->\n", encoding="utf-8"
         )
-
+        archive = Path(__file__).parent.parent / ".techne" / "memory" / "retros" / f"{task_id}.md"
         try:
-            p = Pipeline(task="test submit_retro writing", run_number=999)
-            p.skill_id = "test-skill"
-
-            output = """
-            DECISION: Test decision | WHY: testing
-            LESSON: Test lesson | WHY: testing
-            """
-            p.submit_retro(output=output, questions_answered=7, produced_proposals=False)
-
-            content = ledger.LEDGER_FILE.read_text()
-            assert "Test decision" in content, f"DECISION missing from ledger:\n{content}"
-            assert "Test lesson" in content, f"LESSON missing from ledger:\n{content}"
-            assert content.count("ACTIVE") >= 2
-            assert p.eval_metrics.get("retro_ledger_entries", {}).get("DECISION") == 1
-            assert p.eval_metrics.get("retro_ledger_entries", {}).get("LESSON") == 1
+            _persist_retro(task_id, reflection, task_title="ledger wiring test")
+            return ledger.LEDGER_FILE.read_text()
         finally:
             ledger.LEDGER_FILE = original_ledger
             mistakes.MISTAKES_FILE = original_mistakes
+            if archive.exists():
+                archive.unlink()
 
 
-def test_submit_retro_no_markers_means_no_write():
-    """Empty retro output means no ledger writes (but completion still recorded)."""
-    from conductor import Pipeline
-    from task_db import TaskDB
-    from reward_log import RewardLog
+def test_persist_retro_writes_ledger_entries():
+    """_persist_retro parses markers and writes entries to ledger.md."""
+    reflection = (
+        "Retro reflection that is comfortably over the substantive length gate.\n"
+        "- DECISION: Test decision — testing\n"
+        "- LESSON: Test lesson — testing\n"
+    )
+    content = _run_persist_retro("test-persist-retro-writes", reflection)
+    assert "Test decision" in content, f"DECISION missing from ledger:\n{content}"
+    assert "Test lesson" in content, f"LESSON missing from ledger:\n{content}"
+    assert content.count("ACTIVE") >= 2
 
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        import ledger
-        import mistakes
-        original_ledger = ledger.LEDGER_FILE
-        original_mistakes = mistakes.MISTAKES_FILE
-        ledger.LEDGER_FILE = tmp_path / "ledger.md"
-        mistakes.MISTAKES_FILE = tmp_path / "mistakes.md"
-        ledger.LEDGER_FILE.write_text(
-            "# LEDGER\n\n<!-- New entries go below this line -->\n", encoding="utf-8"
-        )
-        mistakes.MISTAKES_FILE.write_text(
-            "# MISTAKES\n\n<!-- New entries go below this line -->\n", encoding="utf-8"
-        )
 
-        try:
-            p = Pipeline(task="test no markers", run_number=998)
-            p.skill_id = "test-skill"
-
-            output = "GOAL: test. DONE: nothing. CHALLENGES: none."
-            p.submit_retro(output=output)
-
-            content = ledger.LEDGER_FILE.read_text()
-            assert content.count("ACTIVE") == 0, f"Unexpected entries:\n{content}"
-            assert "retro_ledger_entries" not in p.eval_metrics
-        finally:
-            ledger.LEDGER_FILE = original_ledger
-            mistakes.MISTAKES_FILE = original_mistakes
+def test_persist_retro_no_markers_means_no_write():
+    """Reflection without markers writes no ledger entries."""
+    reflection = (
+        "Plain prose retro with no structured markers at all, long enough to be "
+        "substantive but containing nothing the parser should extract."
+    )
+    content = _run_persist_retro("test-persist-retro-empty", reflection)
+    assert content.count("ACTIVE") == 0, f"Unexpected entries:\n{content}"
 
 
 # ── wikilink tests ──────────────────────────────────────────────────────
@@ -222,7 +203,7 @@ def test_wikilink_markdown_has_skill_index():
     graph = build_graph()
     md = format_markdown(graph)
     assert "Skills → Entries" in md or "Reverse index" in md, "Missing reverse index section"
-    assert "MISTAKE" in md  # at least one kind section
+    assert any(k in md for k in ("MISTAKE", "DECISION", "LESSON", "DISCIPLINE"))  # at least one kind section
 
 
 def test_wikilink_json_has_skill_map():

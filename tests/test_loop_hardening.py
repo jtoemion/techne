@@ -306,41 +306,6 @@ def test_retro_missing_reference_returns_retry_then_conclude():
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# ITEM 4: Conductor run_number default + empty test_output
-# ═══════════════════════════════════════════════════════════════════════════
-
-def test_pipeline_run_number_default_zero():
-    """Pipeline.__init__ accepts run_number=0 as default."""
-    print("\n[item 4a — Pipeline.__init__ run_number defaults to 0]")
-    from conductor import Pipeline
-    p = Pipeline("test task")  # should not raise
-    check("Pipeline.run_number defaults to 0", p.run_number == 0)
-
-
-def test_submit_verification_empty_output_returns_halt():
-    """submit_verification with empty test_output returns HALT, not crashes."""
-    print("\n[item 4b — submit_verification empty test_output returns HALT]")
-    from conductor import Pipeline
-    import tempfile, shutil
-    from pathlib import Path
-
-    # Mock the verify directory to avoid file system issues
-    with tempfile.TemporaryDirectory() as tmpdir:
-        from conductor import VERIFY_DIR
-        orig_verify_dir = Path(VERIFY_DIR)
-        verify_backup = None
-        if orig_verify_dir.exists():
-            verify_backup = shutil.move(str(orig_verify_dir), tmpdir + "/verify_backup")
-        try:
-            p = Pipeline("test task")
-            result = p.submit_verification("")
-            check("Empty test_output returns HALT status", result.status == "HALT")
-        finally:
-            if verify_backup:
-                shutil.move(verify_backup, str(orig_verify_dir))
-
-
-# ═══════════════════════════════════════════════════════════════════════════
 # ITEM 5: Eval metrics robustness
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -383,9 +348,6 @@ if __name__ == "__main__":
         test_retro_exhaustion_skips_to_conclude,
         test_retro_short_content_returns_retry_then_conclude,
         test_retro_missing_reference_returns_retry_then_conclude,
-        # Item 4
-        test_pipeline_run_number_default_zero,
-        test_submit_verification_empty_output_returns_halt,
         # Item 5
         test_eval_metrics_robust_to_malformed_diff,
     ]

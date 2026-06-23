@@ -8,8 +8,8 @@ The self parameter refers to the OrchestratorLoop instance.
 from __future__ import annotations
 
 from _loop_types import LoopAction, LoopOutcome, MAX_TOTAL_RETRIES, MAX_PHASE_RETRIES
-from orchestrator_loop import verify_tests, detect_sensitive_change
-from pipeline_enforcer import PHASE_DESCRIPTIONS
+from enforcement import verify_tests
+from pipeline_enforcer import PHASE_DESCRIPTIONS, detect_sensitive_change
 
 
 # ── CRITIQUE ─────────────────────────────────────────────────────────────────

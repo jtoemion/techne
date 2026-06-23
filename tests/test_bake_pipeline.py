@@ -190,23 +190,42 @@ def test_bake_intent_gate_fires_on_high_confidence_mismatch():
 def test_bake_intent_mismatch_blocks_loop_at_implement(loop):
     # When intent mismatches hard, the loop retries IMPLEMENT (does not advance).
     # We force it via a stubbed measure_scope to keep the test deterministic.
-    import orchestrator_loop as ol
-    from enforcement import ScopeResult, GateResult
+    # Patch _recall_implement.measure_scope (where it's actually called) so the
+    # mock is seen by the handler. phase_mode="micro" avoids the lane-switch path.
+    from unittest.mock import patch
+    from enforcement import ScopeResult
 
-    real_measure = ol.measure_scope
-    ol.measure_scope = lambda task, diff, **k: ScopeResult(
+    mocked = lambda task, diff, **k: ScopeResult(
         diff_focused=True, scope_creep=False, intent={"verdict": "MISMATCH"},
         intent_mismatch=True, violation="INTENT GATE: MISMATCH",
     )
-    try:
+    # Diff large enough (many lines) to avoid lane-switch on full-mode task,
+    # while still passing all hard gates (no console.log / ts-ignore).
+    large_diff = (
+        "--- a/rate_limiter.py\n+++ b/rate_limiter.py\n@@ -1 +1,15 @@\n"
+        "-old\n"
+        "+def rate_limiter(rate, window=60):\n"
+        "+    \"\"\"Token-bucket rate limiter.\"\"\"\n"
+        "+    tokens = []\n"
+        "+    def check(token):\n"
+        "+        now = time.time()\n"
+        "+        tokens[:] = [t for t in tokens if now - t < window]\n"
+        "+        if len(tokens) >= rate:\n"
+        "+            return False\n"
+        "+        tokens.append(now)\n"
+        "+        return True\n"
+        "+    return check\n"
+        "+\n"
+        "+def reset(): pass\n"
+        "+def status(): return 0\n"
+    )
+    with patch("_recall_implement.measure_scope", mocked):
         t = loop.db.create_task("add rate_limiter", discipline="implement")
         loop.submit(t.id, "RECALL",
                     "HONCHO_CONTEXT: prior work\nWORKSHOP_CONTEXT: workshop retrieval packet")
-        outcome = loop.submit(t.id, "IMPLEMENT", CLEAN)
+        outcome = loop.submit(t.id, "IMPLEMENT", large_diff)
         assert outcome.action == LoopAction.RETRY
         assert loop._scope_clean.get(t.id) is False
-    finally:
-        ol.measure_scope = real_measure
 
 
 # ── Layer 4: SHA gate ────────────────────────────────────────────────────────

@@ -45,7 +45,7 @@ def test_orchestrator_mentions_precompaction_checkpoint():
 
 
 def test_skill_router_yaml_mentions_precompaction_checkpoint():
-    text = (ROOT / "harness" / "skill-router.yaml").read_text(encoding="utf-8")
+    text = (ROOT / "skills" / "skill-router.yaml").read_text(encoding="utf-8")
     assert "honcho-precompaction-checkpoint" in text
     assert "skills/honcho-precompaction-checkpoint.md" in text
 

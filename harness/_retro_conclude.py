@@ -148,9 +148,16 @@ def _submit_retro(self, task_id: str, reflection: str) -> LoopOutcome:
     # Gate: reject checkbox retros
     if len(reflection.strip()) < 100:
         if self._bump_retry(task_id, "RETRO"):
-            # Exhausted — skip RETRO, advance to CONCLUDE
+            # Exhausted — record RETRO as skipped then advance to CONCLUDE.
+            # Use _log_event directly (not mark_complete) so this works even when
+            # the task is BLOCKED (e.g. VERIFY blocked before RETRO ran).
             self._retro_skipped = getattr(self, '_retro_skipped', {})
             self._retro_skipped[task_id] = True
+            self.db._log_event(
+                task_id, "retro", "RETRO",
+                "RETRO skipped after exhausting retry budget",
+                verdict="SOFT_FAIL",
+            )
             outcome = LoopOutcome(
                 action=LoopAction.RUN_PHASE, phase="CONCLUDE", task_id=task_id,
                 message=(
@@ -176,9 +183,14 @@ def _submit_retro(self, task_id: str, reflection: str) -> LoopOutcome:
     referenced = [p for p in completed_phases if p.lower() in reflection_lower]
     if not referenced:
         if self._bump_retry(task_id, "RETRO"):
-            # Exhausted — skip RETRO, advance to CONCLUDE
+            # Exhausted — record RETRO as skipped then advance to CONCLUDE.
             self._retro_skipped = getattr(self, '_retro_skipped', {})
             self._retro_skipped[task_id] = True
+            self.db._log_event(
+                task_id, "retro", "RETRO",
+                "RETRO skipped after exhausting retry budget",
+                verdict="SOFT_FAIL",
+            )
             outcome = LoopOutcome(
                 action=LoopAction.RUN_PHASE, phase="CONCLUDE", task_id=task_id,
                 message=(

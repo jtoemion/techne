@@ -62,7 +62,7 @@ def test_router_wires_context_skill():
     # assumed never landed on master — see test_adopted, already red on master).
     expect_true("context task routes to context-amortization", result and result["id"] == "context-amortization")
 
-    router_text = (ROOT / "harness" / "skill-router.yaml").read_text(encoding="utf-8")
+    router_text = (ROOT / "skills" / "skill-router.yaml").read_text(encoding="utf-8")
     expect_true("context skill is always loaded", '"skills/context-amortization.md"' in router_text)
 
 

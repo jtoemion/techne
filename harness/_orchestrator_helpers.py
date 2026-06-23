@@ -46,6 +46,7 @@ def _validate_conclude_proof(self, result: str, task_id: str | None = None) -> s
         )
 
     # Parse structured lines: prefix must start a non-blank line
+    from checkpoint import check_honcho_logged
     conclusion_id = check_honcho_logged()
     has_honcho = conclusion_id is not None
     context_line = None  # the raw CONTEXT line (if any)
@@ -339,5 +340,5 @@ def get_eval(self, task_id: str) -> EvalReport | None:
     return self._eval.get(task_id)
 
 
-# ── Import stub for check_honcho_logged used in _validate_conclude_proof ──────
-from checkpoint import check_honcho_logged
+# check_honcho_logged is imported lazily inside _validate_conclude_proof
+# to allow test-time patching of checkpoint.check_honcho_logged.

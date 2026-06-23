@@ -10,13 +10,13 @@ updated: "2026-06-09"
 routing:
   - id: "diagnose"
     condition: "bug, broken, throwing, failing, regression, not working, debug, diagnose"
-    skill_path: "skills/diagnose/SKILL.md"
+    skill_path: "skills/diagnose.md"
     weight: 90
     note: "Always diagnose before attempting a fix. Removed 'error' — too generic, collides with TypeScript routing."
 
   - id: "writing-skill"
     condition: "write a skill, create a skill, new skill, skill template, audit skill, refactor skill"
-    skill_path: "skills/writing-skill/SKILL.md"
+    skill_path: "skills/writing-skill.md"
     weight: 88
     note: "High weight — someone asking to write a skill should land here before tdd/grill."
 
@@ -34,12 +34,12 @@ routing:
 
   - id: "tdd"
     condition: "test-first, TDD, red-green-refactor, write tests, test-driven"
-    skill_path: "skills/tdd/SKILL.md"
+    skill_path: "skills/tdd.md"
     weight: 85
 
   - id: "persona-brainstorm"
     condition: "persona brainstorm, grill session, client dev dialogue, discover improvement, Ezekiel, Jeremiah, brainstorm session"
-    skill_path: "skills/persona-brainstorm/SKILL.md"
+    skill_path: "skills/persona-brainstorm.md"
     weight: 85
     note: "Multi-persona discovery loop. Outputs ADRs from real friction."
 
@@ -115,7 +115,7 @@ routing:
     note: "Parent agent reads this to decompose plans and drive the pipeline. Uses orchestrator_loop.py for phase transitions."
 
   - id: "react-vite"
-    condition: "React app, Vite build, React component, React hook, Vitest jsdom, TanStack Query, React 19"
+    condition: "Vite build, Vitest jsdom, TanStack Query, vite.config, vite setup"
     skill_path: "skills/react-vite/SKILL.md"
     weight: 68
     note: "React 19 + Vite client apps with hooks/TanStack Query/Vitest. NOT Next.js — routing/middleware conventions differ."

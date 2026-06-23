@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Optional
 
 from task_db import TaskDB, Task
-from conductor import _load_phase_skills
+from phase_skills import _load_phase_skills
 
 
 # ── Memory directory and override log ──────────────────────────────────────
@@ -960,9 +960,16 @@ class PipelineEnforcer:
         # Check transition validity
         # When BLOCKED, use BLOCKED transitions instead of the current phase's
         transition_source = "BLOCKED" if task.status == "BLOCKED" else current
-        # Fast-mode tasks skip RECALL/CONCLUDE — allow IMPLEMENT directly from start,
-        # and DONE directly from RETRO (skipping CONCLUDE)
         allowed_next = TRANSITIONS.get(transition_source, [])
+
+        # Phase-mode overrides: fast mode skips CONCLUDE + REFRESH_CONTEXT
+        # (RETRO → DONE). Micro mode skips CONTEXT_GUARD + CRITIQUE.
+        # These remain until a proper schema migration removes phase_mode.
+        if hasattr(task, "phase_mode") and task.phase_mode:
+            if task.phase_mode == "fast" and current == "RETRO":
+                allowed_next = ["DONE", "FAILED"]
+            elif task.phase_mode == "micro" and current == "IMPLEMENT":
+                allowed_next = ["REVIEW", "BLOCKED", "FAILED"]
 
         # Soft-pass re-entry: when a phase was soft-passed (HARD_FAIL verdict after
         # block), get_phase() returns that phase but it's already recorded in history.
@@ -976,22 +983,6 @@ class PipelineEnforcer:
                     allowed=True, current_phase=current,
                     target_phase=target_phase, task=task,
                 )
-        if task.phase_mode == "fast":
-            if current is None:
-                allowed_next = ["IMPLEMENT"]
-            elif current == "RETRO":
-                allowed_next = ["DONE", "FAILED"]
-        if task.phase_mode == "micro":
-            # Micro mode: IMPLEMENT → CONTEXT_GUARD → VERIFY → EVAL → DONE
-            # Skip RECALL, CRITIQUE, REVIEW, RETRO, CONCLUDE, REFRESH_CONTEXT
-            if current is None:
-                allowed_next = ["IMPLEMENT"]
-            elif current == "EVAL":
-                allowed_next = ["DONE", "FAILED"]
-            elif current == "VERIFY":
-                allowed_next = ["EVAL"]
-            elif current == "CONTEXT_GUARD":
-                allowed_next = ["VERIFY"]
         if target_phase not in allowed_next:
             expected = " or ".join(allowed_next) if allowed_next else "none (terminal)"
             return PhaseTransition(

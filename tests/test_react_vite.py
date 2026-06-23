@@ -67,7 +67,7 @@ def test_frontmatter():
 
 
 def test_react_and_nextjs_distinctly_registered():
-    yaml = (ROOT / "harness" / "skill-router.yaml").read_text(encoding="utf-8")
+    yaml = (ROOT / "skills" / "skill-router.yaml").read_text(encoding="utf-8")
     assert 'id: "react-rules"' in yaml
     assert 'id: "nextjs-rules"' in yaml
 

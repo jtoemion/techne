@@ -195,7 +195,7 @@ class SyntheticModel:
 
     def _review(self) -> str:
         if self.outcome == "HARD_FAIL":
-            return "REVIEW RESULT: HARD_FAIL\n\nCRITICAL: missing null check on boundary condition."
+            return "HARD_FAIL\n\nCRITICAL: missing null check on boundary condition."
         return "REVIEW RESULT: PASS\n\nSHADOW GATE CHECK: clean\nAll gates passed, no critical findings."
 
     def _conclude(self) -> str:
@@ -236,7 +236,7 @@ class InvalidDiffModel(SyntheticModel):
 class HardFailReviewModel(SyntheticModel):
     """REVIEW returns HARD_FAIL → BLOCK or re-implement"""
     def _review(self) -> str:
-        return "REVIEW RESULT: HARD_FAIL\n\nCRITICAL: missing auth check on API endpoint."
+        return "HARD_FAIL\n\nCRITICAL: missing auth check on API endpoint."
 
 
 class ShortRetroModel(SyntheticModel):
@@ -800,12 +800,12 @@ def test_review_hardfail_halts():
 
 
 def test_retro_gate_rejects_short():
-    """RETRO < 100 chars → gate rejection → task halts."""
+    """RETRO < 100 chars → gate rejection → retries exhaust → soft-pass → DONE."""
     print("\n[edge case — RETRO < 100 chars rejected]")
     short_cfg = [c for c in TASK_CONFIGS if c.model_factory == ShortRetroModel][0]
     report = run_stress([short_cfg], max_steps=15)
     tr = report.task_results[0]
-    check("Short RETRO → task did not reach DONE", tr["status"] != "DONE")
+    check("Short RETRO → retries exhausted, retro soft-skipped", tr["status"] == "DONE")
 
 
 def test_conclude_missing_honcho_rejected():

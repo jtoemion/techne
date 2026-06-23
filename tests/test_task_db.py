@@ -50,15 +50,15 @@ def db_with_data():
 
 class TestSchemaMigration:
     def test_schema_version_is_1_after_init(self, db):
-        """After _init_schema, schema_version should be 1."""
-        assert db.get_schema_version() == 1
+        """After _init_schema, schema_version should match CURRENT_SCHEMA_VERSION."""
+        assert db.get_schema_version() == CURRENT_SCHEMA_VERSION
 
     def test_migrate_schema_idempotent(self, db):
         """Calling migrate_schema twice is safe."""
         db.migrate_schema()
-        assert db.get_schema_version() == 1
+        assert db.get_schema_version() == CURRENT_SCHEMA_VERSION
         db.migrate_schema()
-        assert db.get_schema_version() == 1
+        assert db.get_schema_version() == CURRENT_SCHEMA_VERSION
 
     def test_meta_table_exists(self, db):
         """meta table should exist and be queryable."""
@@ -66,7 +66,7 @@ class TestSchemaMigration:
             "SELECT * FROM meta WHERE key = 'schema_version'"
         ).fetchone()
         assert row is not None
-        assert row["value"] == "1"
+        assert row["value"] == str(CURRENT_SCHEMA_VERSION)
 
 
 # ── 2. Performance Indexes ───────────────────────────────────────────────────

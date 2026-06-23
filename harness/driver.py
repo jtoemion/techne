@@ -1,12 +1,12 @@
 """
-driver.py — the host-driven RUNNER that makes Techne's pipeline actually run.
+driver.py — the model-backed RUNNER that drives Techne's OrchestratorLoop RL pipeline.
 
-conductor.Pipeline is a turn-by-turn state machine: every phase exposes a `*_prompt()`
-and a `submit_*()` that runs the REAL gates. But nothing drove it — Techne "does not
-call a model", so the gates / reviewer / reward never fired on their own; a host had to
-step it by hand (see tests/test_conductor.py::drive_pipeline). This is the missing
-driver: it walks a task through IMPLEMENT → VERIFY → REVIEW → RETRO, pulling each agent
-artifact from an injected `model` and feeding it back through the gates.
+orchestrator_loop.py is a state machine: each phase exposes a prompt and a `submit_*()`
+that runs the REAL gates, but it never calls a model itself. This driver walks a GROUP
+of tasks through the full pipeline (IMPLEMENT → CONTEXT_GUARD → CRITIQUE → REVIEW →
+VERIFY → … → DONE), pulling each phase artifact from an injected `model` and feeding it
+back through the gates. It's the autonomous/RL counterpart to the host-driven loop
+(where a host agent delegates each phase to a subagent instead of an injected model).
 
 The model is INJECTED (a callable), not imported, on purpose:
   - the whole loop is unit-tested deterministically with a fake model (no tokens), and
@@ -19,12 +19,9 @@ faked test output; asking a model to "return stdout" would defeat it. So `run_te
 must actually execute the suite and return its real stdout.
 
 Usage (with a real backend wired into `model`):
-    from driver import run_task
-    res = run_task("add sale badge to product page", model=my_model, run_tests=my_tests)
-    if res.completed:
-        print(res.report.format_report())
-    else:
-        print(f"halted at {res.halted_phase}: {res.halt_feedback}")
+    from driver import run_plan
+    plan = run_plan(["add sale badge to product page"], model=my_model, run_tests=my_tests)
+    print(plan.summary)
 """
 from __future__ import annotations
 
@@ -32,75 +29,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
-from conductor import Pipeline, MAX_RETRIES, ROOT
 from model_backends import default_provider
+
+ROOT = Path(__file__).resolve().parent.parent   # techne/
 
 # A model call for one agent phase: (system, user, phase) -> raw text artifact.
 #   phase is "implement" | "review" | "retro" so an adapter can pick model/temp per role.
 ModelFn = Callable[[str, str, str], str]
 # A real test run: () -> full stdout (it gets hashed by the SHA gate, so it must be real).
 TestFn = Callable[[], str]
-
-
-@dataclass
-class RunResult:
-    task: str
-    halted_phase: Optional[str]   # None when the run completed every phase
-    halt_feedback: str
-    report: object                # EvalReport when finalized, else None
-    retries_used: int = 0
-
-    @property
-    def completed(self) -> bool:
-        return self.halted_phase is None
-
-
-def run_task(
-    task: str,
-    model: ModelFn,
-    run_tests: TestFn,
-    *,
-    max_attempts: int = MAX_RETRIES,
-) -> RunResult:
-    """Drive one task through the full pipeline.
-
-    Calls `model` for the IMPLEMENT/REVIEW/RETRO artifacts and `run_tests` for VERIFY.
-    Returns a RunResult; on a HALT, `halted_phase` names where it stopped and no
-    EvalReport is produced (the gate refused to let the run be called done).
-    """
-    p = Pipeline.start(task)
-
-    # ── IMPLEMENT — retry loop. implement_prompt() folds in the gate feedback on a
-    #    retry, so the model gets told exactly what to fix. The Pipeline HALTs itself
-    #    at MAX_RETRIES; the attempts guard is a backstop for a lower max_attempts.
-    attempts = 0
-    while True:
-        ap = p.implement_prompt()
-        diff = model(ap.system, ap.user, "implement")
-        res = p.submit_implementation(diff)
-        if res.status == "PASS":
-            break
-        if res.status == "HALT":
-            return RunResult(task, "IMPLEMENT", res.feedback, None, p.retries_used)
-        # RETRY
-        attempts += 1
-        if attempts > max_attempts:
-            return RunResult(task, "IMPLEMENT", res.feedback, None, p.retries_used)
-
-    # ── VERIFY — REAL tests, not the model (the SHA gate rejects faked output) ──
-    res = p.submit_verification(run_tests())
-    if res.status != "PASS":
-        return RunResult(task, "VERIFY", res.feedback, None, p.retries_used)
-
-    # ── REVIEW ──────────────────────────────────────────────────────────────────
-    ap = p.review_prompt()
-    p.submit_review(model(ap.system, ap.user, "review"))
-
-    # ── RETRO ───────────────────────────────────────────────────────────────────
-    ap = p.retro_prompt()
-    p.submit_retro(model(ap.system, ap.user, "retro"))
-
-    return RunResult(task, None, "", p.finalize(), p.retries_used)
 
 
 # ── Multi-task: drive the full OrchestratorLoop RL pipeline ───────────────────

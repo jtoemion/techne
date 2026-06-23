@@ -1,23 +1,23 @@
 """
 enforcement.py — the shared deterministic enforcement core.
 
-Techne has two drivers over the same pipeline:
+The pipeline can be driven two ways over the same phases:
 
-  - conductor.Pipeline         single-task, turn-by-turn (host steps through)
-  - orchestrator_loop.Loop     multi-task loop + reinforcement learning
+  - orchestrator_loop.Loop     host-driven: a host agent delegates each phase
+                               to a subagent (delegate_task) and submits the result
+  - driver.run_plan            model-backed: an injected model produces each phase
+                               artifact (autonomous / RL trajectory collection)
 
 Both must run the *same* deterministic checks — gates, focus/scope
-measurement, intent reasoning, and SHA test verification. Historically that
-logic lived inline in conductor.py, so the RL loop couldn't reuse it and fell
-back to hardcoded `gate_pass=True` reward signals. This module extracts the
+measurement, intent reasoning, and SHA test verification. This module extracts the
 checks into pure functions that:
 
   - never print and never mutate global state
   - never raise (they catch GateViolation and report it structurally)
   - return dataclasses the caller acts on: retry, halt, or feed the RL reward
 
-conductor delegates its gate/measure/verify steps here; the orchestrator loop
-calls the same functions so its reward signal reflects real enforcement.
+The orchestrator loop calls these functions so its reward signal reflects real
+enforcement rather than hardcoded `gate_pass=True` signals.
 """
 
 from __future__ import annotations

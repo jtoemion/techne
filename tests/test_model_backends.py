@@ -31,7 +31,12 @@ FAIL = "\033[91mFAIL\033[0m"
 results = []
 
 # True originals, captured once before any test can mutate the shared modules.
-_ORIG_RUN = subprocess.run
+# _ORIG_RUN uses conftest._real_subprocess_run because stress_test.py / test_loop_hardening.py
+# apply module-level mocks before this file is imported (alphabetically earlier).
+try:
+    from conftest import _real_subprocess_run as _ORIG_RUN
+except ImportError:
+    _ORIG_RUN = subprocess.run
 _ORIG_WHICH = shutil.which
 
 

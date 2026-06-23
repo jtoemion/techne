@@ -1,7 +1,6 @@
 """
 router.py — skill routing via skill-router.yaml.
 
-Adopted from jtoemion/harness-engineering-skills/runtime/conductor.py.
 Parses the YAML routing table and returns the best-matching skill
 for a given task input. First match wins, weight resolves ties.
 """

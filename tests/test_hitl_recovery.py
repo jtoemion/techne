@@ -102,7 +102,8 @@ def test_orchestrator_debug_submit_reenters():
                     "HONCHO_CONTEXT: relevant prior work on trusted origins\n"
                     "WORKSHOP_CONTEXT: none\n")
     check("RECALL submitted cleanly", r.action == LoopAction.RUN_PHASE and r.phase == "IMPLEMENT")
-    loop.submit(t.id, "IMPLEMENT", "diff --git a/x b/x\n@@ -1 +1 @@\n+guard")
+    loop.submit(t.id, "IMPLEMENT",
+                "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1,2 +1,2 @@\n def guard():\n-    return old\n+    return new\n")
     loop.submit(t.id, "CONTEXT_GUARD",
                 "All scoped clean.\n\n"
                 "CONCLUDE PUNCH LIST\n"
@@ -113,7 +114,8 @@ def test_orchestrator_debug_submit_reenters():
     check("critique blocked for HITL", block.action == LoopAction.BLOCK_HITL)
     loop.unblock(t.id, decision="Send to debugger")
     # A debugger fix submitted via DEBUG must re-enter the pipeline (not crash/stick).
-    out = loop.submit(t.id, "DEBUG", "diff --git a/x b/x\n@@ -1 +2 @@\n+convex guard\n+more")
+    out = loop.submit(t.id, "DEBUG",
+                      "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1,2 +1,2 @@\n def guard():\n-    return old\n+    return convex_guard\n")
     check("DEBUG submit advances (RUN_PHASE), not 'unknown phase'",
           out.action == LoopAction.RUN_PHASE and out.phase == "CONTEXT_GUARD")
 

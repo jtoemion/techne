@@ -63,7 +63,7 @@ def test_router():
     else:
         fail("plan stress-test routes to grill", f"got {r}")
 
-    r = route("update the middleware redirect logic")
+    r = route("update the middleware redirect handler")
     if r and r["id"] == "nextjs-rules":
         ok("Next.js task routes to nextjs-rules")
     else:
@@ -273,8 +273,8 @@ def test_skill_files_exist():
         else:
             fail(f"{name} exists and has content")
 
-    # skill-router.yaml lives in harness/
-    router_path = ROOT / "harness" / "skill-router.yaml"
+    # skill-router.yaml lives in skills/
+    router_path = ROOT / "skills" / "skill-router.yaml"
     if router_path.exists():
         ok("skill-router.yaml exists")
     else:
