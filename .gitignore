@@ -18,16 +18,11 @@ memory/prompt_proposals.json
 
 # Generated workshop artifacts
 .techne/generated/
-.techne/memory/
+
+# Techne runtime — regenerated each run
+.techne/memory/tasks.db
+.techne/memory/rewards.db
+.techne/memory/harness-state.json
+.techne/reports/
+.techne/logs/
 .techne/tasks/
-harness/memory/
-
-# RL runtime logs (regenerated each run)
-memory/eval_history.json
-memory/run_log.json
-memory/wikilinks.json
-memory/wikilinks.md
-.venv/
-
-# Root-level SQLite DB
-/tasks.db

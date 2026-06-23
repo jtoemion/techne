@@ -2,10 +2,10 @@
 
 Top-level module map (file counts are a rough size signal):
 
-  .techne/                 65 files   Techne runtime state (context packs, sessions)
+  .techne/                 66 files   Techne runtime state (context packs, sessions)
   agents/                  11 files   per-phase agent system prompts
   commands/                 1 files   
-  docs/                    13 files   documentation
+  docs/                    14 files   documentation
   harness/                 96 files   pipeline engine + gates + RL
   memory/                  24 files   runtime ledgers (mistakes/reward/eval)
   references/              30 files   

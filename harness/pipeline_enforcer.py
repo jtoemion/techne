@@ -48,14 +48,15 @@ from conductor import _load_phase_skills
 _HARNESS_DIR = Path(__file__).parent
 _ROOT = _HARNESS_DIR.parent
 MEMORY_DIR = _ROOT / ".techne" / "memory"
-OVERRIDES_LOG = MEMORY_DIR / "mode_overrides.log"
+LOGS_DIR = _ROOT / ".techne" / "logs"
+OVERRIDES_LOG = LOGS_DIR / "mode_overrides.log"
 _MAX_LOG_LINES = 1000
 
 # ── Learning loop state ─────────────────────────────────────────────────────
 _LEARNING_COUNTER = 0          # total override entries ever logged
 _LAST_ANALYZED_COUNT = 0       # counter value at last auto-analysis
 _AUTO_ANALYSIS_THRESHOLD = 20  # trigger analysis every N new entries
-_CLASSIFIER_INSIGHTS_LOG = MEMORY_DIR / "classifier_insights.log"
+_CLASSIFIER_INSIGHTS_LOG = LOGS_DIR / "classifier_insights.log"
 
 
 def _reset_learning_state() -> None:

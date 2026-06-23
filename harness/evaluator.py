@@ -18,7 +18,9 @@ from store import read_json, write_json
 HARNESS_DIR = Path(__file__).parent
 ROOT = HARNESS_DIR.parent
 MEMORY_DIR = ROOT / ".techne" / "memory"
-EVAL_HISTORY = MEMORY_DIR / "eval_history.json"
+REPORTS_DIR = ROOT / ".techne" / "reports"
+EVAL_DIR = REPORTS_DIR / "eval"
+EVAL_HISTORY = EVAL_DIR / "eval_history.json"
 
 GRADES = [
     (90, "EXCELLENT"),
@@ -273,8 +275,8 @@ def save_eval(report: EvalReport) -> None:
     write_json(EVAL_HISTORY, history)
 
     # Also write the latest report as readable text (domain artifact, not JSON)
-    MEMORY_DIR.mkdir(parents=True, exist_ok=True)
-    report_path = MEMORY_DIR / "latest_eval.txt"
+    EVAL_DIR.mkdir(parents=True, exist_ok=True)
+    report_path = EVAL_DIR / "latest_eval.txt"
     report_path.write_text(report.format_report(), encoding="utf-8")
 
 

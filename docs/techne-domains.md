@@ -113,7 +113,10 @@ pipeline is blind.
 | File | Role |
 |------|------|
 | `harness/task_db.py` | `TaskDB` class. Task CRUD, event logging, status transitions. 612 lines. |
-| `.techne/memory/tasks.db` | Live database (also at `techne/tasks.db`). |
+| `.techne/memory/tasks.db` | Live tasks database. |
+| `.techne/reports/eval/eval_history.json` | Evaluation history (trend analysis). |
+| `.techne/reports/verify/test_output.txt` | Last test run output (SHA-gated). |
+| `.techne/logs/run_log.json` | Run log (SHA hashes, pass/fail). |
 
 **Schema.**
 
@@ -292,8 +295,8 @@ analyzed, classifier rules auto-adjusted at threshold.
 | File | Role |
 |------|------|
 | `.techne/memory/rewards.db` | GRPO reward scores. |
-| `.techne/memory/mode_overrides.log` | Telemetry of mode overrides (auto-rotated). |
-| `.techne/memory/classifier_insights.log` | Learning loop output (at 20-entry threshold). |
+| `.techne/logs/mode_overrides.log` | Telemetry of mode overrides (auto-rotated). |
+| `.techne/logs/classifier_insights.log` | Learning loop output (at 20-entry threshold). |
 | `harness/reward_log.py` | Reward logging functions. |
 
 **What hardening means.**

@@ -73,6 +73,9 @@ SKILLS_DIR = ROOT / "skills"
 AGENTS_DIR = ROOT / "agents"
 MEMORY_DIR = ROOT / ".techne" / "memory"
 MEMORY_DIR.mkdir(exist_ok=True)
+REPORTS_DIR = ROOT / ".techne" / "reports"
+VERIFY_DIR = REPORTS_DIR / "verify"
+VERIFY_DIR.mkdir(parents=True, exist_ok=True)
 
 MAX_RETRIES = 3
 
@@ -426,7 +429,7 @@ class Pipeline:
         until MAX_RETRIES, then HALT. On pass: measure focus/scope + intent L1/L2
         (optional host semantic_verdict), enforce the intent gate.
         """
-        (state_dir() / f"implementer_output_{self.run_number}.txt").write_text(diff, encoding="utf-8")
+        (VERIFY_DIR / f"implementer_output_{self.run_number}.txt").write_text(diff, encoding="utf-8")
         # Full gate board for visibility (does not stop on first failure)
         self.gate_report = run_all_gates_report(diff)
         print(format_gate_report(self.gate_report))
@@ -509,12 +512,11 @@ class Pipeline:
 
     def submit_verification(self, test_output: str) -> PhaseResult:
         """Persist host test output, run the SHA gate, mark verified."""
-        run_dir = state_dir()
-        (run_dir / "test_output.txt").write_text(test_output, encoding="utf-8")
+        (VERIFY_DIR / "test_output.txt").write_text(test_output, encoding="utf-8")
         try:
             sha = gate_test_output(
-                test_output_path=str(run_dir / "test_output.txt"),
-                run_log_path=str(run_dir / "run_log.json"),
+                test_output_path=str(VERIFY_DIR / "test_output.txt"),
+                run_log_path=str(ROOT / ".techne" / "logs" / "run_log.json"),
             )
         except Exception as e:
             self.results["verify"] = "FAIL"

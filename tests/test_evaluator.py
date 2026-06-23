@@ -24,7 +24,7 @@ from evaluator import (
     load_eval_history,
     save_eval,
     EVAL_HISTORY,
-    MEMORY_DIR,
+    EVAL_DIR,
     _grade,
     _trend,
 )
@@ -374,7 +374,7 @@ def test_persistence():
             fail("scoring order", f"A={history[0]['total']} B={history[1]['total']}")
 
         # Check latest_eval.txt written
-        latest = MEMORY_DIR / "latest_eval.txt"
+        latest = EVAL_DIR / "latest_eval.txt"
         if latest.exists() and "EVALUATION REPORT" in latest.read_text(encoding="utf-8"):
             ok("latest_eval.txt written with report text")
         else:
@@ -386,7 +386,7 @@ def test_persistence():
         elif EVAL_HISTORY.exists():
             EVAL_HISTORY.unlink()
         # Clean up latest_eval.txt
-        latest = MEMORY_DIR / "latest_eval.txt"
+        latest = EVAL_DIR / "latest_eval.txt"
         if latest.exists():
             latest.unlink()
 
@@ -450,7 +450,7 @@ def test_report_format():
         history = load_eval_history()
         history = [h for h in history if h.get("pipeline_number") != 999]
         EVAL_HISTORY.write_text(json.dumps(history, indent=2), encoding="utf-8")
-    latest = MEMORY_DIR / "latest_eval.txt"
+    latest = EVAL_DIR / "latest_eval.txt"
     if latest.exists():
         latest.unlink()
 

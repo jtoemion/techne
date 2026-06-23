@@ -149,7 +149,7 @@ def test_full_pipeline_pass():
 
     drive_pipeline("add sale badge to product page", CLEAN_DIFF)
 
-    eval_history_path = ROOT / ".techne" / "memory" / "eval_history.json"
+    eval_history_path = ROOT / ".techne" / "reports" / "eval" / "eval_history.json"
     if eval_history_path.exists():
         history = json.loads(eval_history_path.read_text(encoding="utf-8"))
         entry = next((h for h in reversed(history) if "sale badge" in h.get("task", "")), None)

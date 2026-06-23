@@ -128,8 +128,9 @@ def verify_tests(test_output: str, *, memory_dir: Path | None = None, review_onl
     hash). Returns a VerifyResult — never raises.
     """
     mdir = memory_dir or MEMORY_DIR
-    mdir.mkdir(parents=True, exist_ok=True)
-    out_path = mdir / "test_output.txt"
+    reports_dir = mdir.parent / "reports" / "verify"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    out_path = reports_dir / "test_output.txt"
     out_path.write_text(test_output, encoding="utf-8")
     try:
         sha = gate_test_output(

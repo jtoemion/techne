@@ -22,8 +22,8 @@ def sha256_file(path: str) -> str:
 
 
 def gate_test_output(
-    test_output_path: str = "test_output.txt",
-    run_log_path: str = "memory/run_log.json",
+    test_output_path: str = ".techne/reports/verify/test_output.txt",
+    run_log_path: str = ".techne/logs/run_log.json",
     review_only: bool = False,
 ) -> str:
     """

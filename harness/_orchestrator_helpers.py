@@ -220,14 +220,15 @@ def _record_reward(self, task_id: str) -> None:
 
 def _ensure_techne_gitignore(self, project_root: str) -> None:
     """
-    Ensure .gitignore contains .techne/tasks/ and .techne/memory/.
+    Ensure .gitignore contains .techne/tasks/, .techne/reports/, .techne/logs/,
+    and .techne/memory/.
 
     These directories hold ephemeral state (task records, memory snapshots)
     that should never be committed. Called from _record_reward on DONE.
     """
     from pathlib import Path
     gitignore_path = Path(project_root) / ".gitignore"
-    entries = [".techne/tasks/", ".techne/memory/"]
+    entries = [".techne/tasks/", ".techne/reports/", ".techne/logs/", ".techne/memory/"]
 
     if not gitignore_path.exists():
         content = ""
