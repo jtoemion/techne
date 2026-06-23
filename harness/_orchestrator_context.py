@@ -319,6 +319,24 @@ def post_run_evolve(self) -> dict:
         # Event logging must never block post_run_evolve.
         pass
 
+    # ── Rebuild wikilink knowledge graph ─────────────────────────────────
+    # The wikilink index (wikilinks.json + wikilinks.md) is rebuilt every
+    # DONE so the knowledge graph stays current with mistakes, ledger,
+    # tasks.db, and workshop context. This is the same refresh that the
+    # old orchestrator's REFRESH_CONTEXT phase ran.
+    try:
+        from wikilink import build_graph, format_markdown as wl_md
+        memory_dir = Path(__file__).parent.parent / ".techne" / "memory"
+        graph = build_graph()
+        (memory_dir / "wikilinks.md").write_text(wl_md(graph), encoding="utf-8")
+        (memory_dir / "wikilinks.json").write_text(
+            json.dumps(graph, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        # Wikilink rebuild is best-effort — must never block post_run_evolve.
+        pass
+
     # Dashboard
     result["dashboard"] = self.rl_dashboard()
 

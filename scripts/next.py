@@ -405,6 +405,7 @@ def main() -> int:
 
     # Only advance state if all gates passed
     if all_passed:
+        old_phase = state.phase
         state.summary = summary
         state.phase = next_phase or state.phase
         write_state(state, cwd)
@@ -424,6 +425,26 @@ def main() -> int:
         except Exception:
             # Audit append failure should not block phase advancement
             pass
+
+        # Rebuild wikilink knowledge graph when CONCLUDE → DONE (or any
+        # phase that completes the loop).  The wikilink index
+        # (wikilinks.json + wikilinks.md) is rebuilt so the knowledge
+        # graph stays current with mistakes, ledger, and task outcomes.
+        if old_phase == "CONCLUDE":
+            try:
+                import json as _json
+                sys.path.insert(0, str(Path(__file__).parent.parent / "harness"))
+                from wikilink import build_graph, format_markdown as wl_md
+                memory_dir = cwd / ".techne" / "memory"
+                graph = build_graph()
+                (memory_dir / "wikilinks.md").write_text(wl_md(graph), encoding="utf-8")
+                (memory_dir / "wikilinks.json").write_text(
+                    _json.dumps(graph, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+            except Exception:
+                # Wikilink rebuild is best-effort
+                pass
 
         return 0
     else:

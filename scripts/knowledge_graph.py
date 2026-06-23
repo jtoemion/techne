@@ -21,6 +21,8 @@ ROOT = Path(__file__).parent.parent
 WIKILINKS = ROOT / ".techne" / "memory" / "wikilinks.json"
 TASKS_DB = ROOT / ".techne" / "memory" / "tasks.db"
 MISTAKES = ROOT / ".techne" / "memory" / "mistakes.md"
+REWARDS_DB = ROOT / ".techne" / "memory" / "rewards.db"
+EVENTS_DIR = ROOT / ".techne" / "events"
 
 def load_wikilinks() -> dict:
     if not WIKILINKS.exists():
@@ -49,6 +51,20 @@ def cmd_status():
         print(f"\nNode types:")
         for t, c in sorted(types.items(), key=lambda x: -x[1]):
             print(f"  {t}: {c}")
+
+    # RL health summary
+    if REWARDS_DB.exists():
+        try:
+            conn = sqlite3.connect(str(REWARDS_DB))
+            cur = conn.execute("SELECT COUNT(*), SUM(composite_score), AVG(composite_score) FROM rewards")
+            total, total_rew, avg_rew = cur.fetchone()
+            conn.close()
+            if total:
+                total_rew = total_rew or 0
+                avg_rew = avg_rew or 0
+                print(f"\nRL rewards: {total} total, {total_rew:+.2f} composite sum, {avg_rew:+.2f} avg")
+        except sqlite3.OperationalError:
+            pass
 
 def cmd_phases():
     db = TASKS_DB
@@ -165,12 +181,71 @@ def cmd_search(term: str):
     for m in matches:
         print(f"  {m.get('id', '?'):50} [{m.get('type', '?')}]  {m.get('description', '')[:40]}")
 
+def cmd_rewards():
+    """Show RL reward and advantage data from rewards.db."""
+    if not REWARDS_DB.exists():
+        print("No rewards.db — no RL data.")
+        return
+    try:
+        conn = sqlite3.connect(str(REWARDS_DB))
+        # Total rewards
+        cur = conn.execute("SELECT COUNT(*), SUM(composite_score), AVG(composite_score) FROM rewards")
+        total, total_rew, avg_rew = cur.fetchone()
+        total_rew = total_rew or 0
+        avg_rew = avg_rew or 0
+        print(f"Rewards: {total} total, {total_rew:+.2f} composite sum, {avg_rew:+.2f} avg")
+
+        # By skill
+        cur = conn.execute(
+            "SELECT skill, COUNT(*), SUM(composite_score), AVG(composite_score) "
+            "FROM rewards WHERE skill != '' AND skill IS NOT NULL GROUP BY skill ORDER BY SUM(composite_score)"
+        )
+        rows = cur.fetchall()
+        if rows:
+            print(f"\nBy skill:")
+            for skill, cnt, s, a in rows:
+                print(f"  {skill:<20} {cnt:>4}x  {s:>+6.2f} sum  {a:>+.2f} avg")
+
+        # Recent events
+        cur = conn.execute(
+            "SELECT task_id, composite_score, \"group\", advantage, timestamp FROM rewards "
+            "ORDER BY rowid DESC LIMIT 5"
+        )
+        rows = cur.fetchall()
+        if rows:
+            print(f"\nRecent rewards:")
+            for tid, score, grp, adv, ts in rows:
+                grp_lbl = grp or "ungrouped"
+                adv_s = f" adv={adv:+.3f}" if adv is not None else ""
+                print(f"  {ts[:19] if ts else '?':19}  {score:+5.2f}  {grp_lbl:<20}{adv_s}  {tid[:30]}")
+        conn.close()
+    except sqlite3.OperationalError as e:
+        print(f"DB error: {e}")
+
+    # RL event log
+    if EVENTS_DIR.exists() and (EVENTS_DIR / "rl.jsonl").exists():
+        lines = (EVENTS_DIR / "rl.jsonl").read_text().strip().splitlines()
+        print(f"\nRL events: {len(lines)} total")
+        if lines:
+            import json
+            last = lines[-1]
+            try:
+                evt = json.loads(last)
+                print(f"  Last event: {evt.get('ts','')[:19]} "
+                      f"prompts={evt.get('prompts_proposed',0)} "
+                      f"skills={evt.get('skills_proposed',0)} "
+                      f"framework={evt.get('framework_proposed',0)}")
+            except json.JSONDecodeError:
+                pass
+
+
 def main():
     parser = argparse.ArgumentParser(description="Knowledge graph query tool")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("status", help="Overall graph health")
     sub.add_parser("phases", help="Phase outcome breakdown")
     sub.add_parser("mistakes", help="Mistake recurrence")
+    sub.add_parser("rewards", help="RL reward and advantage data")
     p_skill = sub.add_parser("skill", help="Skill graph")
     p_skill.add_argument("name", help="Skill name to query")
     p_file = sub.add_parser("file", help="File graph (project mode)")
@@ -182,6 +257,7 @@ def main():
     if args.command == "status": cmd_status()
     elif args.command == "phases": cmd_phases()
     elif args.command == "mistakes": cmd_mistakes()
+    elif args.command == "rewards": cmd_rewards()
     elif args.command == "skill": cmd_skill(args.name)
     elif args.command == "file": cmd_file(args.path)
     elif args.command == "search": cmd_search(args.term)
