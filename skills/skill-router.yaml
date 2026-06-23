@@ -10,13 +10,13 @@ updated: "2026-06-09"
 routing:
   - id: "diagnose"
     condition: "bug, broken, throwing, failing, regression, not working, debug, diagnose"
-    skill_path: "skills/diagnose.md"
+    skill_path: "skills/diagnose/SKILL.md"
     weight: 90
     note: "Always diagnose before attempting a fix. Removed 'error' — too generic, collides with TypeScript routing."
 
   - id: "writing-skill"
     condition: "write a skill, create a skill, new skill, skill template, audit skill, refactor skill"
-    skill_path: "skills/writing-skill.md"
+    skill_path: "skills/writing-skill/SKILL.md"
     weight: 88
     note: "High weight — someone asking to write a skill should land here before tdd/grill."
 
@@ -34,12 +34,12 @@ routing:
 
   - id: "tdd"
     condition: "test-first, TDD, red-green-refactor, write tests, test-driven"
-    skill_path: "skills/tdd.md"
+    skill_path: "skills/tdd/SKILL.md"
     weight: 85
 
   - id: "persona-brainstorm"
     condition: "persona brainstorm, grill session, client dev dialogue, discover improvement, Ezekiel, Jeremiah, brainstorm session"
-    skill_path: "skills/persona-brainstorm.md"
+    skill_path: "skills/persona-brainstorm/SKILL.md"
     weight: 85
     note: "Multi-persona discovery loop. Outputs ADRs from real friction."
 
@@ -95,6 +95,42 @@ routing:
     skill_path: "skills/ui-grill.md"
     weight: 60
     note: "Stress-test UNDECIDED UI design (force exact hex/spacing/motion). Locks a design before code."
+
+  - id: "retro-learn"
+    condition: "retro-learn, reinforcement learning retrospective, analyze mistake patterns, update discipline docs, closing the learning loop"
+    skill_path: "skills/retro-learn.md"
+    weight: 76
+    note: "RL retrospective — analyzes task DB for recurring mistakes, weights by frequency, updates discipline docs. Use after plan completion."
+
+  - id: "discipline"
+    condition: "techne discipline, global discipline, subagent standard, hold work to standard, honest standard"
+    skill_path: "skills/discipline.md"
+    weight: 79
+    note: "The global Techne discipline — the constant standard every subagent is held to in both gated pipeline AND kanban lane."
+
+  - id: "orchestrator"
+    condition: "orchestrator, parent agent, decompose plan, subagent dispatch, pipeline loop runner, orchestrator loop"
+    skill_path: "skills/orchestrator.md"
+    weight: 77
+    note: "Parent agent reads this to decompose plans and drive the pipeline. Uses orchestrator_loop.py for phase transitions."
+
+  - id: "react-vite"
+    condition: "React app, Vite build, React component, React hook, Vitest jsdom, TanStack Query, React 19"
+    skill_path: "skills/react-vite/SKILL.md"
+    weight: 68
+    note: "React 19 + Vite client apps with hooks/TanStack Query/Vitest. NOT Next.js — routing/middleware conventions differ."
+
+  - id: "receptionist"
+    condition: "receptionist, dispatch pattern, classify intent, ticket and dispatch, plan and delegate, board dispatcher"
+    skill_path: "skills/receptionist/SKILL.md"
+    weight: 75
+    note: "Receptionist metaprompt — classify → plan → ticket → dispatch → verify → synthesize. Planner/dispatcher, not implementer."
+
+  - id: "kanban"
+    condition: "kanban, kanban lane, dispatched subagent, multi-agent worker, gate-free, board worker"
+    skill_path: "skills/kanban/SKILL.md"
+    weight: 73
+    note: "Gate-free Techne lane for kanban/multi-agent work. Same skills as pipeline, no conductor/gates. For non-code board work."
 
   - id: "ui-craft"
     condition: "ui-craft, prompt an llm for ui, get better ui from llm, generate ui code, high fidelity ui"
