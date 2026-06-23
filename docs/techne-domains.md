@@ -321,7 +321,7 @@ metaprompt validation, and revolver delegation fallback.
 | File | Role |
 |------|------|
 | `~/.hermes/plugins/techne/__init__.py` | Hermes plugin. `/techne` slash command. |
-| `commands/techne.toml` | 1844-char hardened debug command prompt. |
+| `commands/techne.toml` | 2029-char hardened debug command prompt. |
 | `scripts/validate_command_files.py` | Validator for command file format. |
 | `~/.hermes/plugins/revolver/` | Delegation fallback plugin (6 hyphen commands). |
 

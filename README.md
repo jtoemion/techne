@@ -367,7 +367,7 @@ This builds `.techne/generated/context_index.json` — the searchable graph for 
 ```bash
 cd techne/
 python tests/test_workshop_foundation.py      # expect 5/5
-python tests/test_orchestrator_driver.py      # expect 49/49
+python tests/test_orchestrator_driver.py      # expect 52/52
 ```
 
 ### 6. Your first task
