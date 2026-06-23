@@ -14,14 +14,14 @@
       "RESOLVED": 0
     },
     "skills_referenced": 0,
-    "generated_at": "2026-06-23T00:06:12Z",
+    "generated_at": "2026-06-23T06:58:53Z",
     "graph_nodes": 321,
     "graph_edges": 320
   },
   "project": {
     "name": "techne",
     "repo_root": "/home/ubuntu/repos/techne",
-    "generated_at": "2026-06-23T00:06:12Z",
+    "generated_at": "2026-06-23T06:58:53Z",
     "version": 2
   },
   "nodes": [

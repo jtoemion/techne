@@ -1,0 +1,15 @@
+name: techne
+version: "2.0.0"
+description: Techne pipeline mode enabler — write enforcement via pre_tool_call hook, worker metaprompt, 11-phase pipeline discipline
+author: Hermes
+
+hooks:
+  on_session_start: true
+  on_session_end: true
+  on_session_reset: true
+  pre_tool_call: true
+
+commands:
+  - name: techne
+    description: Activate Techne pipeline mode with write enforcement - blocks write_file/patch/git without active task
+    handler: _cmd_techne
