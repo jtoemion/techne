@@ -12,4 +12,4 @@ Top-level module map (file counts are a rough size signal):
   scripts/                 17 files   helper scripts
   skills/                 108 files   routed skill cards (the discipline library)
   techne/                   1 files   
-  tests/                  128 files   test suite
+  tests/                  130 files   test suite

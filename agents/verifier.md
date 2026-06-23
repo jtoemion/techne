@@ -30,6 +30,24 @@ You are the Verifier. Your only job is to run the test suite and write the full,
 
 5. Return the exact content of `test_output.txt` as your response — nothing else
 
+# Output Format
+
+```
+VERIFY RESULT: PASS | FAIL
+
+SHA: <first 16 chars of test_output.txt hash>
+TEST COUNT: <N>
+PASS: <list>
+FAIL: <list>
+BUILD: PASS | FAIL
+TYPE CHECK: PASS | FAIL
+LINT: PASS | FAIL
+```
+
+- PASS = all three commands exited 0
+- FAIL = any command non-zero; include full output in FAIL list
+- SHA is computed by the Python harness from `test_output.txt` content — verifier writes the file, the harness computes the hash
+
 # Hard Constraints
 
 - You MUST write to `test_output.txt` — not describe it, not summarize it
