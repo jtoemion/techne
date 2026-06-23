@@ -40,10 +40,10 @@ def cmd_status():
     print(f"Edges:  {len(edges)}")
     print(f"Entries:{len(entries)}")
     print(f"Skills: {len(skills)}")
-    # Node type breakdown
+    # Node kind breakdown
     types: dict[str, int] = {}
     for n in nodes:
-        t = n.get("type", "unknown")
+        t = n.get("kind", "unknown")
         types[t] = types.get(t, 0) + 1
     if types:
         print(f"\nNode types:")
@@ -107,7 +107,7 @@ def cmd_skill(name: str):
     nodes = g.get("nodes", [])
     edges = g.get("edges", [])
     # Find skill nodes
-    skill_nodes = [n for n in nodes if n.get("type") == "skill" and name.lower() in n.get("id", "").lower()]
+    skill_nodes = [n for n in nodes if n.get("kind") == "skill" and name.lower() in n.get("id", "").lower()]
     if not skill_nodes:
         print(f"No skill nodes matching '{name}'")
         return
@@ -131,7 +131,7 @@ def cmd_file(search_path: str):
         return
     nodes = g.get("nodes", [])
     edges = g.get("edges", [])
-    file_nodes = [n for n in nodes if n.get("type") in ("file", "module") and search_path in n.get("id", "")]
+    file_nodes = [n for n in nodes if n.get("kind") in ("file", "module") and search_path in n.get("id", "")]
     if not file_nodes:
         print(f"No file nodes matching '{search_path}'")
         return
