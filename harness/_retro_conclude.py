@@ -47,6 +47,92 @@ def _submit_eval(self, task_id: str, _ignored: str = "") -> LoopOutcome:
 
 # ── RETRO ────────────────────────────────────────────────────────────────────
 
+def _parse_retro_markers(reflection: str) -> dict:
+    """Extract DECISION / LESSON / DISCIPLINE markers from retro text.
+
+    Expected format:
+        - DECISION: <what> — <why>
+        - LESSON: <what>
+        - DISCIPLINE: <what>
+    Returns dict with keys 'decisions', 'lessons', 'disciplines' each a list of dicts.
+    """
+    import re
+    result = {"decisions": [], "lessons": [], "disciplines": []}
+    pattern = re.compile(r'^\s*[-*]\s+(DECISION|LESSON|DISCIPLINE)[:\s]+(.+)$', re.MULTILINE)
+    for m in pattern.finditer(reflection):
+        kind = m.group(1).lower() + "s"
+        text = m.group(2).strip()
+        # Split on em dash or en dash for what/why separation
+        parts = re.split(r'\s*[—–]\s*', text, maxsplit=1)
+        what = parts[0].strip()
+        why = parts[1].strip() if len(parts) > 1 else ""
+        if kind == "decisions":
+            result["decisions"].append({"what": what, "why": why})
+        elif kind == "lessons":
+            result["lessons"].append({"what": what, "why": why})
+        elif kind == "disciplines":
+            result["disciplines"].append({"what": what, "why": why})
+    return result
+
+
+def _persist_retro(task_id: str, reflection: str, task_title: str) -> None:
+    """Persist retro content to ledger.md, mistakes.md, and retros/ archive.
+
+    Three outputs:
+    1. ARCHIVE — full retro text saved to .techne/memory/retros/{task_id}.md
+    2. LEDGER — DECISION/LESSON/DISCIPLINE markers extracted and logged
+    3. MISTAKES — any error/cause/lesson patterns logged if format matches
+    """
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    memory_dir = Path(__file__).parent.parent / ".techne" / "memory"
+    retros_dir = memory_dir / "retros"
+    retros_dir.mkdir(parents=True, exist_ok=True)
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # 1. Archive full retro text
+    retro_file = retros_dir / f"{task_id}.md"
+    retro_file.write_text(
+        f"# Retro — {task_title}\n"
+        f"**Task:** {task_id}\n"
+        f"**Date:** {now}\n\n"
+        f"{reflection.strip()}\n",
+        encoding="utf-8",
+    )
+
+    # 2. Extract and persist markers to ledger
+    markers = _parse_retro_markers(reflection)
+    try:
+        from ledger import log_decision, log_lesson, log_discipline
+        for d in markers["decisions"]:
+            log_decision(what=d["what"], why=d["why"], source=f"retro:{task_id[:12]}")
+        for l in markers["lessons"]:
+            log_lesson(what=l["what"], why=l["why"], source=f"retro:{task_id[:12]}")
+        for d in markers["disciplines"]:
+            log_discipline(what=d["what"], why=d["why"], source=f"retro:{task_id[:12]}")
+    except Exception as e:
+        print(f"[RETRO] Warning: ledger write failed: {e}")
+
+    # 3. Log mistake patterns (entries with Error/Cause/Lesson structure)
+    try:
+        from mistakes import log_mistake
+        # Also log any explicit mistake patterns from the retro
+        import re
+        for m in re.finditer(
+            r'^\s*[-*]\s+Error\s*:\s*(.+)$',
+            reflection, re.MULTILINE,
+        ):
+            log_mistake(
+                phase="RETRO",
+                error=m.group(1).strip(),
+                source=f"retro:{task_id[:12]}",
+            )
+    except Exception as e:
+        print(f"[RETRO] Warning: mistakes write failed: {e}")
+
+
 def _submit_retro(self, task_id: str, reflection: str) -> LoopOutcome:
     """RETRO phase — record the run's reflection, then advance to CONCLUDE.
 
@@ -117,6 +203,14 @@ def _submit_retro(self, task_id: str, reflection: str) -> LoopOutcome:
         task_id, "RETRO", agent="retro",
         summary=reflection[:200], findings=reflection,
     )
+
+    # Persist retro to ledger, mistakes, and archive
+    try:
+        task = self.db.get_task(task_id)
+        task_title = task.title if task else task_id
+        _persist_retro(task_id, reflection, task_title)
+    except Exception as e:
+        print(f"[RETRO] Warning: persistence failed: {e}")
 
     report = self._eval.get(task_id)
     total = report.total if report else 0
