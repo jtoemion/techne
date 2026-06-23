@@ -235,6 +235,12 @@ routing:
     skill_path: "skills/diff-gate-checker/SKILL.md"
     weight: 48
     note: "Production tool — pre-flight diff/phase output against gate requirements before submit."
+  - id: "mistakes-logger"
+    condition: "log mistake, record lesson, log failure, mistakes logger, log error"
+    skill_path: "skills/mistakes-logger/SKILL.md"
+    weight: 47
+    note: "Production tool — log mistakes to mistakes.md with structured format."
+
 
 
 
