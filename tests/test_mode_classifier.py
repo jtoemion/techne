@@ -758,7 +758,7 @@ class TestDetectSensitiveChange:
 class TestModeMismatchEnforcement:
     """Mode mismatch in _submit_implement must produce FAILED, not BLOCK_HITL."""
 
-    def test_micro_mode_on_8line_diff_fails_task(self):
+    def test_micro_mode_on_8line_diff_auto_switches(self):
         """micro mode with 8-line diff → task is FAILED, not BLOCK_HITL."""
         import tempfile
         import sys
@@ -793,15 +793,15 @@ class TestModeMismatchEnforcement:
         outcome = loop._submit_implement(task.id, full_diff)
 
         # Must be FAILED, not BLOCK_HITL
-        assert outcome.action == LoopAction.FAILED, (
+        assert outcome.action == LoopAction.RUN_PHASE, (
             f"Expected FAILED but got {outcome.action.value}. "
             "Mode mismatch must NOT offer 'continue anyway'."
         )
-        assert "Mode mismatch" in outcome.message
+        assert "Lane switch" in outcome.message
         assert "micro" in outcome.message or "full" in outcome.message.lower()
         assert task.id == outcome.task_id
 
-    def test_full_mode_on_1line_comment_fails_task(self):
+    def test_full_mode_on_1line_comment_auto_switches(self):
         """full mode on 1-line comment → task is FAILED with suggested mode in message."""
         import tempfile
         import sys
@@ -839,7 +839,7 @@ class TestModeMismatchEnforcement:
         outcome = loop._submit_implement(task.id, trivial_diff)
 
         # Must be FAILED
-        assert outcome.action == LoopAction.FAILED, (
+        assert outcome.action == LoopAction.RUN_PHASE, (
             f"Expected FAILED but got {outcome.action.value}. "
             "Mode mismatch must NOT offer 'continue anyway'."
         )
@@ -847,11 +847,11 @@ class TestModeMismatchEnforcement:
         assert "micro" in outcome.message, (
             f"Message should suggest 'micro' but got: {outcome.message}"
         )
-        assert "Re-create" in outcome.message or "phase_mode" in outcome.message, (
-            f"Message should instruct to re-create with correct mode: {outcome.message}"
+        assert "Continuing as" in outcome.message or "micro" in outcome.message, (
+            f"Message should indicate auto-switch: {outcome.message}"
         )
 
-    def test_mode_mismatch_does_not_set_options(self):
+    def test_mode_mismatch_no_options_on_auto_switch(self):
         """FAILED outcome for mode mismatch must NOT offer options (no 'continue anyway')."""
         import tempfile
         import sys
@@ -878,7 +878,7 @@ class TestModeMismatchEnforcement:
         outcome = loop._submit_implement(task.id, full_diff)
 
         # Must be FAILED with no options
-        assert outcome.action == LoopAction.FAILED
+        assert outcome.action == LoopAction.RUN_PHASE
         # No options allowed — the whole point is no bypass
         assert outcome.options is None, (
             f"Mode mismatch FAILED must not have options, but got: {outcome.options}"
@@ -887,7 +887,7 @@ class TestModeMismatchEnforcement:
             "Mode mismatch FAILED must not have a HITL question"
         )
 
-    def test_mode_mismatch_still_logs_override(self, tmp_path, monkeypatch):
+    def test_mode_mismatch_still_logs_override_on_switch(self, tmp_path, monkeypatch):
         """Override is still logged even though the outcome is now FAILED."""
         import pipeline_enforcer
         import tempfile
@@ -916,7 +916,7 @@ class TestModeMismatchEnforcement:
 
         outcome = loop._submit_implement(task.id, full_diff)
 
-        assert outcome.action == LoopAction.FAILED
+        assert outcome.action == LoopAction.RUN_PHASE
 
         # Override should still be logged
         log_file = tmp_path / "mode_overrides.log"

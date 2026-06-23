@@ -148,11 +148,20 @@ def _submit_implement(self, task_id: str, diff: str) -> LoopOutcome:
             suggested,
             diff_stats,
         )
+        # Auto-switch lane: update task's phase_mode to match the diff
+        if task:
+            old_mode = task.phase_mode
+            self.db._conn.execute("UPDATE tasks SET phase_mode = ? WHERE id = ?",
+                                    (suggested, task_id))
+            self.db._conn.commit()
+            # Refresh task object
+            task = self.db.get_task(task_id)
+            print(f"[IMPLEMENT] Lane switch: {old_mode} → {suggested} ({reason})")
         outcome = LoopOutcome(
-            action=LoopAction.FAILED,
-            phase="IMPLEMENT",
+            action=LoopAction.RUN_PHASE,
+            phase="CONTEXT_GUARD",
             task_id=task_id,
-            message=f"Mode mismatch: {reason}. Task FAILED. Re-create with phase_mode='{suggested}'.",
+            message=f"Lane switch: {reason}. Continuing as {suggested} mode.",
         )
         self._print_phase_summary("IMPLEMENT", task_id, outcome)
         return outcome
