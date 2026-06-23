@@ -293,10 +293,10 @@ def _prune_task_artifacts(self, task_id: str) -> None:
 def _build_eval_metrics(self, task_id: str) -> dict:
     """
     Map the loop's captured enforcement signals onto the evaluator's
-    metric kwargs — the SAME 100-point eval the conductor runs.
+    metric kwargs — the SAME 100-point eval the orchestrator runs.
 
     Retro Value maps to the RL learning step (reward recording + per-run
-    evolution), which is the loop's equivalent of the conductor's retro.
+    evolution), which is the loop's equivalent of the orchestrator's retro.
     """
     import re
 

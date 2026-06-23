@@ -209,18 +209,70 @@ When the user says "clean the repo" before continuing, the expected sequence is:
 
 ## Pipeline Phases
 
+### Primary: `./next` loop (RECALL → IMPLEMENT → VERIFY → CONCLUDE → DONE)
+
+The production pipeline is driven by `scripts/next.py`. Run with:
+```
+python3 /path/to/techne/scripts/next.py
+# or from a symlink in the project root:
+./next
+```
+
+Each phase writes a disk artifact; `./next` reads the real filesystem to enforce gates — agents cannot self-report a pass.
+
+| Phase | Artifact | Enforcement |
+|-------|----------|-------------|
+| RECALL | `.techne/loop/recall.txt` | Contains `WORKSHOP_CONTEXT:` header + Honcho conclusion proof |
+| IMPLEMENT | `.techne/loop/diff.txt` | Contains `@@` or `--- ` diff markers (git diff format) |
+| VERIFY | `.techne/loop/test_output.txt` | Non-empty output; SHA gate passes |
+| CONCLUDE | `.techne/loop/conclude.txt` | Contains `CONTEXT:` line with `sha:<40-char>` prefix |
+
+**Before every task: honcho_context** (or honcho_search for specific topic recall). Pull the user's context and recent session history so the task starts with full situational awareness.
+
+**After every phase: honcho_conclude.** `honcho_conclude(conclusion="...", peer="user")` records what was accomplished. The Honcho checkpoint is NOT optional — it's part of the pipeline discipline.
+
+**State file:** `.techne/loop/state.json` — tracks current phase, task ID, and phase timeout. Do NOT edit manually; `./next` manages it.
+
+### Legacy: 11-phase Orchestrator Pipeline
+
+> ⚠️ **Deprecated.** The old orchestrator pipeline still works for backward compat but is deprecated. Use `./next` for new work.
+
 ```
 RECALL → IMPLEMENT → CONTEXT_GUARD → CRITIQUE → REVIEW → VERIFY → EVAL → RETRO → CONCLUDE → REFRESH_CONTEXT → DONE
 ```
 
-Each phase is a separate agent. Only the conductor advances phases.
-Gates run in Python — agents cannot self-report a pass.
+Each phase is a separate agent (historical — `conductor.py` removed in commit `47477ab`). Gates run in Python — agents cannot self-report a pass. See `OrchestratorLoop` API reference below for the driver interface, still used internally by the RL system.
 
-**Before every task: honcho_context** (or honcho_search for specific topic recall). Pull the user's context and recent session history so the task starts with full situational awareness.
+## Hermes-Level Write Enforcement
 
-**After every phase: honcho_conclude.** The user expects a durable checkpoint after every pipeline phase submit, not just before compaction. `honcho_conclude(conclusion="...", peer="user")` records what was accomplished, what blocked, and what decisions were made. Without this, the user will call it out. The Honcho checkpoint is NOT optional — it's part of the pipeline discipline.
+The Hermes plugin (`plugins/techne/`) enforces write discipline automatically when `.techne/` is detected in the project root. This runs alongside `./next` — not instead of it.
 
-**After every phase: check task status** — call `db.get_task(tid).status` and `db.get_task(tid).phase` to display progress. `OrchestratorLoop` has no `get_status()` method — that will crash.
+**Auto-activation:** The plugin activates on session start if `.techne/` exists in CWD. No manual trigger needed.
+
+**What it blocks:**
+- Writes outside the current phase's allowed artifact path
+- Writes to `.techne/audit/` (the agent must NOT touch the audit trail)
+- Shell-level writes (`echo > file` via `terminal()`) — caught by monitoring stdout patterns
+- Reverse shell patterns (`bash -i`, `/dev/tcp/`, `nc -e`, etc.) — blocked at the plugin level
+- Phase timeout violations — if no `./next` call is made within `phase_timeout_min` (default 30 min), writes are blocked until the loop advances
+
+**Delegation:** The plugin delegates path checks to `harness/plugins/phase_guard.py`, which reads `.techne/loop/state.json` to determine the current phase and maps it to allowed artifact paths:
+```
+RECALL  → .techne/loop/recall.txt
+IMPLEMENT → .techne/loop/diff.txt
+VERIFY  → .techne/loop/test_output.txt
+CONCLUDE → .techne/loop/conclude.txt
+```
+
+**Persistent block logging:** Every blocked write is appended to `.techne/audit/blocked.log` with timestamp, attempted path, current phase, and reason. This log is never edited by the agent.
+
+**`/techne status` RL health:** The `/techne status` command shows current phase, tool count, block log summary, and RL health (reward count, advantage scores, pending proposals from `.techne/events/rl.jsonl`).
+
+**`phase_mode` options (for `./next` loop tasks):**
+- `full` (default): all 5 phases including RECALL and CONCLUDE
+- `fast`: skips RECALL and CONCLUDE (for review-only tasks)
+
+Set `phase_mode` to `fast` on tasks that don't need Honcho context or write-back.
 
 ## API Reference
 
@@ -304,7 +356,7 @@ Each phase needs specific context injected by the orchestrator loop:
 
 1. **Orchestrator loop RETRO context**: The loop's `_build_user_context()` must inject the same context the conductor's `retro_prompt()` builds — mistakes.md, per-skill recurrence counts, routed skill content. Without this, RETRO runs blind.
 
-2. **implementer_output.txt path collision**: When multiple tasks run sequentially, the fixed path `implementer_output.txt` causes task 2 to overwrite task 1's diff. Fix: use `implementer_output_{run_number}.txt` in conductor.py.
+2. **implementer_output.txt path collision**: When multiple tasks run sequentially, the fixed path `implementer_output.txt` causes task 2 to overwrite task 1's diff (historical — `conductor.py` removed in commit `47477ab`).
 
 3. **HITL re-entry deadlock**: After a HITL block, if task status is PENDING, the enforcer resets `current` to None. But if RECALL was already completed, this resets too far. Fix: only reset when `current != "RECALL"`.
 
@@ -376,81 +428,71 @@ Each phase needs specific context injected by the orchestrator loop:
 
 30. **Pipeline generated artifacts leak into git commits.** Pipeline runs create `.techne/tasks/<task-id>/`, `.techne/memory/` files with each commit. If using `git add -A`, these artifacts get committed. Prevent by adding to `.gitignore`: `.techne/tasks/` and `.techne/memory/`. Alternatively, specifically stage only the files you intend to commit.
 
-- `full` (default): all 10 phases, including RECALL and CONCLUDE
-- `fast`: skips RECALL and CONCLUDE (for review-only tasks)
-
-Set phase_mode to fast on tasks that don't need Honcho context or write-back.
-
 23. **"Load techne" IS the pipeline activation signal**: When the user says "load techne" or you load this skill via skill_view, the pipeline is now active for EVERYTHING — including read-only audits, reports, and single-file edits. The loaded skill is the trigger. If the user has to remind you to use the pipeline after loading techne, the mistake was assuming the pipeline only applies to coding. It applies to all work. This was corrected mid-session.
 
-## Workshop Garage Build Sequence
+## Workshop Garage Build Sequence (historical — `./next` is production)
 
-When working on the Techne Workshop Garage project, the build guide at
-`docs/plans/techne-workshop-build-guide.md` is the operational plan.
-Read it before dispatching any build ticket.
+The Workshop Garage build is complete. All items below are implemented and shipped.
+- **Track A (knowledge loop):** A1–A7 ✅, A8 deferred
+- **Track B (GRPO):** B0–B4 ✅
 
-### Two tracks, both complete
+**All P1–P5 patch items are FIXED.** See `docs/plans/techne-build-guide-patch-001.md` for the full post-build audit.
 
-**Track A — Workshop knowledge loop:**
+### Critical guardrails (still active)
+
+1. **Never wire GRPO output to `auto_apply_pending()`.** This function applies every pending proposal with zero confirmation. It is NOT currently called by anything. Keep it that way.
+
+2. **`prompt_evolution.ratify()` does not write to skill files.** It mutates an in-memory dict that vanishes on restart. If GRPO scoring is built before this is fixed, it produces numbers with nowhere to land.
+
+3. **The real skill-write path is `apply_retro.py`.** Its `apply_add()` / `apply_delete()` / `apply_resolve()` functions write directly into paths under `skills/`. If GRPO needs to update skills, extend this path.
+
+4. **Don't duplicate the wikilink rebuild logic.** `_log_retro_learn_trigger()` and REFRESH_CONTEXT both rebuild parts of the graph.
+
+5. **Don't let REFRESH_CONTEXT silently swallow failures.** A refresh that fails silently is worse than no refresh — it creates false confidence.
+
+## RL/GRPO System
+
+The RL/GRPO loop closes the gap between task outcomes and skill improvement. It runs inside the `./next` pipeline — not as a separate system.
+
+### Closed RL Loop
+
 ```
-A1. Resolve memory-location decision                   ✅
-A2. Wire REFRESH_CONTEXT as a real pipeline phase       ✅
-A3. Connect entries to subsystem nodes                  ✅
-A4. Add task nodes + task-triggered edges               ✅
-A5. CONCLUDE git-state scoping fix                      ✅
-A6. HITL re-entry state machine fix                     ✅
-A7. Honcho proof-verification (checkpoint.py)           ✅
-A8. Adapters for symbol/route/schema/test node types    (deferred)
+task completes → reward logged → advantage computed (per task-type group)
+           → high-advantage skills identified → proposals written to .techne/memory/retro_proposals.md
+           → human reviews and applies via apply_retro.py → skill file updated
 ```
 
-**Track B — GRPO:**
+**Reward log** (`.techne/memory/rewards.db`): Records task outcomes indexed by `task_type`, `skill`, and `prompt_variant`. Each entry includes a `reward` score (0–1) and computed `advantage` relative to same-type peers.
+
+**Advantage computation** (`compute_batch_advantages()`): Groups completed tasks by `task_type`, computes relative advantage for each `prompt_variant` within the group. Variants with advantage > 0.2 trigger edit proposals.
+
+**Proposal generation** (`grpo.py` → `propose_grpo_edits()`): Scans the reward log for high-advantage variants (threshold 0.2) and writes `PROPOSE ADD` entries to `.techne/memory/retro_proposals.md`. Proposals target the specific skill file that generated the high-advantage output (not always `implementer.md`).
+
+**Skill self-improvement**: Proposals are confirmed by a human reviewer via the same `apply_retro.py` gate used by the retro agent. No auto-apply path is used — `auto_apply_pending()` is implemented but never called.
+
+### Framework Skills Self-Improvement
+
+Each skill in `skills/` can be improved via the GRPO loop:
+1. Task outcomes using that skill are scored and logged
+2. High-advantage outcomes generate proposals targeting `skills/{skill}.md`
+3. Human review applies the proposal
+4. Future tasks using that skill get the improved version
+
+### `/techne status` RL Health
+
+`/techne status` shows:
+- Current phase + tool count for active loop
+- Block log summary (last 5 blocked writes)
+- RL health: reward count, average advantage, number of high-advantage skills, pending proposals
+
+### Event Log
+
+All RL events are appended to `.techne/events/rl.jsonl` as JSON lines:
 ```
-B0. Fix the skill-write path BEFORE scoring work        ✅
-B1. Task-type classifier from existing discipline/tags  ✅
-B2. Group-based scoring / advantage computation         ✅
-B3. Policy update — write through B0's chosen path      ✅
-B4. Multi-trajectory queue                              ✅
+{"ts": "...", "task_id": "...", "event": "post_run_evolve", "reward": 0.85, "advantage": 0.31, "skill": "implementer", "proposals_generated": 2}
 ```
 
-### Critical guardrails (from build guide Section 7)
-
-1. **Never wire GRPO output to auto_apply_pending().** This function applies
-   every pending proposal with zero confirmation. It is NOT currently called
-   by anything. Keep it that way.
-
-2. **prompt_evolution.ratify() does not write to skill files.** It mutates
-   an in-memory dict that vanishes on restart. If GRPO scoring is built
-   before this is fixed, it produces numbers with nowhere to land.
-
-3. **The real skill-write path is apply_retro.py.** Its apply_add() /
-   apply_delete() / apply_resolve() functions write directly into paths
-   under skills/. If GRPO needs to update skills, extend this path.
-
-4. **Don't duplicate the wikilink rebuild logic.** _log_retro_learn_trigger()
-   and REFRESH_CONTEXT both rebuild parts of the graph. After A1, retire one.
-
-5. **Don't let REFRESH_CONTEXT silently swallow failures.** A refresh that
-   fails silently is worse than no refresh — it creates false confidence.
-
-## Build Guide Patch (2026-06-21) — P1 through P5
-
-The `docs/plans/techne-build-guide-patch-001.md` is a post-build audit of the
-entire Workshop Garage build. It found 5 issues after verifying all built code:
-
-| Patch | Severity | Finding | Status |
-|-------|----------|---------|--------|
-| **P1** | 🔴 | GRPO `compute_batch_advantages()` never called on normal pipeline path — advantage stayed 0.0 forever | **FIXED** — one line in `post_run_evolve()` |
-| **P2** | 🔴 | `prompt_variants.json` shared file with no test isolation — tests mutated the real project file | **FIXED** — added `variants_path` constructor param |
-| **P3** | 🟡 | Honcho gate shipped without updating 3 test files — 24 tests broken | **FIXED** — all 3 files updated, negative test added |
-| **P4** | 🟡 | GRPO only targets prompt variants, not skills. `Reward` has no `skill` field | **FIXED** — `skill` field + SQL migration, `high_advantage_skills()`, `propose_skill_edits()` added |
-| **P5** | 🟢 | Receptionist handoff had no auto-trigger rule; 5-mode system collapsed to 3 | **FIXED** — docs updated, `receptionist_enforcer.py` built |
-
-### P4 — Skill-based GRPO (implemented)
-
-The P4 implementation adds `skill` field to `Reward`, `high_advantage_skills()`
-to `RewardLog`, and `propose_skill_edits()` to `grpo.py`. Proposals now target
-the correct skill file (`skills/{skill}.md`) instead of always targeting
-`skills/implementer.md`.
+This log is gitignored. Use it to audit RL behavior or diagnose why proposals were (or weren't) generated.
 
 ## Next Steps
 

@@ -123,7 +123,7 @@ def resolve_stack_skills(root=ROOT) -> list[str]:
 
 
 def stack_gated_paths() -> set[str]:
-    """Every skill path that is stack-gated. The conductor's catch-all fallback
+    """Every skill path that is stack-gated. The orchestrator's catch-all fallback
     must NOT load these — they load only when their stack is detected."""
     return set(get_stack_loaded().values())
 

@@ -1,6 +1,6 @@
 ---
 name: kanban
-description: The gate-free Techne lane for Kanban / multi-agent work — a second door into the SAME skillbase, sterile of conductor.py and the gates. Use when a Hermes (or any) board dispatches a subagent for non-code work: research, writing, planning, scraping. Not a copy of Techne; the same skills run without the code pipeline. For a code-change card, use the gated pipeline instead.
+description: The gate-free Techne lane for Kanban / multi-agent work — a second door into the SAME skillbase, sterile of the orchestrator pipeline and gates. Use when a Hermes (or any) board dispatches a subagent for non-code work: research, writing, planning, scraping. Not a copy of Techne; the same skills run without the code pipeline. For a code-change card, use the gated pipeline instead.
 triggers:
   - kanban
   - kanban lane
@@ -23,7 +23,7 @@ standard still holds (`skills/discipline.md`) — but YOU hold it, nothing enfor
 1. FRAMEWORK SKILLS   always-loaded rules (skill-router.yaml always_loaded)
 2. GLOBAL DISCIPLINE  skills/discipline.md — the honest standard
 3. ROUTED SKILL       route(card.Goal) over the SHARED skills/ — read, not copied
-No conductor.py. No run_all_gates. No SHA test-hash. This is the sterile door.
+No orchestrator pipeline. No run_all_gates. No SHA test-hash. This is the sterile door.
 ```
 
 ## The loop (no pipeline, just honest work)

@@ -14,7 +14,7 @@ deterministic gates (Python). Each domain can be hardened independently.
           ▼                        ▼                        ▼
   ┌───────────────────────────────────────────────────────────────────┐
   │                    1. Pipeline Core (harness/)                    │
-  │  orchestral_loop.py ── conductor.py ── gates.py ── driver.py    │
+  │  orchestrator_loop.py ── driver.py ── gates.py ── next.py     │
   └───────────┬───────────────────────────────────────────┬───────────┘
               │                                           │
               ▼                                           ▼
@@ -49,7 +49,7 @@ the innermost heart of Techne.
 | File | Role |
 |------|------|
 | `harness/orchestrator_loop.py` | Main loop (1967 lines). Phase sequencing, retry gates, DONE/FAILED/HALT. |
-| `harness/conductor.py` | Host-driven Pipeline class. Prompt assembly, `_read_skill_files()`, retro marker parsing, `_load_phase_skills()`. |
+| `harness/orchestrator_loop.py` | Host-driven loop. Phase transitions, RL reward recording, post_run_evolve(). (Replaces deleted conductor.py) |
 | `harness/gates.py` | Deterministic gate functions that validate phase output. |
 | `harness/driver.py` | CLI entry point. Wires the loop to user input. Wires `summarize_incomplete()`. |
 
@@ -191,7 +191,7 @@ phase, plus the router that matches task descriptions to skills.
 |------|------|
 | `skills/skill-router.yaml` | Maps keywords → skill paths. Router for context injection. |
 | `skills/<name>/SKILL.md` | Per-skill discipline (Rationalization Table, Red Flags, Next Steps). |
-| `harness/conductor.py` | `_read_skill_files()` — loads always-loaded, stack-loaded, routed skills. |
+| `harness/orchestrator_loop.py` | `_load_phase_skills()` via `phase_skills.py` — loads always-loaded, stack-loaded, routed skills. |
 
 **Skill structure (DISCIPLINE template).**
 

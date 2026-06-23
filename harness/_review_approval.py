@@ -240,7 +240,7 @@ def _submit_approval(self, task_id: str, approval_text: str) -> LoopOutcome:
 def _submit_verify(self, task_id: str, test_output: str) -> LoopOutcome:
     """Process test output. Done if the SHA gate passes, retry/escalate if not."""
     # Real verification — the SHA gate confirms tests actually ran (no fakes,
-    # unique hash, pass indicators present), the same gate conductor uses.
+    # unique hash, pass indicators present), the same gate the orchestrator uses.
     # Review-only tasks skip the pass-indicator check (no real test output).
     task = self.db.get_task(task_id)
     review_only = bool(task and "review-only" in (task.tags or []))

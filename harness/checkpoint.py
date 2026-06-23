@@ -2,7 +2,7 @@
 checkpoint.py — blocks completion claims until verification runs.
 
 Adopted from jtoemion/harness-engineering-skills/runtime/checkpoint.py.
-The conductor calls this after VERIFY phase passes. It enforces that
+The orchestrator calls this after VERIFY phase passes. It enforces that
 no pipeline can claim "done" without real verification evidence.
 """
 
@@ -135,7 +135,7 @@ def increment_pipeline_run() -> int:
 
 
 def get_summary() -> str:
-    """Print checkpoint status — used by conductor at pipeline end."""
+    """Print checkpoint status — used by orchestrator at pipeline end."""
     state = read_state()
     if not state:
         return "No harness state found."

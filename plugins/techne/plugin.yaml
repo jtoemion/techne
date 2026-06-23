@@ -1,7 +1,14 @@
 name: techne
-version: "2.0.0"
-description: Techne pipeline mode enabler — write enforcement via pre_tool_call hook, worker metaprompt, 11-phase pipeline discipline
-author: Hermes
+version: "3.0.0"
+description: >
+  Techne pipeline enforcement — auto-activates on .techne/ detection,
+  write enforcement via pre_tool_call hook (phase_guard delegation),
+  phase timeout, tool-count limits, shell-level write detection,
+  reverse shell pattern blocking, persistent block logging,
+  RL health dashboard, ./next loop integration.
+
+author: Techne
+repo: https://github.com/jtoemion/techne
 
 hooks:
   on_session_start: true
@@ -11,5 +18,19 @@ hooks:
 
 commands:
   - name: techne
-    description: Activate Techne pipeline mode with write enforcement - blocks write_file/patch/git without active task
+    description: >
+      Activate Techne pipeline mode with write enforcement.
+      Subcommands: status, bypass, off, reset-block-log
     handler: _cmd_techne
+
+features:
+  - auto_activation: "Activates on session start if .techne/ directory found"
+  - phase_guard: "Delegates path checks to harness/plugins/phase_guard.py"
+  - phase_timeout: "Blocks writes if no ./next call > phase_timeout_min (default 30)"
+  - tool_count_limits: "Forces ./next after N tool calls per phase"
+  - shell_write_detection: "Blocks echo/cat/sed redirects to source files via terminal()"
+  - reverse_shell_blocking: "Detects /dev/tcp, netcat -e, bash -i, socat, python socket patterns"
+  - persistent_block_log: "Every blocked write logged to .techne/audit/blocked.log"
+  - rl_health: "/techne status shows reward count, advantage scores, task types"
+  - audit_trail: ".techne/audit/chain.jsonl — hash-chained, tamper-evident"
+  - watchdog_cron: "External stall/tamper/skip detector runs every 5 min"

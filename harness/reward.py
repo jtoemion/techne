@@ -52,7 +52,7 @@ def log_reward(kind: str, what: str, skill: str = "none",
     to the routed skill, mirroring mistakes.log_mistake, so retro sees per-skill net.
 
     Single-writer ledger (like mistakes.py / ledger.py): written by the ONE
-    host/conductor. Isolated parallel workers do NOT write it directly — they report
+    host/orchestrator. Isolated parallel workers do NOT write it directly — they report
     back and the host records (skills/kanban/isolation.md), so concurrent writers
     don't arise here and no lockfile is needed."""
     kind = kind.upper()

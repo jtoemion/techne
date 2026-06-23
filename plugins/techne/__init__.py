@@ -1,5 +1,7 @@
-"""
-Plugin: techne — pipeline mode enabler with pre_tool_call enforcement.
+"""Plugin: techne — pipeline mode enforcer with pre_tool_call enforcement.
+       Enhanced: phase-aware artifact enforcement + tool-count tracking.
+       Production: delegated to phase_guard.py for write enforcement,
+       persistent blocked.log, state.json-based task activation, phase timeout.
 
 /techne             — activate pipeline mode with write enforcement
 /techne status      — show enforcement state + block log + task DB snapshot
@@ -8,8 +10,13 @@ Plugin: techne — pipeline mode enabler with pre_tool_call enforcement.
 
 pre_tool_call hook  — blocks write_file/patch/terminal(git/rm/mv/cp)
                       unless an active pipeline task exists.
-                      Allows writes to .techne/, /tmp/, and log paths
-                      regardless of task state.
+                      Delegates path checks to harness/plugins/phase_guard.py
+                      - Reads .techne/loop/state.json for current phase
+                      - Blocks writes to artifact paths that don't match phase
+                      - Blocks writes to .techne/audit/ entirely
+                      - Forces ./next after tool-count threshold
+                      - Phase timeout: blocks if no ./next call > timeout_min
+                      - Logs every block to .techne/audit/blocked.log
 """
 
 from __future__ import annotations
@@ -30,9 +37,52 @@ TECHNE_REPO = HOME / "repos" / "techne"
 METAPROMPT_PATH = TECHNE_REPO / "docs" / "plans" / "techne-worker-metaprompt.md"
 REVOLVER_STATE_PATH = HOME / ".hermes" / ".revolver_state.json"
 
+# Import phase_guard from the techne repo — bypass harness/plugins/__init__.py
+# to avoid triggering the full plugin chain (builtin_gates → gates import)
+_PHASE_GUARD_PATH = TECHNE_REPO / "harness" / "plugins" / "phase_guard.py"
+if _PHASE_GUARD_PATH.exists():
+    import importlib.util as _importlib_util
+    _spec = _importlib_util.spec_from_file_location("_techne_phase_guard", str(_PHASE_GUARD_PATH))
+    _pg_mod = _importlib_util.module_from_spec(_spec)
+    _spec.loader.exec_module(_pg_mod)
+    _pg_check_write = _pg_mod.check_write_allowed
+    _pg_log_blocked = _pg_mod.log_blocked
+    _pg_get_blocked_log = _pg_mod.get_blocked_log
+    _HAS_PHASE_GUARD = True
+    logger.info("[techne] phase_guard loaded from %s", _PHASE_GUARD_PATH)
+else:
+    _HAS_PHASE_GUARD = False
+    logger.warning("[techne] phase_guard not found at %s — using inline enforcement", _PHASE_GUARD_PATH)
+
+# Phase artifact mapping — each phase can only write to these paths
+_PHASE_ARTIFACT_PATHS = {
+    "RECALL":   {".techne/loop/recall.txt"},
+    "IMPLEMENT": set(),  # code files — any path allowed (normal dev work)
+    "VERIFY":   {".techne/loop/test_output.txt"},
+    "CONCLUDE": {".techne/loop/conclude.txt"},
+    "DONE":     set(),   # no artifact needed
+}
+
+# Tool-count thresholds per phase — after this many tools, force ./next call
+_PHASE_TOOL_LIMITS = {
+    "RECALL":   15,
+    "IMPLEMENT": 25,
+    "VERIFY":    8,
+    "CONCLUDE":  10,
+    "DONE":      0,  # no limit — task is finished
+}
+
+# Default phase timeout (minutes) — stall detection in the plugin itself
+_DEFAULT_PHASE_TIMEOUT_MIN = 30
+
+# Commands that count as "./next" calls (phase transitions)
+_NEXT_PATTERNS = [
+    re.compile(r"python3\s+.*next\.py", re.I),
+    re.compile(r"\./next\b", re.I),
+    re.compile(r"bash\s+.*next\.", re.I),
+]
+
 # ── Hardened terminal patterns ───────────────────────────────────────────────
-# Uses regex word boundaries to avoid false matches on substrings.
-# Each entry: (pattern_name, compiled_regex, description)
 
 _TERMINAL_BLOCK_PATTERNS: list[tuple[str, re.Pattern, str]] = [
     ("git_commit", re.compile(r"\bgit\s+commit\b", re.I), "git commit"),
@@ -51,13 +101,71 @@ _TERMINAL_BLOCK_PATTERNS: list[tuple[str, re.Pattern, str]] = [
     ("dd_write", re.compile(r"\bdd\s+if=", re.I), "dd (raw device write)"),
     ("chmod_recursive", re.compile(r"\bchmod\s+-R\b", re.I), "recursive chmod"),
     ("chown", re.compile(r"\bchown\b", re.I), "change owner"),
+    ("sed_inplace", re.compile(r"\bsed\s+.*-i\b", re.I), "sed -i (in-place edit)"),
+    ("install_write", re.compile(r"\binstall\s+", re.I), "install (copy with perms)"),
+    ("bash_dev_tcp", re.compile(r"/dev/(tcp|udp)/", re.I), "/dev/tcp reverse shell"),
+    ("nc_shell", re.compile(r"\bnc\s+.*\-[eč]\b", re.I), "netcat reverse shell"),
+    ("bash_i_redirect", re.compile(r"bash\s+.*\-i\s+.*>&", re.I), "bash -i reverse shell"),
+    ("exec_redir_shell", re.compile(r"exec\s+\d+<>", re.I), "exec redirect reverse shell"),
+    ("socat_shell", re.compile(r"\bsocat\s+.*(?:exec:|system:)", re.I), "socat reverse shell"),
+    ("python_revshell", re.compile(r"(?:socket\.connect|pty\.spawn)\s*\(.*\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", re.I), "python reverse shell"),
+    ("telnet_shell", re.compile(r"\btelnet\s+\S+\s+\d+\s*[|&]", re.I), "telnet reverse shell"),
+    ("curl_bash", re.compile(r"\bcurl\s+.*[||]\s*(?:bash|sh)\b", re.I), "curl-to-bash pipe"),
 ]
 
-# File-write tools — blocked without active task
+# Additional source file extensions to detect shell-level writes
+_SOURCE_FILE_EXTS = re.compile(
+    r"\.(?:py|js|ts|jsx|tsx|json|ya?ml|toml|md|css|scss|sass|less|html|vue|svelte"
+    r"|env|txt|cfg|ini|conf|xml|svg|sh|bash|zsh|fish|rb|go|rs|c|cpp|h|hpp"
+    r"|java|kt|swift|php|pl|lua|sql|graphql|prisma|proto|gradle|makefile|dockerfile)$",
+    re.I,
+)
+
+
+def _is_shell_source_write(command: str) -> tuple[bool, str]:
+    """Check if a terminal command writes to a source file via shell redirect.
+
+    Detects patterns like:
+      echo '...' > file.py
+      cat > file.py << '...'
+      printf '...' > file.ts
+      somecommand > src/app.js
+      >> src/data.json
+
+    Returns (is_write, reason) or (False, '').
+    """
+    # Strip obvious non-write redirects (devnull, pipes, stderr merge)
+    stripped = re.sub(r'>\s*/dev/null\b', '', command, flags=re.I)
+
+    # Skip redirects to /tmp/ and .hermes/ paths
+    if re.search(r'>\s*(/tmp/|~/.hermes)', stripped, re.I):
+        return (False, '')
+
+    # Find all redirect targets (> path or >> path)
+    matches = re.findall(r'(?:>|>>)\s*((?:\./)?(?:[^\s;|&`(){}<>]+))', stripped)
+    for target in matches:
+        target = target.strip()
+        # Skip if target contains .techne/ or .hermes/
+        if '.techne' in target or '.hermes' in target:
+            continue
+        # Check if target has a source file extension
+        if _SOURCE_FILE_EXTS.search(target):
+            return (True, f'shell redirect write to {target}')
+
+    # Check cat/echo/printf heredoc patterns
+    heredoc = re.search(r'\b(?:cat|echo|printf)\s+.*(?:>\s*|<<\s*)([^\s;|&`(){}<>]+\.\w+)', command, re.I)
+    if heredoc:
+        target = heredoc.group(1)
+        if '.techne' not in target and '.hermes' not in target:
+            return (True, f'shell write via {command[:60]}...')
+
+    return (False, '')
+
+
+# File-write tools
 _WRITE_TOOLS = {"write_file", "patch"}
 
-# Paths that are ALWAYS allowed regardless of task state.
-# A path matches if it STARTS WITH any of these prefixes.
+# Always-allowed paths
 _ALLOWED_PATH_PREFIXES = (
     "/tmp/",
     str(HOME / ".hermes" / "logs"),
@@ -69,8 +177,83 @@ _ALLOWED_PATH_PREFIXES = (
     "/sys/",
 )
 
-# Project-internal paths that are always allowed (context amortization, logs)
 _TECHNE_ALWAYS_ALLOWED = {".techne", ".hermes"}
+
+# ── Loop state tracking ─────────────────────────────────────────────────────
+
+_LAST_PHASE = ""       # phase tracked on last pre_tool_call
+_TOOL_COUNT = 0        # tool calls in current phase
+_PHASE_CHANGED = False # flag: phase just changed (reset tool count next call)
+
+# ── Path to the techne repo for CWD-independent resolution ──────────────────
+
+_TECHNE_REPO_STR = str(TECHNE_REPO)
+
+
+def _find_audit_log_path() -> Path | None:
+    """Find .techne/audit/blocked.log by walking up from CWD."""
+    cwd = Path.cwd().resolve()
+    for parent in [cwd] + list(cwd.parents):
+        candidate = parent / ".techne" / "audit" / "blocked.log"
+        if candidate.parent.exists():
+            return candidate
+        if (parent / ".techne").is_dir():
+            return parent / ".techne" / "audit" / "blocked.log"
+    return None
+
+
+def _read_loop_state() -> tuple[str, str, dict | None]:
+    """Read .techne/loop/state.json from CWD walk-up.
+
+    Returns (phase, task_id, raw_state_dict) or ("", "", None) if no state file.
+    Returns the raw dict so callers can check updated_at, phase_timeout_min, etc.
+    """
+    cwd = Path.cwd().resolve()
+    for parent in [cwd] + list(cwd.parents):
+        state_file = parent / ".techne" / "loop" / "state.json"
+        if state_file.exists():
+            try:
+                data = json.loads(state_file.read_text(encoding="utf-8"))
+                phase = data.get("phase", "").upper()
+                task_id = data.get("task_id", "")
+                return (phase, task_id, data)
+            except (json.JSONDecodeError, OSError):
+                return ("", "", None)
+    return ("", "", None)
+
+
+def _increment_tool_count(phase: str) -> int:
+    """Increment the tool-use counter for the current phase.
+
+    Resets to 0 if phase changed since last call.
+    """
+    global _LAST_PHASE, _TOOL_COUNT, _PHASE_CHANGED
+
+    if phase != _LAST_PHASE:
+        _TOOL_COUNT = 0
+        _LAST_PHASE = phase
+        _PHASE_CHANGED = True
+    else:
+        _TOOL_COUNT += 1
+        _PHASE_CHANGED = False
+
+    return _TOOL_COUNT
+
+
+def _is_next_command(command: str) -> bool:
+    """Check if a terminal command is calling ./next."""
+    for pattern in _NEXT_PATTERNS:
+        if pattern.search(command):
+            return True
+    return False
+
+
+def _reset_phase_tracking() -> None:
+    """Reset phase tracking state — called on session start/reset."""
+    global _LAST_PHASE, _TOOL_COUNT, _PHASE_CHANGED
+    _LAST_PHASE = ""
+    _TOOL_COUNT = 0
+    _PHASE_CHANGED = False
 
 
 def _is_allowed_path(path_str: str) -> bool:
@@ -108,12 +291,20 @@ def _find_tasks_db() -> Path | None:
 
 
 def _has_active_task(db_path: Path | None) -> bool:
-    """Check if there's an active (in-progress) pipeline task.
+    """Check if there's an active pipeline task.
 
-    A task is active if it has been started (status is past PENDING
-    but not yet terminal). PENDING-only tasks don't count — they
-    haven't been claimed by any agent yet.
+    Checks BOTH:
+    1. Old SQLite task DB for active tasks (old pipeline)
+    2. .techne/loop/state.json for active loop (new ./next pipeline)
+
+    A task is active if EITHER check passes.
     """
+    # Check new loop first (no SQLite needed)
+    phase, tid, raw = _read_loop_state()
+    if phase and phase not in ("DONE", "FAILED", ""):
+        return True
+
+    # Fallback: old SQLite task DB
     if db_path is None or not db_path.exists():
         return False
     conn = None
@@ -151,6 +342,27 @@ def _count_tasks_by_status(db_path: Path) -> list[tuple[str, int]] | None:
             conn.close()
 
 
+def _rl_health() -> dict:
+    """Quick RL health check from rewards.db."""
+    import sqlite3
+    from pathlib import Path
+
+    cwd = Path.cwd().resolve()
+    for parent in [cwd] + list(cwd.parents):
+        db = parent / '.techne' / 'memory' / 'rewards.db'
+        if db.exists():
+            try:
+                conn = sqlite3.connect(str(db))
+                count = conn.execute('SELECT COUNT(*) FROM rewards').fetchone()[0]
+                pending = conn.execute('SELECT COUNT(*) FROM rewards WHERE advantage != 0.0').fetchone()[0]
+                types = conn.execute('SELECT COUNT(DISTINCT task_type) FROM rewards').fetchone()[0]
+                conn.close()
+                return {'rewards': count, 'scored': pending, 'task_types': types, 'db': str(db)}
+            except Exception:
+                return {'rewards': 0, 'scored': 0, 'task_types': 0, 'db': 'error'}
+    return {'rewards': 0, 'scored': 0, 'task_types': 0, 'db': 'not found'}
+
+
 def _is_write_file(tool_name: str, tool_input: dict) -> tuple[bool, str]:
     """Check if a tool call is a write operation.
 
@@ -180,7 +392,10 @@ def _is_write_file(tool_name: str, tool_input: dict) -> tuple[bool, str]:
         for name, pattern, desc in _TERMINAL_BLOCK_PATTERNS:
             if pattern.search(command):
                 return (True, f"{desc} in: {command[:100]}")
-        return (False, "")
+        # Also block shell-level writes to source files (echo/cat/printf redirect)
+        is_write, reason = _is_shell_source_write(command)
+        if is_write:
+            return (True, reason)
 
     # execute_code containing write_file calls
     if tool_name == "execute_code":
@@ -189,8 +404,51 @@ def _is_write_file(tool_name: str, tool_input: dict) -> tuple[bool, str]:
             code = tool_input.get("code", "")
         if "write_file" in code:
             return (True, "write_file called inside execute_code")
+        # Reverse shell detection in execute_code
+        if re.search(r"(?:socket\.connect|subprocess\.Popen|pty\.spawn|os\.system)\s*\(.*\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", code, re.I):
+            return (True, "reverse shell pattern in execute_code")
 
     return (False, "")
+
+
+def _check_phase_timeout(state_raw: dict | None) -> str | None:
+    """Check if the current phase has timed out.
+
+    Returns a block message if timed out, None if healthy.
+    """
+    if not state_raw:
+        return None
+    from datetime import datetime, timezone
+
+    phase = state_raw.get("phase", "")
+    if phase in ("DONE", "FAILED"):
+        return None
+
+    updated_raw = state_raw.get("updated_at")
+    if not updated_raw:
+        return None
+
+    try:
+        updated = datetime.fromisoformat(updated_raw)
+    except (ValueError, TypeError):
+        return None
+
+    timeout_min = state_raw.get("phase_timeout_min", _DEFAULT_PHASE_TIMEOUT_MIN)
+    now = datetime.now(timezone.utc)
+    elapsed_min = (now - updated).total_seconds() / 60.0
+
+    if elapsed_min > timeout_min:
+        task_id = state_raw.get("task_id", "?")
+        return (
+            f"⏰ Phase timeout: phase {phase} has been active for "
+            f"{int(elapsed_min)} min (limit: {timeout_min} min).\n\n"
+            f"Task {task_id} has not called ./next in over {timeout_min} min.\n"
+            f"Call ./next to advance or acknowledge:\n"
+            f"  python3 {_TECHNE_REPO_STR}/scripts/next.py\n\n"
+            f"Temporary bypass: /techne bypass"
+        )
+
+    return None
 
 
 def register(ctx) -> None:
@@ -203,16 +461,23 @@ def register(ctx) -> None:
         "db_not_found_warned": False,
     }
 
-    def _log_block(tool_name: str, reason: str) -> None:
-        """Record a blocked tool call for audit."""
+    def _log_block(tool_name: str, reason: str, persist: bool = True) -> None:
+        """Record a blocked tool call for audit (in-memory + persistent)."""
         _state["total_blocks"] += 1
         _state["block_log"].append({
             "tool": tool_name,
             "reason": reason[:80],
         })
-        # Keep log capped at 50
+        # Keep in-memory log capped at 50
         if len(_state["block_log"]) > 50:
             _state["block_log"] = _state["block_log"][-50:]
+
+        # Persistent log via phase_guard
+        if persist and _HAS_PHASE_GUARD:
+            try:
+                _pg_log_blocked(f"tool:{tool_name}", reason[:200])
+            except Exception:
+                pass
 
     # ── pre_tool_call hook ────────────────────────────────────────────────
     @ctx.on("pre_tool_call")
@@ -222,7 +487,10 @@ def register(ctx) -> None:
         session_id: str = "",
         **kwargs,
     ) -> dict | None:
-        """Block destructive tools if pipeline mode is active and no task exists."""
+        """Block destructive tools if pipeline mode is active and no task exists.
+        ALSO: enforce phase-aware artifact paths, force ./next after limit,
+        detect phase timeout, log every block to disk.
+        """
         if tool_input is None:
             tool_input = {}
 
@@ -237,7 +505,101 @@ def register(ctx) -> None:
             )
             return None
 
-        # Check if this tool call is destructive
+        # ── Read loop state for phase-aware enforcement ───────────────
+        current_phase, task_id, state_raw = _read_loop_state()
+
+        # ── Phase timeout check ────────────────────────────────────────
+        if current_phase and state_raw:
+            timeout_msg = _check_phase_timeout(state_raw)
+            if timeout_msg:
+                _log_block(tool_name, f"phase timeout in {current_phase}")
+                return {
+                    "action": "block",
+                    "message": timeout_msg,
+                }
+
+        # ── Phase-guard write check (delegated to phase_guard.py) ─────
+        if current_phase and tool_name in _WRITE_TOOLS:
+            path = ""
+            if isinstance(tool_input, dict):
+                path = tool_input.get("path", tool_input.get("file_path", ""))
+
+            if path:
+                # Check via phase_guard if available
+                if _HAS_PHASE_GUARD:
+                    allowed, reason = _pg_check_write(path, cwd=str(Path.cwd()))
+                    if not allowed:
+                        _log_block(tool_name, reason)
+                        return {
+                            "action": "block",
+                            "message": (
+                                f"Write blocked: {reason}\n\n"
+                                f"Current phase: {current_phase}\n"
+                                f"Target path: {path}\n\n"
+                                f"Call `./next` to advance to the next phase.\n"
+                                f"  python3 {_TECHNE_REPO_STR}/scripts/next.py\n\n"
+                                f"Temporary bypass: /techne bypass"
+                            ),
+                        }
+                else:
+                    # Inline fallback (same logic as phase_guard)
+                    # Block .techne/audit/ entirely
+                    if ".techne" in Path(path).parts and "audit" in Path(path).parts:
+                        _log_block(tool_name, f"audit dir write: {path}")
+                        return {
+                            "action": "block",
+                            "message": "Write to .techne/audit/ is forbidden. The audit trail is append-only.",
+                        }
+
+                    # Check phase artifact paths
+                    allowed_artifacts = _PHASE_ARTIFACT_PATHS.get(current_phase, set())
+                    for artifact_rel in allowed_artifacts:
+                        if artifact_rel in path:
+                            break  # allowed — right phase artifact
+                    else:
+                        # Check if it's any phase's artifact → wrong phase
+                        for all_artifacts in _PHASE_ARTIFACT_PATHS.values():
+                            for other_artifact in all_artifacts:
+                                if other_artifact in path and other_artifact not in allowed_artifacts:
+                                    _log_block(tool_name, f"wrong-phase artifact: {path}")
+                                    return {
+                                        "action": "block",
+                                        "message": (
+                                            f"{Path(path).name} belongs to a different phase.\n\n"
+                                            f"Current phase: {current_phase}\n"
+                                            f"Allowed artifacts: {', '.join(allowed_artifacts) if allowed_artifacts else 'any path'}\n\n"
+                                            f"Call `./next` to advance first.\n"
+                                        ),
+                                    }
+
+        # ── If we have a phase, track tool count and check limits ──────
+        if current_phase:
+            count = _increment_tool_count(current_phase)
+            limit = _PHASE_TOOL_LIMITS.get(current_phase, 0)
+
+            # Check if this terminal command is a ./next call → reset counter
+            if tool_name == "terminal":
+                command = ""
+                if isinstance(tool_input, dict):
+                    command = tool_input.get("command", "")
+                if _is_next_command(command):
+                    _LAST_PHASE = ""  # force reset on next call
+                    _TOOL_COUNT = 0
+
+            # Check tool-count threshold
+            if limit > 0 and count >= limit:
+                _log_block(tool_name, f"tool-count {count} >= limit {limit} in {current_phase}")
+                return {
+                    "action": "block",
+                    "message": (
+                        f"Phase enforcement: {count} tool calls in {current_phase} phase.\n\n"
+                        f"Call `./next` to advance to the next phase.\n"
+                        f"  python3 {_TECHNE_REPO_STR}/scripts/next.py\n\n"
+                        f"Temporary bypass: /techne bypass\n"
+                    ),
+                }
+
+        # ── Check if this tool call is destructive ────────────────────
         is_destructive, reason = _is_write_file(tool_name, tool_input)
         if not is_destructive:
             return None
@@ -280,7 +642,7 @@ def register(ctx) -> None:
                 "All file writes must go through a pipeline task. "
                 "Create one:\n"
                 "  1. /techne (if not already loaded)\n"
-                "  2. task_db.create_task(title=\"...\", discipline=\"tdd\")\n"
+                "  2. Create .techne/loop/state.json with phase=\"RECALL\"\n"
                 "  3. Drive through RECALL → IMPLEMENT → … → DONE\n\n"
                 "Temporary bypass: /techne bypass (3 writes)\n"
                 "Disable enforcement: /techne off\n"
@@ -296,6 +658,25 @@ def register(ctx) -> None:
         _state["block_log"].clear()
         _state["total_blocks"] = 0
         _state["db_not_found_warned"] = False
+        _reset_phase_tracking()
+
+        # Auto-activate if .techne/ directory is found by walking up from CWD
+        cwd = Path.cwd().resolve()
+        techne_found = False
+        for parent in [cwd] + list(cwd.parents):
+            if (parent / ".techne").is_dir():
+                techne_found = True
+                break
+            # Stop if we hit a filesystem root (avoid scanning entire filesystem)
+            if parent == parent.parent:
+                break
+
+        if techne_found:
+            _state["active"] = True
+            ctx.inject_message(
+                "Techne project detected — pipeline enforcement auto-activated.",
+                role="assistant",
+            )
 
     @ctx.on("on_session_end")
     def on_session_end(session_id: str = "") -> None:
@@ -308,6 +689,7 @@ def register(ctx) -> None:
         _state["block_log"].clear()
         _state["total_blocks"] = 0
         _state["db_not_found_warned"] = False
+        _reset_phase_tracking()
 
     # ── /techne command ───────────────────────────────────────────────────
     def _cmd_techne(args: str = "") -> str:
@@ -328,7 +710,6 @@ def register(ctx) -> None:
 
         if args_lower == "reset-block-log":
             _state["block_log"].clear()
-            _state["total_blocks"] = 0
             return "[techne] Block log cleared."
 
         if args_lower in ("status", "state"):
@@ -338,6 +719,23 @@ def register(ctx) -> None:
             )
             lines.append(f"Bypasses remaining: {_state['bypass_count']}")
             lines.append(f"Total blocks this session: {_state['total_blocks']}")
+
+            # Loop phase state
+            phase, tid, raw = _read_loop_state()
+            if phase:
+                lines.append(f"Loop phase: **{phase}** (task: {tid})")
+                limit = _PHASE_TOOL_LIMITS.get(phase, 0)
+                if limit > 0:
+                    lines.append(f"Tool count: {_TOOL_COUNT}/{limit} (call ./next at limit)")
+                else:
+                    lines.append(f"Tool count: {_TOOL_COUNT} (no limit)")
+
+                # Phase timeout info
+                if raw:
+                    timeout_min = raw.get("phase_timeout_min", _DEFAULT_PHASE_TIMEOUT_MIN)
+                    lines.append(f"Phase timeout: {timeout_min} min")
+            else:
+                lines.append("Loop phase: none (no .techne/loop/state.json)")
 
             # Task DB
             db_path = _find_tasks_db()
@@ -353,13 +751,56 @@ def register(ctx) -> None:
             else:
                 lines.append("ℹ️ No task database found (no active project)")
 
-            # Block log (last 10)
+            # RL Health
+            rl = _rl_health()
+            lines.append('')
+            lines.append('**RL Health:**')
+            lines.append(f'  Rewards logged: {rl["rewards"]}')
+            lines.append(f'  Tasks with advantage scores: {rl["scored"]}')
+            lines.append(f'  Task types seen: {rl["task_types"]}')
+            if rl['rewards'] > 0:
+                lines.append('  RL loop: ACTIVE')
+            else:
+                lines.append('  RL loop: IDLE (no rewards yet)')
+
+            # Last RL event
+            events_path = None
+            for parent in [Path.cwd().resolve()] + list(Path.cwd().resolve().parents):
+                ep = parent / '.techne' / 'events' / 'rl.jsonl'
+                if ep.exists():
+                    events_path = ep
+                    break
+            if events_path:
+                try:
+                    ev_lines = events_path.read_text().strip().split('\n')
+                    if ev_lines:
+                        import json
+                        last = json.loads(ev_lines[-1])
+                        lines.append(f'  Last RL event: {last.get("event", "?")} ({last.get("ts", "?")[:19]})')
+                except Exception:
+                    pass
+
+            # In-memory block log (last 10)
             if _state["block_log"]:
-                lines.append("**Recent blocks:**")
+                lines.append("**Recent in-memory blocks:**")
                 for entry in _state["block_log"][-10:]:
                     lines.append(
                         f"  ⛔ {entry['tool']} — {entry['reason'][:60]}"
                     )
+
+            # Persistent block log (last 5)
+            if _HAS_PHASE_GUARD:
+                try:
+                    persistent = _pg_get_blocked_log()
+                    if persistent:
+                        lines.append("**Persistent blocked.log (last 5):**")
+                        for entry in persistent[-5:]:
+                            ts = entry.get("timestamp", "")[11:19] if entry.get("timestamp") else ""
+                            p = entry.get("path", "")
+                            r = entry.get("reason", "")[:50]
+                            lines.append(f"  📝 {ts} {p} — {r}")
+                except Exception:
+                    pass
 
             # Resources
             if METAPROMPT_PATH.exists():
@@ -384,13 +825,18 @@ def register(ctx) -> None:
         _state["active"] = True
         _state["bypass_count"] = 0
 
-        # Check if a tasks.db is findable
+        # Check active task status
         db_path = _find_tasks_db()
+        phase, tid, _ = _read_loop_state()
+        has_active = bool(phase and phase not in ("DONE", "FAILED", ""))
+        if not has_active and db_path:
+            has_active = _has_active_task(db_path)
+
         db_status = ""
         if db_path:
             db_status = (
                 f"\nTask DB found at `{db_path}` — "
-                f"{'active tasks' if _has_active_task(db_path) else 'no active tasks'}."
+                f"{'active tasks' if has_active else 'no active tasks'}."
             )
         else:
             db_status = (
@@ -398,22 +844,21 @@ def register(ctx) -> None:
                 "the first 3 attempts until a DB is available."
             )
 
-        # Revolver state
-        revolver_info = ""
-        if REVOLVER_STATE_PATH.exists():
-            try:
-                state = json.loads(REVOLVER_STATE_PATH.read_text())
-                delegations = state.get("delegations", [])
-                if delegations:
-                    delegation_summary = ", ".join(
-                        f"{d.get('name', 'unnamed')}" for d in delegations[-3:]
-                    )
-                    revolver_info = (
-                        f"\nRevolver delegation config ({len(delegations)} total, "
-                        f"recent: {delegation_summary}): active."
-                    )
-            except (json.JSONDecodeError, OSError):
-                revolver_info = "\nRevolver state present but unreadable."
+        # Phase guard status
+        pg_status = "✓ phase_guard module loaded" if _HAS_PHASE_GUARD else "⚠️ phase_guard not available"
+
+        # Audit trail
+        audit_path = _find_audit_log_path()
+        audit_status = ""
+        if audit_path and audit_path.parent.exists():
+            # Count entries in audit chain
+            chain_path = audit_path.parent / "chain.jsonl"
+            if chain_path.exists():
+                try:
+                    chain_count = len(chain_path.read_text().splitlines())
+                    audit_status = f"\nAudit chain: {chain_count} entries at {chain_path}"
+                except Exception:
+                    audit_status = "\nAudit chain: present (unreadable)"
 
         ctx.inject_message(
             f"**Techne Pipeline Mode activated.**\n\n"
@@ -424,10 +869,15 @@ def register(ctx) -> None:
             f"  • `terminal(git commit/push/merge/reset)`\n"
             f"  • `terminal(rm -rf, mv, cp -f)`\n"
             f"  • `execute_code(write_file(...))`\n\n"
+            f"**Enforcement features:**\n"
+            f"  • {pg_status}\n"
+            f"  • Phase timeout detection ({_DEFAULT_PHASE_TIMEOUT_MIN} min default)\n"
+            f"  • Persistent block logging to .techne/audit/blocked.log"
+            f"{audit_status}\n\n"
             f"Commands:\n"
             f"  `/techne status` — show state + block log\n"
             f"  `/techne bypass` — grant 3 bypass writes\n"
-            f"  `/techne off` — disable enforcement{revolver_info}",
+            f"  `/techne off` — disable enforcement",
             role="assistant",
         )
 

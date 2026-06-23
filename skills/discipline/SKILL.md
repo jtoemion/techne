@@ -26,7 +26,7 @@ harness gates enforce it for you, or you must hold it yourself.
 ## Two lanes — same standard, different enforcement
 
 ```
-GATED PIPELINE   code changes. conductor.py runs IMPLEMENT→VERIFY→REVIEW→RETRO;
+GATED PIPELINE   code changes. The orchestrator loop runs IMPLEMENT→VERIFY→REVIEW→RETRO;
   (skills/        the gates + SHA test-hash ENFORCE the standard. You can't fake done.
    implementer)
 KANBAN LANE      everything else (research, writing, planning, scraping). NO gates,

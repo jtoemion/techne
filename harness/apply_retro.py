@@ -343,7 +343,7 @@ def review_and_apply(dry_run: bool = False, auto: bool = False) -> dict:
     return {"reviewed": len(pending), "applied": applied, "skipped": skipped}
 
 
-# ─── Check for unapplied proposals (called by conductor) ─────────────────────
+# ─── Check for unapplied proposals (called by orchestrator) ─────────────────
 
 def has_pending_proposals() -> int:
     """Return count of unapplied proposals. 0 = clean."""

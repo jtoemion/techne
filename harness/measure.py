@@ -250,7 +250,7 @@ def full_intent_check(task: str, diff: str, semantic_verdict=None) -> dict:
 def run_measurements(task: str, diff: str, semantic_verdict=None) -> dict:
     """
     Run all measurements on a task+diff pair.
-    Returns a dict ready to merge into conductor eval_metrics.
+    Returns a dict ready to merge into orchestrator eval_metrics.
     `semantic_verdict` (optional) is a host-supplied L3 verdict.
     """
     focused, focus_reason = measure_diff_focus(diff, task)

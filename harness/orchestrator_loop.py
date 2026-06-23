@@ -93,7 +93,7 @@ class OrchestratorLoop:
         self._phase_retry_counts: dict[str, dict[str, int]] = {}
 
         # Deterministic enforcement core — the SAME gates/measure/SHA that
-        # conductor runs. Built once; feeds real signals into the reward log.
+        # orchestrator runs. Built once; feeds real signals into the reward log.
         self.registry = build_registry()
 
         # RL components
