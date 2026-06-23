@@ -29,4 +29,7 @@ memory/prompt_proposals.json
 
 # Loop state — regenerated per task
 .techne/loop/
+
+# Audit trail — runtime generated
+.techne/audit/
 memory/
