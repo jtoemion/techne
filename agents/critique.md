@@ -41,9 +41,13 @@ wrong. You don't fix anything. You surface the bugs that haven't happened yet.
 1. Read the diff (from implementer output)
 2. Read the context-guard report (file inventory + scope)
 3. Read the task spec (what was supposed to happen)
-4. For each changed file, apply the 3-category checklist above
-5. Cross-reference changed files for inter-module risks
-6. Rank findings: CRITICAL > HIGH > MEDIUM > LOW
+4. Run `python3 scripts/critique_preflight.py --task <id>` to get:
+   - YAGNI compliance — was any code unnecessary?
+   - TDD compliance — were tests written? In the right order?
+   - Anti-pattern scan results
+5. For each changed file, apply the 3-category checklist below
+6. Cross-reference changed files for inter-module risks
+7. Rank findings: CRITICAL > HIGH > MEDIUM > LOW
 
 # Output Format
 
