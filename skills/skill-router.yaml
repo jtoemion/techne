@@ -245,6 +245,12 @@ routing:
     skill_path: "skills/template-scaffolder/SKILL.md"
     weight: 42
     note: "Production tool — generate skill folder + SKILL.md from writing-skill template."
+  - id: "task-reset"
+    condition: "reset task, force reset, unstick task, stuck task, task reset"
+    skill_path: "skills/task-reset/SKILL.md"
+    weight: 10
+    note: "Production tool — force-reset stuck tasks. MUST run pipeline-health + dry-run first. Low weight to avoid accidental matching."
+
 
 
 
