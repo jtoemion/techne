@@ -29,3 +29,4 @@ memory/prompt_proposals.json
 
 # Loop state — regenerated per task
 .techne/loop/
+memory/
