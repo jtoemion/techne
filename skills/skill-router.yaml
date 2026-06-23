@@ -240,6 +240,12 @@ routing:
     skill_path: "skills/mistakes-logger/SKILL.md"
     weight: 47
     note: "Production tool — log mistakes to mistakes.md with structured format."
+  - id: "template-scaffolder"
+    condition: "scaffold skill, new skill, create skill, skill template, generate skill"
+    skill_path: "skills/template-scaffolder/SKILL.md"
+    weight: 42
+    note: "Production tool — generate skill folder + SKILL.md from writing-skill template."
+
 
 
 
