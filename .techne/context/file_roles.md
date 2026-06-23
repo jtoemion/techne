@@ -2,7 +2,7 @@
 
 Top-level module map (file counts are a rough size signal):
 
-  .techne/                 68 files   Techne runtime state (context packs, sessions)
+  .techne/                 66 files   Techne runtime state (context packs, sessions)
   agents/                  11 files   per-phase agent system prompts
   commands/                 1 files   
   docs/                    14 files   documentation
@@ -11,5 +11,5 @@ Top-level module map (file counts are a rough size signal):
   references/              30 files   
   scripts/                 18 files   helper scripts
   skills/                 108 files   routed skill cards (the discipline library)
-  techne/                   3 files   
+  techne/                   1 files   
   tests/                  132 files   test suite

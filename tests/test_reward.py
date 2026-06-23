@@ -686,6 +686,200 @@ def test_reviewer_coverage_no_findings():
     check("empty findings: reviewer coverage = 0.0", abs(cov - 0.0) < 1e-9)
 
 
+# ── high_advantage_skills edge cases ────────────────────────────────────────
+
+def test_high_advantage_skills_empty_log():
+    """high_advantage_skills() on an empty log returns [] — no crash."""
+    print("\n[reward_log — high_advantage_skills: empty log → []]")
+    log, db_path = _fresh_db()
+    try:
+        result = log.high_advantage_skills(threshold=0.2)
+        check("empty log: high_advantage_skills returns []", result == [])
+        log.close()
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_high_advantage_skills_single_record():
+    """high_advantage_skills() with a single record (cnt < 2 filter) → not returned."""
+    print("\n[reward_log — high_advantage_skills: single record not returned]")
+    log, db_path = _fresh_db()
+    try:
+        rew = log.record(
+            task_id="t_single", task_type="auth", prompt_variant="v1",
+            gate_pass=True, test_pass=True, review_findings=[],
+            critique_predictions=[], scope_clean=True, attempt_count=1,
+            skill="diagnose",
+        )
+        log._conn.execute(
+            'UPDATE rewards SET "group" = ?, advantage = ? WHERE task_id = ?',
+            ("g1", 0.30, "t_single"),
+        )
+        log._conn.commit()
+
+        result = log.high_advantage_skills(threshold=0.2)
+        # HAVING cnt >= 2 excludes single records
+        check("single-record skill not in result (cnt < 2)", result == [])
+        log.close()
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+# ── compute_advantage with single-record group ────────────────────────────────
+
+def test_compute_advantage_single_record_in_task_group():
+    """compute_advantage on a task that is the sole member of its group → 0.0."""
+    print("\n[reward_log — compute_advantage: sole record in group = 0.0]")
+    log, db_path = _fresh_db()
+    try:
+        rew = log.record(
+            task_id="t_only", task_type="api", prompt_variant="v1",
+            gate_pass=True, test_pass=True, review_findings=[],
+            critique_predictions=[], scope_clean=True, attempt_count=1,
+        )
+        # Single record in "solo_group": mean = its own score, advantage = 0.0
+        adv = log.compute_advantage("t_only", score=rew.composite_score, task_group="solo_group")
+        check("sole member: advantage = 0.0", abs(adv - 0.0) < 1e-9)
+        row = log._conn.execute(
+            'SELECT advantage, "group" FROM rewards WHERE task_id = ?', ("t_only",)
+        ).fetchone()
+        check("advantage stored as 0.0", abs(row["advantage"] - 0.0) < 1e-9)
+        check("group label stored", row["group"] == "solo_group")
+        log.close()
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+# ── concurrent write safety ─────────────────────────────────────────────────
+
+def test_concurrent_write_safety(tmp_path):
+    """Two RewardLog instances writing to the same DB file → no corruption."""
+    print("\n[reward_log — concurrent writes to same DB: no corruption]")
+    db_file = tmp_path / "concurrent.db"
+    db_file_str = str(db_file)
+
+    # Log A and Log B both connect to the same file
+    log_a = reward_log.RewardLog(db_file_str)
+    log_b = reward_log.RewardLog(db_file_str)
+
+    try:
+        # Write from log_a
+        rew_a = log_a.record(
+            task_id="t_concurrent_a", task_type="auth", prompt_variant="va",
+            gate_pass=True, test_pass=True, review_findings=[],
+            critique_predictions=[], scope_clean=True, attempt_count=1,
+        )
+
+        # Write from log_b
+        rew_b = log_b.record(
+            task_id="t_concurrent_b", task_type="auth", prompt_variant="vb",
+            gate_pass=True, test_pass=True, review_findings=[],
+            critique_predictions=[], scope_clean=True, attempt_count=1,
+        )
+
+        # Verify both records are queryable from log_a
+        rows_a = log_a._conn.execute("SELECT task_id FROM rewards").fetchall()
+        task_ids_a = {r["task_id"] for r in rows_a}
+        check("record from log_a visible in log_a", "t_concurrent_a" in task_ids_a)
+        check("record from log_b visible in log_a", "t_concurrent_b" in task_ids_a)
+
+        # Verify both records are queryable from log_b
+        rows_b = log_b._conn.execute("SELECT task_id FROM rewards").fetchall()
+        task_ids_b = {r["task_id"] for r in rows_b}
+        check("record from log_a visible in log_b", "t_concurrent_a" in task_ids_b)
+        check("record from log_b visible in log_b", "t_concurrent_b" in task_ids_b)
+
+        # composite_scores should be non-zero
+        score_a = log_a._conn.execute(
+            "SELECT composite_score FROM rewards WHERE task_id = ?", ("t_concurrent_a",)
+        ).fetchone()
+        score_b = log_b._conn.execute(
+            "SELECT composite_score FROM rewards WHERE task_id = ?", ("t_concurrent_b",)
+        ).fetchone()
+        check("log_a composite_score > 0", score_a is not None and score_a["composite_score"] > 0)
+        check("log_b composite_score > 0", score_b is not None and score_b["composite_score"] > 0)
+
+        log_a.close()
+        log_b.close()
+    finally:
+        try:
+            log_a.close()
+        except Exception:
+            pass
+        try:
+            log_b.close()
+        except Exception:
+            pass
+        db_file.unlink(missing_ok=True)
+
+
+# ── dashboard on empty DB ────────────────────────────────────────────────────
+
+def test_dashboard_empty_db():
+    """dashboard() on a fresh empty DB returns the 'no rewards' message — no crash."""
+    print("\n[reward_log — dashboard: empty DB returns 'no rewards' message]")
+    log, db_path = _fresh_db()
+    try:
+        result = log.dashboard()
+        check("dashboard() returns the empty-log message", result == "No rewards recorded yet.")
+        log.close()
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+# ── recurring_patterns and critique_misses on empty DB ───────────────────────
+
+def test_recurring_patterns_empty_db():
+    """recurring_patterns() on an empty DB returns [] — no crash."""
+    print("\n[reward_log — recurring_patterns: empty DB → []]")
+    log, db_path = _fresh_db()
+    try:
+        result = log.recurring_patterns(min_count=2)
+        check("recurring_patterns on empty DB returns []", result == [])
+        log.close()
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_critique_misses_empty_db():
+    """critique_misses() on an empty DB returns [] — no crash."""
+    print("\n[reward_log — critique_misses: empty DB → []]")
+    log, db_path = _fresh_db()
+    try:
+        result = log.critique_misses(min_count=2)
+        check("critique_misses on empty DB returns []", result == [])
+        log.close()
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+# ── analyze_override_patterns at threshold boundary ──────────────────────────
+
+def test_analyze_override_patterns_at_threshold(tmp_path, monkeypatch):
+    """Exactly _AUTO_ANALYSIS_THRESHOLD (20) entries → analysis runs without error."""
+    print("\n[learning loop — analyze_override_patterns at threshold=20 entries]")
+    import pipeline_enforcer
+    monkeypatch.setattr(pipeline_enforcer, "OVERRIDES_LOG", tmp_path / "mode_overrides.log")
+    monkeypatch.setattr(pipeline_enforcer, "_MAX_LOG_LINES", 1000)
+    monkeypatch.setattr(pipeline_enforcer, "_reset_learning_state", lambda: None)
+
+    THRESHOLD = pipeline_enforcer._AUTO_ANALYSIS_THRESHOLD
+    check("threshold constant is 20", THRESHOLD == 20)
+
+    # Write exactly THRESHOLD entries: micro chosen when full suggested (small clean)
+    for i in range(THRESHOLD):
+        pipeline_enforcer._log_mode_override(
+            f"task-{i}",
+            "micro",
+            "full",
+            {"diff_lines": 2, "file_count": 1, "has_logic": False},
+        )
+
+    # This should not raise — analyze_override_patterns has no internal limit barrier
+    patterns = pipeline_enforcer.analyze_override_patterns(limit=THRESHOLD + 10)
+    check("at-threshold entries: patterns returned", isinstance(patterns, list))
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("REWARD (positive signal) — TEST")
@@ -722,6 +916,16 @@ if __name__ == "__main__":
     test_critique_accuracy_no_predictions()
     test_reviewer_coverage_no_predictions()
     test_reviewer_coverage_no_findings()
+
+    # new Domain 8 coverage-gap tests
+    test_high_advantage_skills_empty_log()
+    test_high_advantage_skills_single_record()
+    test_compute_advantage_single_record_in_task_group()
+    test_dashboard_empty_db()
+    test_recurring_patterns_empty_db()
+    test_critique_misses_empty_db()
+    # test_concurrent_write_safety and test_analyze_override_patterns_at_threshold
+    # require pytest's tmp_path/monkeypatch fixtures — skip in standalone mode
 
     passed = sum(1 for r in results if r)
     total = len(results)
