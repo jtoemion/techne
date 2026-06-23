@@ -446,6 +446,18 @@ def main() -> int:
                 # Wikilink rebuild is best-effort
                 pass
 
+            # Conclude context amortization — refresh derived context files
+            # (project_digest.md, commands.md, file_roles.md) so the next
+            # RECALL sees current project state. Human-owned files
+            # (risk_boundaries.md, docs/) are preserved.
+            try:
+                sys.path.insert(0, str(Path(__file__).parent.parent / "harness"))
+                from context_build import conclude_context
+                conclude_context(cwd)
+            except Exception:
+                # Context conclude is best-effort
+                pass
+
         return 0
     else:
         # Record the failed summary but do NOT advance

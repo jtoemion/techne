@@ -337,6 +337,20 @@ def post_run_evolve(self) -> dict:
         # Wikilink rebuild is best-effort — must never block post_run_evolve.
         pass
 
+    # ── Conclude context amortization ────────────────────────────────────
+    # The deterministic context pack (project_digest.md, commands.md,
+    # file_roles.md) is refreshed so the next session's RECALL sees
+    # current project state. Same conclude that the old orchestrator's
+    # REFRESH_CONTEXT phase ran — regenerates derived files without
+    # clobbering human-owned ones (risk_boundaries.md, docs/).
+    try:
+        from context_build import conclude_context
+        techne_root = Path(__file__).parent.parent
+        conclude_context(techne_root)
+    except Exception:
+        # Context conclude is best-effort — must never block post_run_evolve.
+        pass
+
     # Dashboard
     result["dashboard"] = self.rl_dashboard()
 
