@@ -33,13 +33,11 @@ def check(label, cond):
 
 
 def _sandbox(pkg: dict | None = None, files: dict[str, str] | None = None):
-    """A temp project + a temp .techne/context dir wired into both modules."""
+    """A temp project wired for context-build testing."""
     proj = Path(tempfile.mkdtemp(prefix="ctx_proj_"))
-    ctxdir = Path(tempfile.mkdtemp(prefix="ctx_out_")) / "context"
-    # Redirect where context files + hash are written (both modules share the constant).
-    cb.CONTEXT_DIR = ctxdir
-    cp.CONTEXT_DIR = ctxdir
-    cp.PACKS_DIR = ctxdir / "context_packs"
+    ctxdir = proj / ".techne" / "context"
+    # No monkeypatch needed — build/ensure/conclude_context now derive
+    # paths from the `root` parameter directly.
     if pkg is not None:
         (proj / "package.json").write_text(json.dumps(pkg), encoding="utf-8")
     for name, content in (files or {}).items():

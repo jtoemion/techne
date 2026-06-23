@@ -325,9 +325,10 @@ def post_run_evolve(self) -> dict:
     # tasks.db, and workshop context. This is the same refresh that the
     # old orchestrator's REFRESH_CONTEXT phase ran.
     try:
+        techne_root = Path(__file__).parent.parent
         from wikilink import build_graph, format_markdown as wl_md
-        memory_dir = Path(__file__).parent.parent / ".techne" / "memory"
-        graph = build_graph()
+        memory_dir = techne_root / ".techne" / "memory"
+        graph = build_graph(root=techne_root)
         (memory_dir / "wikilinks.md").write_text(wl_md(graph), encoding="utf-8")
         (memory_dir / "wikilinks.json").write_text(
             json.dumps(graph, indent=2, ensure_ascii=False),
@@ -344,8 +345,8 @@ def post_run_evolve(self) -> dict:
     # REFRESH_CONTEXT phase ran — regenerates derived files without
     # clobbering human-owned ones (risk_boundaries.md, docs/).
     try:
-        from context_build import conclude_context
         techne_root = Path(__file__).parent.parent
+        from context_build import conclude_context
         conclude_context(techne_root)
     except Exception:
         # Context conclude is best-effort — must never block post_run_evolve.

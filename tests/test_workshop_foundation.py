@@ -165,10 +165,18 @@ def test_wikilink_graph_attaches_workshop_nodes() -> None:
                 {"path": "harness/wikilink.py", "subsystem": "harness", "ext": ".py"}
             ],
         }
-        index_path = tmp_path / "context_index.json"
+        # Create a temp project with the right .techne/ structure
+        proj_root = tmp_path / "mini"
+        techne_memory = proj_root / ".techne" / "memory"
+        techne_memory.mkdir(parents=True, exist_ok=True)
+        techne_generated = proj_root / ".techne" / "generated"
+        techne_generated.mkdir(parents=True, exist_ok=True)
+
+        # Write context_index.json under .techne/generated/
+        index_path = techne_generated / "context_index.json"
         index_path.write_text(json.dumps(context_index), encoding="utf-8")
 
-        # Write fixture mistakes.md — one entry with gate="intent" (→ harness)
+        # Write mistakes.md under .techne/memory/
         mistakes_content = (
             "## [2026-06-20T00:00:00Z] IMPLEMENT | AUTO-LOGGED\n"
             "**Error**     : Intent gate: MISMATCH\n"
@@ -177,15 +185,15 @@ def test_wikilink_graph_attaches_workshop_nodes() -> None:
             "**Gate**      : intent\n"
             "**Status**    : ACTIVE\n"
         )
-        mistakes_path = tmp_path / "mistakes.md"
+        mistakes_path = techne_memory / "mistakes.md"
         mistakes_path.write_text(mistakes_content, encoding="utf-8")
 
         # Write empty ledger.md
-        ledger_path = tmp_path / "ledger.md"
+        ledger_path = techne_memory / "ledger.md"
         ledger_path.write_text("# LEDGER\n", encoding="utf-8")
 
         # ── Seed a temporary task_db with DONE tasks ──
-        task_db_path = tmp_path / "tasks.db"
+        task_db_path = techne_memory / "tasks.db"
         db = TaskDB(str(task_db_path))
         t1 = db.create_task("add wikilink graph v2", discipline="tdd",
                             tags=["wikilink", "graph", "harness"])
@@ -212,11 +220,8 @@ def test_wikilink_graph_attaches_workshop_nodes() -> None:
         # intentionally NOT done
         db.close()
 
-        with mock.patch.object(wikilink, "WORKSHOP_CONTEXT_INDEX", index_path), \
-             mock.patch.object(wikilink, "MISTAKES_FILE", mistakes_path), \
-             mock.patch.object(wikilink, "LEDGER_FILE", ledger_path), \
-             mock.patch.object(wikilink, "TASK_DB_PATH", task_db_path):
-            graph = wikilink.build_graph()
+        # No mocks needed — build_graph(root=) reads from the passed root
+        graph = wikilink.build_graph(root=proj_root)
 
         # ── structural graph assertions (unchanged) ──
         assert graph["project"]["name"] == "mini"

@@ -176,13 +176,15 @@ def build_context(root: Path | str = ROOT, *, force: bool = False) -> dict:
     Returns {"written": [...], "skipped": [...], "hash": ...}.
     """
     root = Path(root).resolve()   # resolve so '.' yields a real repo name + stable globs
-    ensure_context_dir()
+    ctx_dir = root / ".techne" / "context"
+    ctx_dir.mkdir(parents=True, exist_ok=True)
+    (ctx_dir / "context_packs").mkdir(parents=True, exist_ok=True)
     written, skipped = [], []
     for name in BASE_FILES:
         gen = _GENERATORS.get(name)
         if gen is None:
             continue
-        dest = CONTEXT_DIR / name
+        dest = ctx_dir / name
         if dest.exists() and not force:
             skipped.append(name)
             continue
@@ -216,12 +218,13 @@ def conclude_context(root: Path | str = ROOT) -> dict:
     data-model, CONTRACTS…) are updated by the context AGENT (a model step); this is the
     deterministic half. Returns the refreshed files + the docs the agent should review."""
     root = Path(root).resolve()
-    ensure_context_dir()
+    ctx_dir = root / ".techne" / "context"
+    ctx_dir.mkdir(parents=True, exist_ok=True)
     refreshed = []
     for name in _DERIVED:
         gen = _GENERATORS.get(name)
         if gen is not None:
-            (CONTEXT_DIR / name).write_text(gen(root), encoding="utf-8")
+            (ctx_dir / name).write_text(gen(root), encoding="utf-8")
             refreshed.append(name)
     digest = write_context_hash(root)
     return {"refreshed": refreshed, "hash": digest, "docs_to_review": _docs_index(root)}

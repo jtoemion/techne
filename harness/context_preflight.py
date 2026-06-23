@@ -16,6 +16,13 @@ ROOT = HARNESS_DIR.parent
 CONTEXT_DIR = ROOT / ".techne" / "context"
 PACKS_DIR = CONTEXT_DIR / "context_packs"
 
+
+def _resolve_context_dirs(root: Path) -> tuple[Path, Path]:
+    """Return (context_dir, packs_dir) for the given project root."""
+    ctx = root / ".techne" / "context"
+    pks = ctx / "context_packs"
+    return ctx, pks
+
 BASE_FILES = (
     "project_digest.md",
     "file_roles.md",
@@ -66,16 +73,18 @@ def ensure_context_dir() -> None:
 
 
 def _watched_files(root: Path = ROOT) -> list[Path]:
-    ensure_context_dir()
+    ctx_dir, pks_dir = _resolve_context_dirs(root)
+    ctx_dir.mkdir(parents=True, exist_ok=True)
+    pks_dir.mkdir(parents=True, exist_ok=True)
     files: list[Path] = []
 
     for pattern in HASH_WATCH_PATTERNS:
         files.extend(p for p in root.glob(pattern) if p.is_file())
 
-    if CONTEXT_DIR.exists():
-        files.extend(p for p in CONTEXT_DIR.glob("*.md") if p.is_file())
-        if PACKS_DIR.exists():
-            files.extend(p for p in PACKS_DIR.glob("*.md") if p.is_file())
+    if ctx_dir.exists():
+        files.extend(p for p in ctx_dir.glob("*.md") if p.is_file())
+        if pks_dir.exists():
+            files.extend(p for p in pks_dir.glob("*.md") if p.is_file())
 
     return sorted({p.resolve() for p in files})
 
@@ -98,15 +107,17 @@ def compute_context_hash(root: Path = ROOT) -> str:
 
 def context_status(root: Path = ROOT) -> dict[str, object]:
     """Return context freshness and selected metadata."""
-    ensure_context_dir()
-    base = {name: (CONTEXT_DIR / name).exists() for name in BASE_FILES}
-    packs = sorted(p.stem for p in PACKS_DIR.glob("*.md")) if PACKS_DIR.exists() else []
+    ctx_dir, pks_dir = _resolve_context_dirs(root)
+    ctx_dir.mkdir(parents=True, exist_ok=True)
+    pks_dir.mkdir(parents=True, exist_ok=True)
+    base = {name: (ctx_dir / name).exists() for name in BASE_FILES}
+    packs = sorted(p.stem for p in pks_dir.glob("*.md")) if pks_dir.exists() else []
     current_hash = compute_context_hash(root)
-    stored_path = CONTEXT_DIR / "context_hash.txt"
+    stored_path = ctx_dir / "context_hash.txt"
     stored_hash = stored_path.read_text(encoding="utf-8").strip() if stored_path.exists() else ""
 
     return {
-        "dir": str(CONTEXT_DIR),
+        "dir": str(ctx_dir),
         "base_files": base,
         "missing_base_files": [name for name, exists in base.items() if not exists],
         "packs": packs,
@@ -118,9 +129,11 @@ def context_status(root: Path = ROOT) -> dict[str, object]:
 
 def write_context_hash(root: Path = ROOT) -> str:
     """Write the current context hash and return it."""
-    ensure_context_dir()
+    ctx_dir, pks_dir = _resolve_context_dirs(root)
+    ctx_dir.mkdir(parents=True, exist_ok=True)
+    pks_dir.mkdir(parents=True, exist_ok=True)
     digest = compute_context_hash(root)
-    (CONTEXT_DIR / "context_hash.txt").write_text(f"{digest}\n", encoding="utf-8")
+    (ctx_dir / "context_hash.txt").write_text(f"{digest}\n", encoding="utf-8")
     return digest
 
 

@@ -43,6 +43,27 @@ MIRROR_WIKILINK_JSON = ROOT / "memory" / "wikilinks.json"
 TASK_DB_PATH = ROOT / ".techne" / "memory" / "tasks.db"
 
 
+def _resolve_wikilink_root(root: Path | None = None) -> Path:
+    """Return the effective root — module default if None, else resolved."""
+    return (root or ROOT).resolve()
+
+
+def _mistakes_file(root: Path) -> Path:
+    return root / ".techne" / "memory" / "mistakes.md"
+
+
+def _ledger_file(root: Path) -> Path:
+    return root / ".techne" / "memory" / "ledger.md"
+
+
+def _task_db_path(root: Path) -> Path:
+    return root / ".techne" / "memory" / "tasks.db"
+
+
+def _workshop_context_index(root: Path) -> Path:
+    return root / ".techne" / "generated" / "context_index.json"
+
+
 def _slug(text: str) -> str:
     """Stable slug from entry text — first 6 words, lowercased, hyphenated."""
     words = re.split(r"\W+", text.lower())
@@ -52,10 +73,12 @@ def _slug(text: str) -> str:
 
 # ── parsers (mirror mistakes.py / ledger.py — kept duplicated to avoid coupling) ──
 
-def parse_mistakes() -> list[dict]:
-    if not MISTAKES_FILE.exists():
+def parse_mistakes(root: Path | None = None) -> list[dict]:
+    """Parse mistakes.md at the given root (or module default)."""
+    path = _mistakes_file(_resolve_wikilink_root(root))
+    if not path.exists():
         return []
-    content = MISTAKES_FILE.read_text(encoding="utf-8")
+    content = path.read_text(encoding="utf-8")
     pattern = re.compile(
         r"^\s*## \[(?P<date>[^\]]+)\] (?P<phase>[^\|]+)\| (?P<source>[^\n]+)\n"
         r"^\s*\*\*Error\*\*\s*: (?P<error>[^\n]+(?:\n(?!\s*\*\*)[^\n]+)*)\n"
@@ -83,10 +106,12 @@ def parse_mistakes() -> list[dict]:
     ]
 
 
-def parse_ledger() -> list[dict]:
-    if not LEDGER_FILE.exists():
+def parse_ledger(root: Path | None = None) -> list[dict]:
+    """Parse ledger.md at the given root (or module default)."""
+    path = _ledger_file(_resolve_wikilink_root(root))
+    if not path.exists():
         return []
-    content = LEDGER_FILE.read_text(encoding="utf-8")
+    content = path.read_text(encoding="utf-8")
     pattern = re.compile(
         r"^\s*## \[(?P<date>[^\]]+)\] (?P<kind>[A-Z]+) \| (?P<source>[^\n]+)\n"
         r"^\s*\*\*What\*\*\s*: (?P<what>[^\n]+)\n"
@@ -111,16 +136,20 @@ def parse_ledger() -> list[dict]:
 
 # ── graph builder ──
 
-def build_graph() -> dict:
+def build_graph(root: Path | None = None) -> dict:
     """Build the full wikilink graph.
+
+    If `root` is provided, read mistakes.md, ledger.md, and tasks.db from
+    that project's .techne/memory/. Defaults to the techne repo's own data.
 
     Returns dict with:
       entries: list of all entries (mistakes + ledger), each with a slug
       skills:  map of skill_name -> list of entry slugs that mention it
       summary: counts by kind + status
     """
-    mistakes = parse_mistakes()
-    ledger = parse_ledger()
+    root = _resolve_wikilink_root(root)
+    mistakes = parse_mistakes(root)
+    ledger = parse_ledger(root)
     all_entries = mistakes + ledger
 
     # Slug each entry — slug uniqueness via date prefix
@@ -165,18 +194,20 @@ def build_graph() -> dict:
         "skills": dict(skill_to_entries),
         "summary": summary,
     }
-    _attach_workshop_graph(graph)
+    _attach_workshop_graph(graph, root)
     _attach_entry_edges(graph)
-    _attach_task_nodes(graph)
+    _attach_task_nodes(graph, root)
     return graph
 
 
-def _attach_workshop_graph(graph: dict) -> None:
+def _attach_workshop_graph(graph: dict, root: Path | None = None) -> None:
     """Augment the legacy memory graph with project/workshop context nodes."""
-    if not WORKSHOP_CONTEXT_INDEX.exists():
+    root = _resolve_wikilink_root(root)
+    ctx_index = _workshop_context_index(root)
+    if not ctx_index.exists():
         return
     try:
-        context_index = json.loads(WORKSHOP_CONTEXT_INDEX.read_text(encoding="utf-8"))
+        context_index = json.loads(ctx_index.read_text(encoding="utf-8"))
     except Exception:
         return
 
@@ -352,7 +383,7 @@ def _attach_entry_edges(graph: dict) -> None:
     graph["edges"] = edges
 
 
-def _attach_task_nodes(graph: dict) -> None:
+def _attach_task_nodes(graph: dict, root: Path | None = None) -> None:
     """Augment the graph with task nodes and task-triggered edges from completed tasks.
 
     For every DONE task in task_db:
@@ -361,7 +392,7 @@ def _attach_task_nodes(graph: dict) -> None:
       - Creates ``task_triggered → entry`` edges by matching task tags/phases
         against entry fields (gate, phase, skill)
     """
-    task_db_path = TASK_DB_PATH
+    task_db_path = _task_db_path(_resolve_wikilink_root(root))
     if not task_db_path.exists():
         return
 

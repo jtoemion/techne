@@ -436,7 +436,8 @@ def main() -> int:
                 sys.path.insert(0, str(Path(__file__).parent.parent / "harness"))
                 from wikilink import build_graph, format_markdown as wl_md
                 memory_dir = cwd / ".techne" / "memory"
-                graph = build_graph()
+                # Build graph from this project's .techne/memory/
+                graph = build_graph(root=cwd)
                 (memory_dir / "wikilinks.md").write_text(wl_md(graph), encoding="utf-8")
                 (memory_dir / "wikilinks.json").write_text(
                     _json.dumps(graph, indent=2, ensure_ascii=False),
