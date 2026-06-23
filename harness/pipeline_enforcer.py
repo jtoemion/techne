@@ -59,6 +59,21 @@ _AUTO_ANALYSIS_THRESHOLD = 20  # trigger analysis every N new entries
 _CLASSIFIER_INSIGHTS_LOG = LOGS_DIR / "classifier_insights.log"
 
 
+def get_analysis_threshold() -> int:
+    """Return the auto-analysis threshold.
+
+    Defaults to ``_AUTO_ANALYSIS_THRESHOLD`` (20).
+    Can be overridden via the ``TECHNE_ANALYSIS_THRESHOLD`` environment variable.
+    """
+    env_val = os.environ.get("TECHNE_ANALYSIS_THRESHOLD", "")
+    if env_val:
+        try:
+            return int(env_val)
+        except ValueError:
+            pass
+    return _AUTO_ANALYSIS_THRESHOLD
+
+
 def _reset_learning_state() -> None:
     """Reset learning loop counters. For testing only."""
     global _LEARNING_COUNTER, _LAST_ANALYZED_COUNT
@@ -182,12 +197,14 @@ def _log_mode_override(
     chosen_mode: str,
     suggested_mode: str,
     diff_stats: dict,
+    task_title: str = "",
 ) -> None:
     """Record a mode override event to the telemetry log.
 
     Appends a JSON line to ``.techne/memory/mode_overrides.log``.
     Auto-rotates when the log exceeds ``_MAX_LOG_LINES`` (keeps last 1000).
-    Triggers auto-analysis of override patterns every 20 new entries.
+    Triggers auto-analysis of override patterns every N new entries
+    (see ``get_analysis_threshold()``).
     """
     global _LEARNING_COUNTER
 
@@ -196,9 +213,11 @@ def _log_mode_override(
     entry = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "task_id": task_id,
+        "task_title": task_title,
         "chosen_mode": chosen_mode,
         "suggested_mode": suggested_mode,
         "diff_lines": diff_stats.get("diff_lines", 0),
+        "diff_line_count": diff_stats.get("diff_line_count", diff_stats.get("diff_lines", 0)),
         "file_count": diff_stats.get("file_count", 0),
         "has_logic": diff_stats.get("has_logic", False),
     }
@@ -224,8 +243,8 @@ def _log_mode_override(
 def get_mode_overrides(limit: int = 20) -> list[dict]:
     """Return the most recent N override entries from the telemetry log.
 
-    Each entry is a dict with keys: timestamp, task_id, chosen_mode,
-    suggested_mode, diff_lines, file_count, has_logic.
+    Each entry is a dict with keys: timestamp, task_id, task_title, chosen_mode,
+    suggested_mode, diff_lines, diff_line_count, file_count, has_logic.
     """
     log_path = Path(OVERRIDES_LOG)
     if not log_path.exists():
@@ -292,10 +311,8 @@ def analyze_override_patterns(limit: int = 200) -> list[dict]:
     from datetime import datetime, timezone
 
     # We need task titles to detect "review" keyword pattern.
-    # entries from _log_mode_override don't include titles, so we reconstruct
-    # from the override log.  Fall back to the group key only when no title.
-    # A separate field "task_title" is NOT yet in _log_mode_override's entry,
-    # so we use file_count_bucket for grouping only.
+    # _log_mode_override now includes task_title in each entry.
+    # Fall back to task_id when no title is present.
     #
     # Override patterns we detect:
     # 1. chosen=full, suggested=micro, has_logic=True  → classifier correct, no action
@@ -447,7 +464,7 @@ def _auto_analysis_if_needed() -> None:
     global _LEARNING_COUNTER, _LAST_ANALYZED_COUNT
 
     new_entries = _LEARNING_COUNTER - _LAST_ANALYZED_COUNT
-    if new_entries >= _AUTO_ANALYSIS_THRESHOLD:
+    if new_entries >= get_analysis_threshold():
         _LAST_ANALYZED_COUNT = _LEARNING_COUNTER
         patterns = analyze_override_patterns(limit=200)
         suggestions = suggest_classifier_updates(threshold=3)
@@ -553,6 +570,10 @@ def classify_phase_mode(title: str, description: str = "", diff_text: str = "", 
       credential, secret, token (in title or description) — requires explicit human approval
     - FULL: Everything else — code changes with logic, multi-file, complex work
     """
+    # Empty/no-op task → fast (cheapest appropriate mode)
+    if not title or not title.strip():
+        return "fast"
+
     combined = f"{title} {description}".lower()
 
     # Check fast-mode indicators first
@@ -575,41 +596,32 @@ def classify_phase_mode(title: str, description: str = "", diff_text: str = "", 
                 mode,
                 "full",  # what would have been suggested without pre-classification
                 {"pre_diff": True, "title": title[:100], "description": description[:200]},
+                task_title=title,
             )
         return mode
 
-    lines = diff_text.splitlines()
+    # Use _compute_diff_stats for consistent whitespace/comment filtering
+    diff_stats = _compute_diff_stats(diff_text)
+    changed_lines = diff_stats["diff_lines"]
+    real_changed_lines = diff_stats.get("real_changed_lines", changed_lines)
+    files_count = diff_stats["file_count"]
+    has_logic = diff_stats["has_logic"]
 
-    # Count changed lines
-    added = sum(1 for l in lines if l.startswith("+") and not l.startswith("+++"))
-    removed = sum(1 for l in lines if l.startswith("-") and not l.startswith("---"))
-    changed_lines = added + removed
+    # Use real_changed_lines for classification: a whitespace/comment-only diff
+    # should be treated as having 0 real lines for the micro check.
+    # Only return "fast" if it wouldn't have passed the micro check.
+    effective_changed_lines = real_changed_lines if real_changed_lines > 0 else changed_lines
 
-    # Count unique files
-    files: set[str] = set()
-    for l in lines:
-        if l.startswith("+++ b/") or l.startswith("--- a/"):
-            path = l[6:].strip()
-            if path and path != "/dev/null":
-                files.add(path)
-
-    # Check for logic keywords (word-boundary for plain words, trailing-space for def/class)
-    diff_lower = diff_text.lower()
-    has_logic = False
-    for kw in _LOGIC_KEYWORDS:
-        if kw.endswith(" "):
-            # def / class — match as prefix (def foo, class Bar)
-            if kw.rstrip() in diff_lower:
-                has_logic = True
-                break
-        else:
-            # Word boundary: \b keyword \b
-            if re.search(r"\b" + re.escape(kw) + r"\b", diff_lower):
-                has_logic = True
-                break
+    # If all changed lines are whitespace or comments, treat as fast (not full)
+    # This only applies when the diff has lines but no meaningful content.
+    if real_changed_lines == 0 and changed_lines > 0:
+        # Would this have passed the micro check? If so, let it — micro is stricter
+        # on content requirements. Otherwise fall through to fast.
+        if not (changed_lines <= 3 and files_count <= 1 and not has_logic):
+            return "fast"
 
     # MICRO: ≤3 lines, 1 file, no logic
-    if changed_lines <= 3 and len(files) <= 1 and not has_logic:
+    if effective_changed_lines <= 3 and files_count <= 1 and not has_logic:
         return "micro"
 
     return "full"
@@ -647,11 +659,36 @@ def detect_sensitive_change(files_changed: list[str], diff_text: str = "") -> tu
 
 
 def _compute_diff_stats(diff_text: str) -> dict:
-    """Compute diff statistics: changed_lines, file_count, has_logic."""
+    """Compute diff statistics: changed_lines, real_changed_lines, file_count, has_logic.
+
+    ``changed_lines`` counts all added/removed lines.
+    ``real_changed_lines`` excludes whitespace-only and comment-only lines.
+    If ``real_changed_lines == 0`` but ``changed_lines > 0``, the diff is
+    entirely whitespace / comment-only and should be treated as ``fast`` not ``full``.
+    """
     lines = diff_text.splitlines()
-    added = sum(1 for l in lines if l.startswith("+") and not l.startswith("+++"))
-    removed = sum(1 for l in lines if l.startswith("-") and not l.startswith("---"))
-    changed_lines = added + removed
+    added = [l for l in lines if l.startswith("+") and not l.startswith("+++")]
+    removed = [l for l in lines if l.startswith("-") and not l.startswith("---")]
+    changed_lines = len(added) + len(removed)
+
+    # Real changed lines: strip and check if the line has non-whitespace content
+    # beyond the diff prefix character.
+    def _is_meaningful(line: str) -> bool:
+        stripped = line[1:].strip()  # strip the +/- prefix
+        if not stripped:
+            return False  # entirely whitespace
+        # Check if it's a comment-only line (for common comment styles)
+        stripped_stripped = stripped.strip()
+        if stripped_stripped.startswith("//") or stripped_stripped.startswith("/*") or stripped_stripped.startswith("*"):
+            return False
+        if stripped_stripped.startswith("#"):
+            return False
+        return True
+
+    real_added = sum(1 for l in added if _is_meaningful(l))
+    real_removed = sum(1 for l in removed if _is_meaningful(l))
+    real_changed_lines = real_added + real_removed
+
     files: set[str] = set()
     for l in lines:
         if l.startswith("+++ b/") or l.startswith("--- a/"):
@@ -671,13 +708,15 @@ def _compute_diff_stats(diff_text: str) -> dict:
                 break
     return {
         "diff_lines": changed_lines,
+        "diff_line_count": changed_lines,
+        "real_changed_lines": real_changed_lines,
         "file_count": len(files),
         "has_logic": bool(kw_check),
     }
 
 
 def validate_mode_fit(
-    phase_mode: str, diff_text: str = "", file_count: int = 0, task_id: str = ""
+    phase_mode: str, diff_text: str = "", file_count: int = 0, task_id: str = "", task_title: str = ""
 ) -> tuple[bool, str, str]:
     """Returns (valid, reason, suggested_mode).
 
@@ -695,16 +734,18 @@ def validate_mode_fit(
             if file_count == 0:
                 return True, "", ""
             diff_stats = _compute_diff_stats("")
-            _log_mode_override(task_id, mode, "full", diff_stats)
+            _log_mode_override(task_id, mode, "full", diff_stats, task_title)
             return False, "Empty diff but files already touched", "full"
 
         diff_stats = _compute_diff_stats(diff_text)
         changed_lines = diff_stats["diff_lines"]
+        real_changed_lines = diff_stats.get("real_changed_lines", changed_lines)
 
-        if changed_lines > 3:
+        # Use real_changed_lines: whitespace/comment-only lines don't count
+        if real_changed_lines > 3:
             cost_micro = get_cost_estimate("micro")["api_calls"]
             cost_full = get_cost_estimate("full")["api_calls"]
-            _log_mode_override(task_id, mode, "full", diff_stats)
+            _log_mode_override(task_id, mode, "full", diff_stats, task_title)
             return False, f"micro mode requires <=3 changed lines (got {changed_lines}) — full mode ({cost_full} API calls) recommended", "full"
 
         files: set[str] = set()
@@ -716,10 +757,10 @@ def validate_mode_fit(
         if len(files) > 1:
             cost_micro = get_cost_estimate("micro")["api_calls"]
             cost_full = get_cost_estimate("full")["api_calls"]
-            _log_mode_override(task_id, mode, "full", diff_stats)
+            _log_mode_override(task_id, mode, "full", diff_stats, task_title)
             return False, f"micro mode requires <=1 file (got {len(files)}) — full mode ({cost_full} API calls) recommended", "full"
         if len(files) == 0:
-            _log_mode_override(task_id, mode, "full", diff_stats)
+            _log_mode_override(task_id, mode, "full", diff_stats, task_title)
             return False, "No file paths found in diff", "full"
 
         diff_lower = diff_text.lower()
@@ -737,7 +778,7 @@ def validate_mode_fit(
         if has_logic:
             cost_micro = get_cost_estimate("micro")["api_calls"]
             cost_full = get_cost_estimate("full")["api_calls"]
-            _log_mode_override(task_id, mode, "full", diff_stats)
+            _log_mode_override(task_id, mode, "full", diff_stats, task_title)
             return False, f"micro mode cannot contain logic keywords (if/for/while/class/etc) — full mode ({cost_full} API calls) recommended", "full"
 
         return True, "", ""
@@ -749,14 +790,17 @@ def validate_mode_fit(
 
         diff_stats = _compute_diff_stats(diff_text)
         changed_lines = diff_stats["diff_lines"]
+        real_changed_lines = diff_stats.get("real_changed_lines", changed_lines)
         file_count = diff_stats["file_count"]
         has_logic = diff_stats["has_logic"]
 
         # If it looks like it should be micro, suggest it
-        if changed_lines <= 3 and file_count <= 1 and not has_logic:
+        # Use real_changed_lines: whitespace/comment-only lines don't disqualify micro
+        effective_lines = real_changed_lines if real_changed_lines > 0 else changed_lines
+        if effective_lines <= 3 and file_count <= 1 and not has_logic:
             cost_micro = get_cost_estimate("micro")["api_calls"]
             cost_full = get_cost_estimate("full")["api_calls"]
-            _log_mode_override(task_id, mode, "micro", diff_stats)
+            _log_mode_override(task_id, mode, "micro", diff_stats, task_title)
             return False, f"full mode ({cost_full} API calls) applied to trivial change ({changed_lines} lines, {file_count} file) — micro mode ({cost_micro} API calls) suggested", "micro"
 
         return True, "", ""

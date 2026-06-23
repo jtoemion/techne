@@ -927,3 +927,90 @@ class TestModeMismatchEnforcement:
         assert any(e["task_id"] == task.id and e["chosen_mode"] == "micro" and e["suggested_mode"] == "full"
                    for e in entries), "Override telemetry should record the mismatch"
 
+
+
+# ── Domain 2 hardening: edge case tests ─────────────────────────────────────
+
+class TestDomain2EdgeCases:
+    """Edge case tests for phase mode classifier hardening."""
+
+    def test_empty_title_returns_fast(self):
+        """Empty title should not crash — return 'fast'."""
+        from pipeline_enforcer import classify_phase_mode
+        result = classify_phase_mode("")
+        assert result == "fast", f"Expected 'fast', got '{result}'"
+
+    def test_none_title_returns_fast(self):
+        """None title should not crash — return 'fast'."""
+        from pipeline_enforcer import classify_phase_mode
+        result = classify_phase_mode(None)
+        assert result == "fast", f"Expected 'fast', got '{result}'"
+
+    def test_empty_title_and_desc_returns_fast(self):
+        """Both empty title and description should return 'fast'."""
+        from pipeline_enforcer import classify_phase_mode
+        result = classify_phase_mode("", description="")
+        assert result == "fast", f"Expected 'fast', got '{result}'"
+
+    def test_very_long_title_does_not_crash(self):
+        """Very long title (>500 chars) should not crash."""
+        from pipeline_enforcer import classify_phase_mode
+        long_title = "x" * 1000
+        result = classify_phase_mode(long_title, description="fix bug")
+        assert result in ("micro", "fast", "full", "heavy"), f"Unexpected: {result}"
+
+    def test_override_log_includes_task_title(self, tmp_path, monkeypatch):
+        """_log_mode_override entries should include task_title field."""
+        import pipeline_enforcer
+        monkeypatch.setattr(pipeline_enforcer, "OVERRIDES_LOG", tmp_path / "mode_overrides.log")
+        monkeypatch.setattr(pipeline_enforcer, "_MAX_LOG_LINES", 1000)
+
+        pipeline_enforcer._log_mode_override(
+            task_id="test-edge-1",
+            chosen_mode="fast",
+            suggested_mode="full",
+            diff_stats={"total_lines": 10, "added_lines": 5, "removed_lines": 3, "files_changed": 2},
+            task_title="edge case test task"
+        )
+
+        log_file = tmp_path / "mode_overrides.log"
+        assert log_file.exists()
+        import json
+        entry = json.loads(log_file.read_text().strip().splitlines()[-1])
+        assert "task_title" in entry, "task_title field missing from override log"
+        assert entry["task_title"] == "edge case test task"
+
+    def test_override_log_includes_diff_line_count(self, tmp_path, monkeypatch):
+        """_log_mode_override entries should include diff_line_count field."""
+        import pipeline_enforcer
+        monkeypatch.setattr(pipeline_enforcer, "OVERRIDES_LOG", tmp_path / "mode_overrides.log")
+        monkeypatch.setattr(pipeline_enforcer, "_MAX_LOG_LINES", 1000)
+
+        pipeline_enforcer._log_mode_override(
+            task_id="test-edge-2",
+            chosen_mode="full",
+            suggested_mode="micro",
+            diff_stats={"diff_lines": 25, "added_lines": 12, "removed_lines": 8, "files_changed": 1},
+            task_title="diff count test"
+        )
+
+        log_file = tmp_path / "mode_overrides.log"
+        assert log_file.exists()
+        import json
+        entry = json.loads(log_file.read_text().strip().splitlines()[-1])
+        assert "diff_line_count" in entry, "diff_line_count field missing"
+        assert entry["diff_line_count"] == 25
+
+    def test_analysis_threshold_env_var(self, monkeypatch):
+        """get_analysis_threshold should read TECHNE_ANALYSIS_THRESHOLD env var."""
+        import pipeline_enforcer
+        monkeypatch.setenv("TECHNE_ANALYSIS_THRESHOLD", "50")
+        threshold = pipeline_enforcer.get_analysis_threshold()
+        assert threshold == 50, f"Expected 50, got {threshold}"
+
+    def test_analysis_threshold_default(self, monkeypatch):
+        """get_analysis_threshold defaults to 20 when env var not set."""
+        import pipeline_enforcer
+        monkeypatch.delenv("TECHNE_ANALYSIS_THRESHOLD", raising=False)
+        threshold = pipeline_enforcer.get_analysis_threshold()
+        assert threshold == 20, f"Expected 20, got {threshold}"
