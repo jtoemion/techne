@@ -317,7 +317,7 @@ class Pipeline:
     feeds the host's artifact back through Techne's deterministic gates.
     """
 
-    def __init__(self, task: str, run_number: int):
+    def __init__(self, task: str, run_number: int = 0):
         self.task = task
         self.run_number = run_number
         self.matched_skill = route(task)
@@ -512,6 +512,14 @@ class Pipeline:
 
     def submit_verification(self, test_output: str) -> PhaseResult:
         """Persist host test output, run the SHA gate, mark verified."""
+        # Handle empty test_output gracefully
+        if not test_output or not test_output.strip():
+            self.results["verify"] = "FAIL"
+            self.eval_metrics["pipeline_halted"] = True
+            return PhaseResult(
+                "HALT",
+                feedback="Empty test output — no tests were run or output was suppressed",
+            )
         (VERIFY_DIR / "test_output.txt").write_text(test_output, encoding="utf-8")
         try:
             sha = gate_test_output(

@@ -38,6 +38,9 @@ MAX_PHASE_RETRIES = {
     "REFRESH_CONTEXT": 4,
 }
 
+# Per-phase timeout (seconds). A phase that takes longer than this is FAILED.
+PHASE_TIMEOUT_SECONDS = 300
+
 
 class LoopAction(Enum):
     """What the host should do next."""
@@ -45,8 +48,9 @@ class LoopAction(Enum):
     RETRY = "retry"                # same phase, with feedback
     ESCALATE = "escalate"          # dispatch debugger agent
     BLOCK_HITL = "block_hitl"      # present question to human, wait
-    DONE = "done"                  # task complete
-    FAILED = "failed"              # task terminal failure
+    DONE = "done"                   # task complete
+    FAILED = "failed"               # task terminal failure (exhausted retries, unrecoverable)
+    HALT = "halt"                   # fatal error — stop the task immediately, no more retries
 
 
 @dataclass

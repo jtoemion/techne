@@ -47,6 +47,7 @@ from __future__ import annotations
 import json
 import subprocess
 import textwrap
+import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -69,7 +70,7 @@ from _loop_types import (
     LoopAction, LoopOutcome,
     HARNESS_DIR, ROOT, AGENTS_DIR,
     MAX_IMPLEMENT_RETRIES, MAX_TOTAL_RETRIES, DEFAULT_VARIANT_COUNT,
-    MAX_PHASE_RETRIES,
+    MAX_PHASE_RETRIES, PHASE_TIMEOUT_SECONDS,
 )
 from evaluator import evaluate_pipeline_run, EvalReport
 from checkpoint import check_honcho_logged
@@ -120,6 +121,8 @@ class OrchestratorLoop:
         self._gate_violations: dict[str, int] = {}             # task_id -> # gate failures
         self._eval: dict[str, EvalReport] = {}                 # task_id -> eval report
         self._eval_run_no = 0
+        # Per-phase timeout tracking: {task_id: {phase: start_time}}
+        self._phase_started_at: dict[str, dict[str, float]] = {}
 
     def recommend_mode(self, title: str, description: str = "", diff: str = "") -> str:
         """Pre-flight recommendation: suggest the appropriate phase mode for a task.
@@ -140,10 +143,11 @@ class OrchestratorLoop:
         task = self.db.get_task(task_id)
         if not task:
             return False
-        if task.status in ("DONE", "FAILED"):
+        # HALT and FAILED are terminal — no more work
+        if task.status in ("DONE", "FAILED", "HALT"):
             return False
         phase = self.enforcer.get_phase(task_id)
-        if phase == "DONE":
+        if phase in ("DONE", "FAILED", "HALT"):
             return False
         return True
 
@@ -193,7 +197,7 @@ class OrchestratorLoop:
             return "IMPLEMENT" if phase_mode in ("fast", "micro") else "RECALL"
         if last is None:
             return "IMPLEMENT" if phase_mode in ("fast", "micro") else "RECALL"
-        if last in ("DONE", "FAILED"):
+        if last in ("DONE", "FAILED", "HALT"):
             return last
 
         # For fast mode, skip RECALL, CONCLUDE, and REFRESH_CONTEXT phases
@@ -215,7 +219,7 @@ class OrchestratorLoop:
             }
             if last in MICRO_NEXT:
                 return MICRO_NEXT[last]
-            if last in ("DONE", "FAILED"):
+            if last in ("DONE", "FAILED", "HALT"):
                 return last
 
         # For heavy mode: REVIEW → APPROVAL → VERIFY (human approval before verify)
@@ -237,6 +241,8 @@ class OrchestratorLoop:
         Generate the prompt for a subagent assigned to this phase.
         Returns {system: str, user: str} — the agent .md body + assembled context.
         """
+        # Mark phase start for timeout tracking
+        self._start_phase(task_id, phase)
         task = self.db.get_task(task_id)
         if not task:
             return {"system": "", "user": f"ERROR: Task {task_id} not found"}
@@ -252,6 +258,18 @@ class OrchestratorLoop:
         Submit the host's result for a phase. Returns the next action.
         The host should call this after executing each prompt.
         """
+        # Check for phase timeout before processing the result
+        if self._check_phase_timeout(task_id, phase):
+            outcome = LoopOutcome(
+                action=LoopAction.FAILED, phase=phase, task_id=task_id,
+                message=(
+                    f"Phase '{phase}' timed out after {PHASE_TIMEOUT_SECONDS}s. "
+                    "The phase took too long and has been marked FAILED."
+                ),
+            )
+            self._print_phase_summary(phase, task_id, outcome)
+            return outcome
+
         task = self.db.get_task(task_id)
         if not task:
             return LoopOutcome(
@@ -408,6 +426,22 @@ class OrchestratorLoop:
 
     def _reset_phase_retry(self, task_id: str, phase: str) -> None:
         ...
+
+    # ── Phase timeout tracking ─────────────────────────────────────────────
+
+    def _start_phase(self, task_id: str, phase: str) -> None:
+        """Record the start time of a phase for timeout tracking."""
+        if task_id not in self._phase_started_at:
+            self._phase_started_at[task_id] = {}
+        self._phase_started_at[task_id][phase] = time.monotonic()
+
+    def _check_phase_timeout(self, task_id: str, phase: str) -> bool:
+        """Return True if the phase has exceeded PHASE_TIMEOUT_SECONDS."""
+        started = self._phase_started_at.get(task_id, {}).get(phase)
+        if started is None:
+            return False
+        elapsed = time.monotonic() - started
+        return elapsed > PHASE_TIMEOUT_SECONDS
 
     def _impl_retry_or_escalate(self, task_id: str, name: str, reason: str) -> LoopOutcome:
         ...

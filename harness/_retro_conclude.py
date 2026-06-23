@@ -55,13 +55,22 @@ def _submit_retro(self, task_id: str, reflection: str) -> LoopOutcome:
     (ratify-gated, never auto-applied). Here we record it and advance to CONCLUDE.
 
     Gate: retro must be substantive, not a checkbox.
+
+    Retry leak fix: if RETRO exhausts its retry budget, we set _retro_skipped
+    and advance to CONCLUDE rather than blocking the task permanently.
     """
     # Gate: reject checkbox retros
     if len(reflection.strip()) < 100:
         if self._bump_retry(task_id, "RETRO"):
+            # Exhausted — skip RETRO, advance to CONCLUDE
+            self._retro_skipped = getattr(self, '_retro_skipped', {})
+            self._retro_skipped[task_id] = True
             outcome = LoopOutcome(
-                action=LoopAction.FAILED, phase="RETRO", task_id=task_id,
-                message=f"RETRO failed after {MAX_PHASE_RETRIES['RETRO']} attempts. Escalating.",
+                action=LoopAction.RUN_PHASE, phase="CONCLUDE", task_id=task_id,
+                message=(
+                    f"RETRO exhausted after {MAX_PHASE_RETRIES['RETRO']} attempts. "
+                    "Skipping retro — advancing to conclude."
+                ),
             )
         else:
             outcome = LoopOutcome(
@@ -81,9 +90,15 @@ def _submit_retro(self, task_id: str, reflection: str) -> LoopOutcome:
     referenced = [p for p in completed_phases if p.lower() in reflection_lower]
     if not referenced:
         if self._bump_retry(task_id, "RETRO"):
+            # Exhausted — skip RETRO, advance to CONCLUDE
+            self._retro_skipped = getattr(self, '_retro_skipped', {})
+            self._retro_skipped[task_id] = True
             outcome = LoopOutcome(
-                action=LoopAction.FAILED, phase="RETRO", task_id=task_id,
-                message=f"RETRO failed after {MAX_PHASE_RETRIES['RETRO']} attempts. Escalating.",
+                action=LoopAction.RUN_PHASE, phase="CONCLUDE", task_id=task_id,
+                message=(
+                    f"RETRO exhausted after {MAX_PHASE_RETRIES['RETRO']} attempts. "
+                    "Skipping retro — advancing to conclude."
+                ),
             )
         else:
             outcome = LoopOutcome(

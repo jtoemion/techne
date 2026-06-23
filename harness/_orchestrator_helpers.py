@@ -277,12 +277,25 @@ def _build_eval_metrics(self, task_id: str) -> dict:
     Retro Value maps to the RL learning step (reward recording + per-run
     evolution), which is the loop's equivalent of the conductor's retro.
     """
+    import re
+
     scope = self._scope.get(task_id)
-    diff_lower = self._diff.get(task_id, "").lower()
+    diff_text = self._diff.get(task_id, "")
+
+    # Count drift markers robustly using regex — won't break on format changes
+    # that preserve the semantic meaning (+  todo, +// todo, + console.log, etc.)
+    def _count_pattern(text: str, pattern: str) -> int:
+        try:
+            return len(re.findall(pattern, text, re.IGNORECASE))
+        except Exception:
+            return 0
+
     drift = (
-        diff_lower.count("+  todo") + diff_lower.count("+ // todo")
-        + diff_lower.count("+  fixme") + diff_lower.count("+ // fixme")
-        + diff_lower.count("+ console.log") + diff_lower.count("+console.log")
+        _count_pattern(diff_text, r"\+\s{1,2}todo")
+        + _count_pattern(diff_text, r"\+\s{1,2}fixme")
+        + _count_pattern(diff_text, r"\+//\s*todo")
+        + _count_pattern(diff_text, r"\+//\s*fixme")
+        + _count_pattern(diff_text, r"\+console\.log")
     )
     test_pass = self._test_pass.get(task_id, False)
     return dict(
