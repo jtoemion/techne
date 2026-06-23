@@ -230,6 +230,12 @@ routing:
     skill_path: "skills/session-reporter/SKILL.md"
     weight: 43
     note: "Production tool — summarize session from task history + Honcho state."
+  - id: "diff-gate-checker"
+    condition: "check diff, pre-flight gate, validate output, gate check, before submit"
+    skill_path: "skills/diff-gate-checker/SKILL.md"
+    weight: 48
+    note: "Production tool — pre-flight diff/phase output against gate requirements before submit."
+
 
 
   - id: "approval"
