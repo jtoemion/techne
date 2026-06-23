@@ -44,3 +44,18 @@ const config = rawData as Config  // third-party API, no types available
 
 - Type errors from Next.js params? → `skills/nextjs.md` (params section)
 - Test types broken? → `skills/tdd.md` (interface-based testing)
+
+## RL-Proposed Additions
+
+<!-- New RL-generated entries appear here. Reviewed and confirmed
+     before being promoted to the main body above. -->
+
+<!-- Entry template:
+### [YYYY-MM-DD] Pitfall title
+- **Source:** GRPO proposal from task <task_id>
+- **Evidence:** Review finding repeated N times across M tasks
+- **Advantage:** X.XXX
+- **Pattern:** Description of the pitfall
+- **Fix:** How to avoid it
+- **Example:** Code snippet showing wrong vs correct
+-->

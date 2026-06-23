@@ -732,6 +732,92 @@ def test_propose_grpo_and_skill_together():
             tmp_path.unlink()
 
 
+# ── Orchestrator integration: both proposers wired ─────────────────────────
+
+def test_post_run_evolve_calls_both_proposers():
+    """post_run_evolve stages proposals from both propose_grpo_edits (variant)
+    and propose_skill_edits (skill) into result['grpo_proposed']."""
+    print("\n[orchestrator — post_run_evolve calls both proposers]")
+
+    import tempfile, os
+    from pathlib import Path
+    from orchestrator_loop import OrchestratorLoop
+    from task_db import TaskDB
+
+    tmpdir = tempfile.mkdtemp()
+    try:
+        memory_dir = Path(tmpdir) / ".techne" / "memory"
+        memory_dir.mkdir(parents=True)
+        proposals_file = memory_dir / "retro_proposals.md"
+
+        # 1. Build a RewardLog with both high-advantage variant (GRPO path)
+        #    and high-advantage skill (P4 path).  Use the same seed helpers
+        #    already in this file.
+        log = _fresh_log()
+
+        # Variant advantage via symmetric cancellation (GRPO path).
+        # Use group "variant:auth" so skill records (different group) don't
+        # contaminate the mean score used to compute variant advantage.
+        _seed_with_group(log, "t1", "auth", 0.95, variant="v1_high", group="variant:auth")
+        _seed_with_group(log, "t2", "auth", 0.95, variant="v1_high", group="variant:auth")
+        _seed_with_group(log, "t3", "auth", 0.10, variant="v2_low", group="variant:auth")
+
+        # Skill advantage via explicit advantage (P4 path).
+        # Use a separate group so batch advantage computation doesn't mix
+        # with the variant records above.
+        _seed_with_skill_and_adv(log, "t4", "auth", 0.95, skill="diagnose",
+                                  adv=0.30, group="skill:auth")
+        _seed_with_skill_and_adv(log, "t5", "auth", 0.90, skill="diagnose",
+                                  adv=0.20, group="skill:auth")
+
+        # 2. Create an OrchestratorLoop backed by that log
+        db = TaskDB(tempfile.NamedTemporaryFile(suffix=".db", delete=False).name)
+        loop = OrchestratorLoop(db, reward_log=log)
+
+        # 3. Monkey-patch grpo DEFAULT_PROPOSALS_FILE so we write to tmp
+        import grpo as grpo_module
+        orig_proposals_file = grpo_module.DEFAULT_PROPOSALS_FILE
+        try:
+            grpo_module.DEFAULT_PROPOSALS_FILE = proposals_file
+
+            result = loop.post_run_evolve()
+
+            # 4. Assert result['grpo_proposed'] has entries from BOTH proposers
+            grpo_proposed = result.get("grpo_proposed", [])
+            check("result['grpo_proposed'] is non-empty", len(grpo_proposed) > 0)
+
+            # At least one entry should be a variant proposal (no 'type' key → B3)
+            variant_entries = [p for p in grpo_proposed if p.get("type") != "skill"]
+            check("variant (B3) proposals are present",
+                  any("prompt_variant" in p for p in variant_entries))
+
+            # At least one entry should be a skill proposal (type == "skill")
+            skill_entries = [p for p in grpo_proposed if p.get("type") == "skill"]
+            check("skill (P4) proposals are present (type == 'skill')",
+                  len(skill_entries) > 0)
+            check("skill entries carry 'skill' field",
+                  all("skill" in p for p in skill_entries))
+
+            # The skill entry should be for 'diagnose'
+            check("skill entry is for 'diagnose'",
+                  any(p.get("skill") == "diagnose" for p in skill_entries))
+
+            # The variant entry should be for 'v1_high'
+            check("variant entry is for 'v1_high'",
+                  any(p.get("prompt_variant") == "v1_high" for p in variant_entries))
+
+        finally:
+            grpo_module.DEFAULT_PROPOSALS_FILE = orig_proposals_file
+            db.close()
+
+        log.close()
+        os.remove(log.db_path)
+        os.remove(db.db_path)
+    finally:
+        import shutil
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -755,7 +841,6 @@ if __name__ == "__main__":
     test_propose_skill_edits_dedup()
     test_propose_skill_edits_empty_log()
     test_propose_skill_edits_requires_two_runs()
-
     # Edge cases
     test_threshold_at_exact_value_included()
     test_threshold_just_below_excluded()
@@ -763,6 +848,8 @@ if __name__ == "__main__":
     test_propose_skill_edits_requires_advantage()
     test_propose_skill_edits_high_advantage_writes_proposal()
     test_propose_grpo_and_skill_together()
+    # Orchestrator integration
+    test_post_run_evolve_calls_both_proposers()
 
     passed = sum(1 for r in results if r)
     total = len(results)

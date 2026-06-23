@@ -494,6 +494,32 @@ def test_a2_refresh_context_retry_on_fail():
               "failed" in msg.lower() or "crashed" in msg.lower() or "disk" in msg.lower())
 
 
+def test_post_run_evolve_called_on_done():
+    """post_run_evolve() fires automatically when submit() returns DONE."""
+    print("\n[loop — post_run_evolve fires on DONE]")
+    db, rl = _fresh()
+
+    called = {"n": 0}
+    orig_compute = rl.compute_batch_advantages
+
+    def tracking_compute(*args, **kwargs):
+        called["n"] += 1
+        return orig_compute(*args, **kwargs)
+
+    with _mock.patch.object(rl, "compute_batch_advantages", tracking_compute):
+        plan = run_plan(
+            ["add sale badge to product page"],
+            model=FakeModel(),
+            run_tests=lambda: PASSING_TESTS,
+            db=db,
+            reward_log=rl,
+            prepare_context=False,
+        )
+
+    check("task reached DONE", plan.tasks[0].status == "DONE")
+    check("compute_batch_advantages called at least once", called["n"] >= 1)
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("ORCHESTRATOR DRIVER — run_plan drives the full RL pipeline")
@@ -513,6 +539,7 @@ if __name__ == "__main__":
     test_conclude_prompt_includes_context_guard_punch_list()
     test_conclude_rejects_context_update_without_sha()
     test_a2_refresh_context_retry_on_fail()
+    test_post_run_evolve_called_on_done()
     passed = sum(1 for r in results if r)
     total = len(results)
     print("\n" + "=" * 60)

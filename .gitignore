@@ -26,6 +26,7 @@ memory/prompt_proposals.json
 .techne/reports/
 .techne/logs/
 .techne/tasks/
+.techne/events/
 
 # Loop state — regenerated per task
 .techne/loop/

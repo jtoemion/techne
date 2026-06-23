@@ -66,3 +66,18 @@ Static `import` fails at build bundling; dynamic `import()` fails at Vite's tran
 - TypeScript errors? → `skills/typescript.md`
 - Building a feature? → `skills/implementer.md`
 - Something broken at runtime? → `skills/diagnose.md`
+
+## RL-Proposed Additions
+
+<!-- New RL-generated entries appear here. Reviewed and confirmed
+     before being promoted to the main body above. -->
+
+<!-- Entry template:
+### [YYYY-MM-DD] Pitfall title
+- **Source:** GRPO proposal from task <task_id>
+- **Evidence:** Review finding repeated N times across M tasks
+- **Advantage:** X.XXX
+- **Pattern:** Description of the pitfall
+- **Fix:** How to avoid it
+- **Example:** Code snippet showing wrong vs correct
+-->

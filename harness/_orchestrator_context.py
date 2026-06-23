@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 from _loop_types import ROOT, AGENTS_DIR
@@ -235,12 +236,14 @@ def post_run_evolve(self) -> dict:
     part of the grader, so the loop must never auto-write one — same firewall
     as prompts, applied to the grader.
     """
-    from grpo import propose_grpo_edits
+    from grpo import propose_grpo_edits, propose_skill_edits, propose_framework_edits
+    from stack_detect import detect_stack
 
     result = {
         "prompts_proposed": [],
         "gates_proposed": [],
         "grpo_proposed": [],
+        "framework_proposed": [],
         "dashboard": "",
     }
 
@@ -273,12 +276,48 @@ def post_run_evolve(self) -> dict:
             self.reward_log.compute_batch_advantages()
             grpo_proposals = propose_grpo_edits(self.reward_log)
             result["grpo_proposed"] = grpo_proposals
+            skill_proposals = propose_skill_edits(self.reward_log)
+            if skill_proposals:
+                result["grpo_proposed"].extend(
+                    {"type": "skill", **p} for p in skill_proposals
+                )
+
+            # Framework-specific proposals go directly to skill files
+            stack_tags = detect_stack(ROOT)
+            if stack_tags:
+                fw_proposals = propose_framework_edits(self.reward_log, stack_tags)
+                if fw_proposals:
+                    result["framework_proposed"] = fw_proposals
         except Exception:
             # GRPO proposals are best-effort — don't let failures block
             # the rest of post_run_evolve.
             result["grpo_proposed"] = []
     else:
         result["grpo_proposed"] = []
+
+    # ── RL event log ───────────────────────────────────────────────────────
+    # Audit trail: write a summary line to .techne/events/rl.jsonl every time
+    # post_run_evolve() runs, so external dashboards and replay tools can
+    # track what the RL loop proposed without parsing the full result dict.
+    _events_dir = Path(".techne/events")
+    _events_dir.mkdir(parents=True, exist_ok=True)
+    _event = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "event": "grpo_proposals",
+        "task_count": len(self.reward_log.all_task_types()),
+        "prompts_proposed": len(result.get("prompts_proposed", [])),
+        "skills_proposed": len(
+            [p for p in result.get("grpo_proposed", []) if p.get("type") == "skill"]
+        ),
+        "framework_proposed": len(result.get("framework_proposed", [])),
+        "advantages_computed": True,
+    }
+    try:
+        with open(_events_dir / "rl.jsonl", "a") as _f:
+            _f.write(json.dumps(_event) + "\n")
+    except Exception:
+        # Event logging must never block post_run_evolve.
+        pass
 
     # Dashboard
     result["dashboard"] = self.rl_dashboard()

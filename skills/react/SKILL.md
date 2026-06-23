@@ -59,3 +59,18 @@ useEffect(() => {
 - TypeScript errors? → `skills/typescript.md`
 - Building a feature? → `skills/implementer.md`
 - Why the Next.js gates don't apply → see scope note in `SKILL.md`
+
+## RL-Proposed Additions
+
+<!-- New RL-generated entries appear here. Reviewed and confirmed
+     before being promoted to the main body above. -->
+
+<!-- Entry template:
+### [YYYY-MM-DD] Pitfall title
+- **Source:** GRPO proposal from task <task_id>
+- **Evidence:** Review finding repeated N times across M tasks
+- **Advantage:** X.XXX
+- **Pattern:** Description of the pitfall
+- **Fix:** How to avoid it
+- **Example:** Code snippet showing wrong vs correct
+-->

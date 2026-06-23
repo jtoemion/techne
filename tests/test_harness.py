@@ -400,7 +400,9 @@ def test_skills_format():
 
     harness_dir = ROOT
     # Rule files need weights + line limits; discipline files are process guides
+    # RL-Proposed Additions section adds ~15 lines — raise limit to 80
     RULE_FILES = {"nextjs.md", "typescript.md"}
+    RULE_LINE_LIMIT = 80  # was 50 — increased for RL-Proposed Additions section
 
     for skill_file in (harness_dir / "skills").glob("*.md"):
         text = skill_file.read_text(encoding="utf-8")
@@ -408,12 +410,12 @@ def test_skills_format():
         is_rule_file = skill_file.name in RULE_FILES
 
         if is_rule_file:
-            if len(lines) <= 50:
-                results.append((f"{skill_file.name} ≤50 lines", True, ""))
-                print(f"  {PASS} {skill_file.name}: {len(lines)} lines (≤50)")
+            if len(lines) <= RULE_LINE_LIMIT:
+                results.append((f"{skill_file.name} ≤{RULE_LINE_LIMIT} lines", True, ""))
+                print(f"  {PASS} {skill_file.name}: {len(lines)} lines (≤{RULE_LINE_LIMIT})")
             else:
-                results.append((f"{skill_file.name} ≤50 lines", False, f"{len(lines)} lines"))
-                print(f"  {FAIL} {skill_file.name}: {len(lines)} lines — exceeds 50 line limit")
+                results.append((f"{skill_file.name} ≤{RULE_LINE_LIMIT} lines", False, f"{len(lines)} lines"))
+                print(f"  {FAIL} {skill_file.name}: {len(lines)} lines — exceeds {RULE_LINE_LIMIT} line limit")
 
             weight_entries = [l for l in lines if "weight:" in l]
             if weight_entries:

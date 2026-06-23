@@ -326,3 +326,125 @@ def propose_skill_edits(
     proposals_path.write_text(full_content, encoding="utf-8")
 
     return written
+
+
+# ── Framework-skill GRPO (P4-FW) ──────────────────────────────────────────────
+
+
+def propose_framework_edits(
+    reward_log,
+    stack_tags: set[str],
+    threshold: float = ADVANTAGE_THRESHOLD,
+) -> list[dict]:
+    """
+    Like propose_skill_edits but writes directly to framework skill files'
+    RL-Proposed Additions section instead of retro_proposals.md.
+
+    Only processes skills that match detected stack tags — filtering the
+    high-advantage skills list to only those whose skill name appears in
+    ``stack_tags``. This ensures framework-specific proposals go to the
+    right skill file (e.g. react.md for a React project, svelte.md for
+    a Svelte project).
+
+    Each entry is appended to ``skills/{skill}.md`` under the
+    ``## RL-Proposed Additions`` heading using the entry template that
+    is already present in those files.
+
+    Parameters
+    ----------
+    reward_log : RewardLog
+        The reward log with advantage scores already computed
+        (call ``compute_batch_advantages()`` first).
+    stack_tags : set[str]
+        Detected framework tags from ``detect_stack()``, e.g. {"react",
+        "typescript", "vite"}. Only skills whose name is in this set
+        will receive proposals.
+    threshold : float, optional
+        Minimum average advantage to trigger a proposal. Default 0.2.
+
+    Returns
+    -------
+    list[dict]
+        List of proposal dicts that were written, each containing:
+          {"task_type": str, "skill": str,
+           "avg_advantage": float, "count": int,
+           "avg_score": float}
+        Empty list if nothing met the threshold.
+    """
+    # 1. Scan reward log for high-advantage (task_type, skill) pairs
+    high_adv = reward_log.high_advantage_skills(threshold=threshold)
+    if not high_adv:
+        return []
+
+    # 2. Filter to only skills that match detected stack tags
+    framework_skills = [row for row in high_adv if row["skill"] in stack_tags]
+    if not framework_skills:
+        return []
+
+    written: list[dict] = []
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    for row in framework_skills:
+        task_type = row["task_type"]
+        skill = row["skill"]
+        avg_adv = row["avg_advantage"]
+        count = row["cnt"]
+        avg_score = row["avg_score"]
+
+        skill_file = ROOT / "skills" / skill / "SKILL.md"
+        if not skill_file.exists():
+            continue
+
+        # 3. Read current content to find the RL-Proposed Additions section
+        content = skill_file.read_text(encoding="utf-8")
+
+        # Build the new entry using the template from the skill file:
+        # ### [YYYY-MM-DD] Pitfall title
+        # - **Source:** GRPO proposal from task <task_id>
+        # - **Evidence:** Review finding repeated N times across M tasks
+        # - **Advantage:** X.XXX
+        # - **Pattern:** Description of the pitfall
+        # - **Fix:** How to avoid it
+        # - **Example:** Code snippet showing wrong vs correct
+        entry_lines = [
+            f"### [{now}] GRPO skill improvement for {task_type}",
+            f"- **Source:** GRPO proposal; {count} runs observed",
+            f"- **Evidence:** avg score {avg_score:.3f}, advantage {avg_adv:.3f}",
+            f"- **Advantage:** {avg_adv:.3f}",
+            f"- **Pattern:** High-advantage (task_type={task_type}, skill={skill}) pair",
+            f"- **Fix:** Review and promote this pattern to the skill body if stable",
+            "",
+        ]
+        entry_text = "\n".join(entry_lines)
+
+        # 4. Append under the RL-Proposed Additions section
+        section_marker = "## RL-Proposed Additions"
+        if section_marker in content:
+            # Insert before the closing comment or at end of section
+            parts = content.split(section_marker)
+            # parts[0] = before marker, parts[1] = after marker
+            after_marker = parts[1]
+            # Remove any trailing blank lines from the before-insert
+            new_content = (
+                parts[0]
+                + section_marker
+                + "\n"
+                + entry_text
+                + "\n"
+                + after_marker.lstrip()
+            )
+        else:
+            # Section not found — append at end of file
+            new_content = content.rstrip() + "\n\n" + section_marker + "\n" + entry_text + "\n"
+
+        skill_file.write_text(new_content, encoding="utf-8")
+
+        written.append({
+            "task_type": task_type,
+            "skill": skill,
+            "avg_advantage": avg_adv,
+            "count": count,
+            "avg_score": avg_score,
+        })
+
+    return written

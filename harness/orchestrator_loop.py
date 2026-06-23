@@ -45,6 +45,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 import textwrap
 import time
@@ -253,10 +254,24 @@ class OrchestratorLoop:
         elif phase == "DEBUG":
             return self._submit_debug(task_id, result)
         else:
-            return LoopOutcome(
+            outcome = LoopOutcome(
                 action=LoopAction.DONE, phase=phase, task_id=task_id,
                 message=f"Unknown phase: {phase}",
             )
+
+        # After task reaches DONE, trigger RL/GRPO computation (fire-and-forget).
+        # Non-blocking: RL failures must never prevent the submit return value from
+        # propagating to the host/loop driver.
+        try:
+            evo = self.post_run_evolve()
+            if evo.get("grpo_proposed"):
+                logging.getLogger(__name__).info(
+                    "[rl] GRPO proposed %d edits", len(evo["grpo_proposed"])
+                )
+        except Exception:
+            pass  # RL failures are non-blocking
+
+        return outcome
 
     def unblock(self, task_id: str, decision: str = "proceed") -> None:
         """Human has decided — unblock the task."""

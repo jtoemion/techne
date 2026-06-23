@@ -47,3 +47,18 @@ export default async function Page({ params }: { params: Promise<{ slug: string 
 - Gate firing on redirect? → check you're in `middleware.ts`
 - Router import error? → replace `next/router` with `next/navigation`
 - TypeScript errors? → `skills/typescript.md`
+
+## RL-Proposed Additions
+
+<!-- New RL-generated entries appear here. Reviewed and confirmed
+     before being promoted to the main body above. -->
+
+<!-- Entry template:
+### [YYYY-MM-DD] Pitfall title
+- **Source:** GRPO proposal from task <task_id>
+- **Evidence:** Review finding repeated N times across M tasks
+- **Advantage:** X.XXX
+- **Pattern:** Description of the pitfall
+- **Fix:** How to avoid it
+- **Example:** Code snippet showing wrong vs correct
+-->

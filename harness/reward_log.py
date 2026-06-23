@@ -513,9 +513,13 @@ class RewardLog:
         updated = 0
         for row in rows:
             group = row["group"]
+            # Skip records that carry a non-empty skill tag — those use the
+            # P4 path (propose_skill_edits) with externally-set advantages
+            # and must not be stomped by the batch mean recomputation.
             group_rows = self._conn.execute(
-                'SELECT task_id, composite_score FROM rewards WHERE "group" = ?',
-                (group,),
+                'SELECT task_id, composite_score FROM rewards '
+                'WHERE "group" = ? AND skill = ?',
+                (group, ""),
             ).fetchall()
 
             scores = [r["composite_score"] for r in group_rows]

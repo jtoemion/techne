@@ -24,6 +24,17 @@ from pathlib import Path
 
 from _loop_types import ROOT, MAX_TOTAL_RETRIES
 from evaluator import evaluate_pipeline_run, EvalReport
+from stack_detect import detect_stack
+
+
+def _pick_primary_skill(tags: set[str]) -> str:
+    """Pick the most specific framework tag for reward attribution."""
+    # Prefer sveltekit > svelte, nextjs > react
+    priority = ["sveltekit", "nextjs", "svelte", "react", "typescript"]
+    for tag in priority:
+        if tag in tags:
+            return tag
+    return ""
 
 
 # ── CONCLUDE proof validation ────────────────────────────────────────────────
@@ -193,8 +204,16 @@ def _record_reward(self, task_id: str) -> None:
     that never get hard tasks. Reads the real signals captured during the
     run; a signal left unset means the run never earned it (a task that
     failed at IMPLEMENT never ran tests), so it defaults to False.
+
+    The ``skill`` field is populated from stack detection so the RL system
+    knows which framework a task used, enabling framework-specific proposals.
     """
     task = self.db.get_task(task_id)
+
+    # Detect the framework stack and pick the primary skill tag
+    stack_tags = detect_stack(ROOT)
+    skill = _pick_primary_skill(stack_tags)
+
     self.reward_log.record(
         task_id=task_id,
         task_type=self._task_type.get(task_id, "general"),
@@ -205,6 +224,7 @@ def _record_reward(self, task_id: str) -> None:
         critique_predictions=self._critique_predictions.get(task_id, []),
         scope_clean=self._scope_clean.get(task_id, False),  # real: focus/scope/intent
         attempt_count=max(1, task.attempt if task else 1),  # >=1: a terminal task ran at least once
+        skill=skill,
         gate_violations=self._gate_violations.get(task_id, 0),
     )
     # ── Patch 4: ensure .gitignore and prune artifacts on DONE ──────
