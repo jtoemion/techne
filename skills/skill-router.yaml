@@ -225,6 +225,12 @@ routing:
     skill_path: "skills/task-gardener/SKILL.md"
     weight: 44
     note: "Production tool — purge old artifacts, rotate logs, compact DB, check .gitignore leaks."
+  - id: "session-reporter"
+    condition: "session report, task summary, recent activity, what did we do, session history"
+    skill_path: "skills/session-reporter/SKILL.md"
+    weight: 43
+    note: "Production tool — summarize session from task history + Honcho state."
+
 
   - id: "approval"
     condition: "approve changes, heavy mode, sensitive change, phase approval"
