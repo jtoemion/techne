@@ -26,6 +26,7 @@
   docs/plans/techne-workshop-garage.md
   docs/retro/2026-06-22-inkforge.md
   docs/retro/2026-06-22-session.md
+  docs/retro/2026-06-23-techne-hardening.md
   docs/techne-domains.md
 
 ## Top-level layout
@@ -42,6 +43,7 @@
   docs/
   harness/
   memory/
+  plugins/
   references/
   scripts/
   skills/
