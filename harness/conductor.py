@@ -96,12 +96,13 @@ class PhaseResult:
 
 # ─── Prompt-assembly helpers (no model calls) ────────────────────────────────
 
-def _read_skill_files(task: str = "", project_root: Path = ROOT) -> str:
+def _read_skill_files(task: str = "", phase: str = "", project_root: Path = ROOT) -> str:
     """Read skill files — stack-independent globals + the detected stack's framework
-    patterns + the task-routed skill. Framework pattern files load ONLY when the
-    project's stack is detected (see stack_detect.py); they are kept out of the
-    catch-all so they don't become dead weight on codebases that don't use them.
-    `project_root` is the repo being worked on (where package.json lives)."""
+    patterns + the task-routed skill + phase-specific skills. Framework pattern files
+    load ONLY when the project's stack is detected (see stack_detect.py); they are
+    kept out of the catch-all so they don't become dead weight on codebases that
+    don't use them. `project_root` is the repo being worked on (where package.json lives).
+    When `phase` is provided, phase-specific skills and companion scripts are also injected."""
     loaded = set()
     parts = []
 
@@ -134,6 +135,12 @@ def _read_skill_files(task: str = "", project_root: Path = ROOT) -> str:
     for md in sorted(SKILLS_DIR.glob("*.md")):
         if md.name not in loaded and md.name not in gated_names:
             parts.append(f"=== {md.name} ===\n{md.read_text(encoding='utf-8')}")
+
+    # Phase-specific skill + companion scripts
+    if phase:
+        phase_ctx = _load_phase_skills(phase.lower())
+        if phase_ctx:
+            parts.append(phase_ctx)
 
     return "\n\n".join(parts)
 
@@ -216,6 +223,83 @@ def _read_agent_prompt(agent_name: str) -> str:
         _, _, body = body.partition("---\n")
         return body.strip()
     return text.strip()
+
+
+def _parse_agent_frontmatter(agent_name: str) -> dict:
+    """Parse YAML frontmatter from an agents/<name>.md file."""
+    path = AGENTS_DIR / f"{agent_name}.md"
+    if not path.exists():
+        return {}
+    text = path.read_text(encoding="utf-8")
+    if not text.startswith("---"):
+        return {}
+    _, _, body = text.partition("---\n")
+    front, _, _ = body.partition("---\n")
+    result: dict[str, list[str]] = {}
+    for line in front.splitlines():
+        if ":" in line:
+            key, _, val = line.partition(":")
+            key = key.strip()
+            val = val.strip()
+            if val.startswith("[") and val.endswith("]"):
+                result[key] = [v.strip().strip('"').strip("'") for v in val[1:-1].split(",")]
+            else:
+                result[key] = val
+    return result
+
+
+def _load_phase_skills(phase_name: str) -> str:
+    """Load the phase-specific skill file(s) referenced in the agent's
+    frontmatter and find companion scripts.
+    Returns formatted context block or empty string."""
+    # Map phase name to agent name
+    AGENT_MAP = {
+        "recall": "recaller", "implement": "implementer", "context-guard": "context-guard",
+        "critique": "critique", "review": "reviewer", "verify": "verifier",
+        "eval": None, "retro": "retro", "conclude": "concluder",
+        "refresh-context": None, "debug": "debugger", "preflight": "context-preflight",
+        "approval": None, "conductor": "conductor",
+    }
+    agent_name = AGENT_MAP.get(phase_name)
+    if not agent_name:
+        return ""
+
+    front = _parse_agent_frontmatter(agent_name)
+    skills_list = front.get("skills", [])
+    parts = []
+
+    # Load skill files
+    for skill_path in skills_list:
+        full_path = (ROOT / skill_path)
+        if full_path.exists():
+            parts.append(f"=== Phase Skill: {skill_path} ===\n{full_path.read_text(encoding='utf-8')}")
+
+    # Find companion scripts
+    # For phase 'recall', check scripts/recall_honcho.py, scripts/recall_*.py
+    script_patterns = [
+        ROOT / "scripts" / f"{phase_name}_*.py",
+        ROOT / "scripts" / f"{phase_name.replace('-', '_')}_*.py",
+    ]
+    # Also check direct phase name match
+    for script in sorted((ROOT / "scripts").glob(f"{phase_name.replace('-', '_')}*.py")):
+        parts.append(f"[Available Tool] python3 scripts/{script.name}")
+    for script in sorted((ROOT / "scripts").glob(f"{phase_name}*.py")):
+        if script.suffix == ".py" and script.stem != phase_name.replace('-', '_') and f"scripts/{script.name}" not in str(parts):
+            parts.append(f"[Available Tool] python3 scripts/{script.name}")
+
+    # Add universal tools
+    universal_tools = [
+        "scripts/pipeline_health.py",
+        "scripts/mistakes_logger.py",
+        "scripts/session_reporter.py",
+        "scripts/diff_gate_checker.py",
+        "scripts/task_gardener.py",
+    ]
+    for tool in universal_tools:
+        if (ROOT / tool).exists():
+            parts.append(f"[Available Tool] python3 {tool}")
+
+    return "\n".join(parts) if parts else ""
 
 
 # ─── The host-driven pipeline ────────────────────────────────────────────────

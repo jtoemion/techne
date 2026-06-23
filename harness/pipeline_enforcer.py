@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Optional
 
 from task_db import TaskDB, Task
+from conductor import _load_phase_skills
 
 
 # ── Memory directory and override log ──────────────────────────────────────
@@ -1278,5 +1279,10 @@ def get_phase_prompt(task_id: str, phase: str, db: TaskDB) -> str:
         prompt += "\n"
 
     prompt += f"YOUR INSTRUCTIONS: {PHASE_DESCRIPTIONS.get(phase, phase)}\n"
+
+    # Phase-specific skill
+    phase_skills = _load_phase_skills(phase.lower())
+    if phase_skills:
+        prompt += f"\n{phase_skills}\n"
 
     return prompt
