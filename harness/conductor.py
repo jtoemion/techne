@@ -294,6 +294,8 @@ def _load_phase_skills(phase_name: str) -> str:
         "scripts/session_reporter.py",
         "scripts/diff_gate_checker.py",
         "scripts/task_gardener.py",
+        "scripts/knowledge_graph.py",
+        "scripts/project_graph_build.py",
     ]
     for tool in universal_tools:
         if (ROOT / tool).exists():

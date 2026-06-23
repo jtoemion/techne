@@ -250,6 +250,12 @@ routing:
     skill_path: "skills/task-reset/SKILL.md"
     weight: 10
     note: "Production tool — force-reset stuck tasks. MUST run pipeline-health + dry-run first. Low weight to avoid accidental matching."
+  - id: "knowledge-graph"
+    condition: "knowledge graph, pipeline patterns, skill graph, phase outcomes, graph query, project graph"
+    skill_path: "skills/knowledge-graph/SKILL.md"
+    weight: 41
+    note: "Graph tool — query techne pipeline graph (phase outcomes, mistakes, skills) or build project file-architecture graphs."
+
 
 
 
