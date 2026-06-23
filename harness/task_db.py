@@ -64,6 +64,7 @@ class Task:
     updated_at: str = ""
     attempt: int = 0                  # how many times an agent has tried this
     max_attempts: int = 3             # before escalating to debugger
+    notes: str = ""                    # free-text notes / migration log
 
     def __post_init__(self):
         now = datetime.now(timezone.utc).isoformat()
@@ -94,7 +95,7 @@ class TaskEvent:
             self.timestamp = datetime.now(timezone.utc).isoformat()
 
 
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 
 class TaskDB:
@@ -188,6 +189,20 @@ class TaskDB:
                 "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '1')"
             )
             self._conn.commit()
+        # v1 -> v2: add notes column to tasks table
+        if version < 2:
+            try:
+                self._conn.execute("ALTER TABLE tasks ADD COLUMN notes TEXT DEFAULT ''")
+                self._conn.execute(
+                    "UPDATE meta SET value = '2' WHERE key = 'schema_version'"
+                )
+                self._conn.commit()
+            except sqlite3.OperationalError:
+                # Column may already exist — swallow and update version
+                self._conn.execute(
+                    "UPDATE meta SET value = '2' WHERE key = 'schema_version'"
+                )
+                self._conn.commit()
         # Future migrations go here
         # if version < 2:
         #     ...
@@ -226,6 +241,46 @@ class TaskDB:
             "stuck_tasks": stuck,
             "status_counts": status_counts,
         }
+
+    def prune_orphaned_events(self) -> int:
+        """Delete task_events with no matching task. Returns count deleted."""
+        deleted = self._conn.execute(
+            """DELETE FROM task_events WHERE task_id NOT IN
+               (SELECT id FROM tasks)"""
+        ).rowcount
+        self._conn.commit()
+        return deleted
+
+    def release_stuck_tasks(self, hours: int = 24) -> int:
+        """Reset tasks stuck IN_PROGRESS for >hours back to PENDING.
+        Returns count of tasks released."""
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        now = datetime.now(timezone.utc).isoformat()
+        released = self._conn.execute(
+            """UPDATE tasks SET status = 'PENDING', updated_at = ?
+               WHERE status = 'IN_PROGRESS' AND created_at < ?""",
+            (now, cutoff),
+        ).rowcount
+        self._conn.commit()
+        return released
+
+    _VALID_COLUMNS = frozenset({
+        "id", "title", "description", "parent_id", "discipline",
+        "status", "assigned_agent", "priority", "tags", "phase_mode",
+        "created_at", "updated_at", "attempt", "max_attempts", "notes",
+    })
+
+    def get_tasks_by_column(self, column: str, value: str) -> list[dict]:
+        """Query tasks by column name with SQL injection guard.
+        Raises ValueError for invalid column names."""
+        if column not in self._VALID_COLUMNS:
+            raise ValueError(f"Invalid column: {column}. Valid: {sorted(self._VALID_COLUMNS)}")
+        rows = self._conn.execute(
+            f"SELECT * FROM tasks WHERE {column} = ? ORDER BY priority DESC, created_at",
+            (value,)
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     # ── Task CRUD ────────────────────────────────────────────────────────
 
@@ -651,6 +706,7 @@ def _row_to_task(row: sqlite3.Row) -> Task:
         updated_at=row["updated_at"],
         attempt=row["attempt"] or 0,
         max_attempts=row["max_attempts"] or 3,
+        notes=row["notes"] if "notes" in row.keys() else "",
     )
 
 
