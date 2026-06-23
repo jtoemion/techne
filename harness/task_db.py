@@ -94,12 +94,24 @@ class TaskEvent:
             self.timestamp = datetime.now(timezone.utc).isoformat()
 
 
-class TaskDB:
-    """SQLite-backed task database. Thread-safe for single-process use."""
+CURRENT_SCHEMA_VERSION = 1
 
-    def __init__(self, db_path: str | Path | None = None):
+
+class TaskDB:
+    """
+    SQLite-backed task database.
+
+    Thread-safe for single-process use: SQLite's WAL mode allows concurrent
+    readers while a writer holds an exclusive lock. For multi-process access,
+    use separate TaskDB instances per process (SQLite's file-level locking
+    handles contention). Connection pooling is not implemented; each instance
+    owns one connection.
+    """
+
+    def __init__(self, db_path: str | Path | None = None, *, timeout: float = 30.0):
         self.db_path = str(db_path or DEFAULT_DB)
-        self._conn = sqlite3.connect(self.db_path)
+        self._timeout = timeout
+        self._conn = sqlite3.connect(self.db_path, timeout=timeout)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
@@ -107,6 +119,11 @@ class TaskDB:
 
     def _init_schema(self):
         self._conn.executescript("""
+            CREATE TABLE IF NOT EXISTS meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS tasks (
                 id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
@@ -145,8 +162,70 @@ class TaskDB:
             CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id);
             CREATE INDEX IF NOT EXISTS idx_events_task ON task_events(task_id);
             CREATE INDEX IF NOT EXISTS idx_events_agent ON task_events(agent);
+
+            CREATE INDEX IF NOT EXISTS idx_tasks_status_priority ON tasks(status, priority DESC);
+            CREATE INDEX IF NOT EXISTS idx_events_action_timestamp ON task_events(task_id, action, timestamp);
+            CREATE INDEX IF NOT EXISTS idx_tasks_updated ON tasks(updated_at DESC);
         """)
         self._conn.commit()
+        self.migrate_schema()
+
+    def get_schema_version(self) -> int:
+        """Return current schema version, or 0 if meta table is empty."""
+        row = self._conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()
+        return int(row["value"]) if row else 0
+
+    def migrate_schema(self):
+        """Apply migrations up to CURRENT_SCHEMA_VERSION."""
+        version = self.get_schema_version()
+        if version >= CURRENT_SCHEMA_VERSION:
+            return
+        # v0 -> v1: initial meta table with schema_version
+        if version < 1:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '1')"
+            )
+            self._conn.commit()
+        # Future migrations go here
+        # if version < 2:
+        #     ...
+
+    def health_check(self) -> dict:
+        """
+        Data integrity report. Checks:
+        - orphaned_events: task_events rows with no matching task
+        - stuck_tasks: tasks in IN_PROGRESS for >24 hours (by created_at)
+        """
+        total_tasks = self._conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+        total_events = self._conn.execute("SELECT COUNT(*) FROM task_events").fetchone()[0]
+
+        orphaned = self._conn.execute("""
+            SELECT COUNT(*) FROM task_events e
+            LEFT JOIN tasks t ON t.id = e.task_id
+            WHERE t.id IS NULL
+        """).fetchone()[0]
+
+        # stuck tasks: IN_PROGRESS for >24h
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        stuck = self._conn.execute("""
+            SELECT COUNT(*) FROM tasks
+            WHERE status = 'IN_PROGRESS' AND created_at < ?
+        """, (cutoff,)).fetchone()[0]
+
+        status_counts = dict(self._conn.execute(
+            "SELECT status, COUNT(*) FROM tasks GROUP BY status"
+        ).fetchall())
+
+        return {
+            "total_tasks": total_tasks,
+            "total_events": total_events,
+            "orphaned_events": orphaned,
+            "stuck_tasks": stuck,
+            "status_counts": status_counts,
+        }
 
     # ── Task CRUD ────────────────────────────────────────────────────────
 
@@ -194,9 +273,9 @@ class TaskDB:
             return None
         return _row_to_task(row)
 
-    def get_tasks_by_status(self, status: str) -> list[Task]:
+    def get_tasks_by_status(self, status: str, *, order_by: str = "priority DESC, created_at") -> list[Task]:
         rows = self._conn.execute(
-            "SELECT * FROM tasks WHERE status = ? ORDER BY priority DESC, created_at",
+            f"SELECT * FROM tasks WHERE status = ? ORDER BY {order_by}",
             (status,),
         ).fetchall()
         return [_row_to_task(r) for r in rows]
