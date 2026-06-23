@@ -174,14 +174,6 @@ disambiguation:
       greploop = LOOP. Iterate the PR until 5/5 + zero unresolved (max 5 iterations).
 
   - confused:
-      - ezra-assistant
-      - tutor-assistant
-    rule: |
-      ezra-assistant    = Ezra THEODORES specifically. Use admin UID 5VjkeLYp6HNUnc2HR4J7g0qkg3q1.
-                          Has Ezra's fixed routine, HTML report format, and 8-session package rules.
-      tutor-assistant   = Generic tutor. Not Ezra. Use when no specific tutor name is given.
-
-  - confused:
       - prototype
       - grill
     rule: |
