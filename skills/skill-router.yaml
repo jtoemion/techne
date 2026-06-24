@@ -4,7 +4,7 @@
 # First match on condition wins. Higher weight = higher priority on ties.
 
 version: "1.0"
-updated: "2026-06-09"
+updated: "2026-06-25"
 
 # ROUTING TABLE — evaluated top-to-bottom, first match wins
 routing:
@@ -47,6 +47,12 @@ routing:
     condition: "stress-test plan, challenge design, grill, review approach, before implementing"
     skill_path: "skills/grill.md"
     weight: 80
+
+  - id: "node-discipline"
+    condition: "node isolation, module boundary, layered architecture, code node, gateway node, trigger node, n8n isolation"
+    skill_path: "skills/node-discipline.md"
+    weight: 79
+    note: "Enforces n8n-style module isolation — TRIGGER/CODE/GATEWAY layers. Includes scan scripts and ./next gate."
 
   - id: "improve-architecture"
     condition: "improve architecture, refactoring opportunities, deepen module, more testable, consolidate coupling, architecture review"
