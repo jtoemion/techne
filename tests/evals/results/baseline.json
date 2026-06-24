@@ -1,12 +1,14 @@
 {
-  "timestamp": "2026-06-17T10:12:18.255761+00:00",
+  "timestamp": "2026-06-23T18:39:58.520681+00:00",
   "suites": [
     {
       "suite": "Router",
-      "passed": 30,
-      "failed": 0,
+      "passed": 29,
+      "failed": 1,
       "total": 30,
-      "failures": []
+      "failures": [
+        "[r15] expected=implementer got=mistakes-logger | refactor the checkout logic and fix the change handler"
+      ]
     },
     {
       "suite": "Gates",
@@ -30,9 +32,107 @@
       "skipped": true,
       "skip_reason": "host-judged",
       "failures": []
+    },
+    {
+      "suite": "rl",
+      "passed": 6,
+      "failed": 0,
+      "total": 6,
+      "cases": [
+        {
+          "passed": true,
+          "proposals_count": 0,
+          "advantages_computed": 0,
+          "reason": "",
+          "status": "no rewards"
+        },
+        {
+          "passed": true,
+          "stored_advantage": -0.10000000000000009,
+          "advantages_computed": true,
+          "reason": ""
+        },
+        {
+          "passed": true,
+          "skill_proposals": [
+            {
+              "task_type": "ui",
+              "skill": "react",
+              "avg_advantage": 0.5,
+              "count": 3,
+              "avg_score": 0.25
+            }
+          ],
+          "reason": ""
+        },
+        {
+          "passed": true,
+          "framework_proposals": [
+            {
+              "task_type": "ui",
+              "skill": "svelte",
+              "avg_advantage": 0.4,
+              "count": 2,
+              "avg_score": 0.9000000000000001
+            }
+          ],
+          "reason": ""
+        },
+        {
+          "passed": true,
+          "advantages_computed": true,
+          "advantages": {
+            "bt0": 0.46666666666666673,
+            "bt1": 0.16666666666666669,
+            "bt2": -0.6333333333333333
+          },
+          "reason": ""
+        },
+        {
+          "passed": true,
+          "status": "no rewards",
+          "reason": ""
+        }
+      ],
+      "failures": [],
+      "status": "pass"
+    },
+    {
+      "suite": "enforcement",
+      "passed": 6,
+      "failed": 0,
+      "total": 6,
+      "cases": [
+        {
+          "passed": true,
+          "reason": ""
+        },
+        {
+          "passed": true,
+          "reason": ""
+        },
+        {
+          "passed": true,
+          "reason": ""
+        },
+        {
+          "passed": true,
+          "reason": ""
+        },
+        {
+          "passed": true,
+          "reason": ""
+        },
+        {
+          "passed": true,
+          "reason": ""
+        }
+      ],
+      "failures": [],
+      "status": "pass"
     }
   ],
-  "total_passed": 75,
-  "total_failed": 0,
-  "total_cases": 75
+  "total_passed": 86,
+  "total_failed": 1,
+  "total_cases": 87
 }

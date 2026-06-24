@@ -1,9 +1,11 @@
 # Techne
 
-> A project-attached engineering workshop: a disciplined pipeline that governs how code work happens, a `.techne/` shell that holds context and memory, and a GRPO engine that improves prompts and skills over time.
+> A project-attached engineering workshop: a disciplined `./next` loop with disk-proven enforcement, a `.techne/` context shell that amortizes project understanding, and a GRPO engine that improves skills and prompts over time.
 
-[![Tests](https://img.shields.io/badge/tests-525%2B-brightgreen)](#project-status)
-[![Pipeline](https://img.shields.io/badge/pipeline-11%20phases-blue)](#the-11-phase-pipeline)
+[![Tests](https://img.shields.io/badge/tests-781%2B-brightgreen)](#project-status)
+[![Pipeline](https://img.shields.io/badge/pipeline-5--phase%20./next%20loop-blue)](#the-next-loop)
+[![Enforcement](https://img.shields.io/badge/enforcement-phase__guard%20%2B%20audit%20chain%20%2B%20watchdog-green)](#enforcement-stack)
+[![GRPO/RL](https://img.shields.io/badge/GRPO-RL%20engine%20%2B%20framework%20skills-purple)](#grpo-engine)
 [![Python](https://img.shields.io/badge/python-3.10%2B-orange)](#requirements)
 [![No API Key](https://img.shields.io/badge/API%20key-none%20required-lightgrey)](#architecture)
 
@@ -13,10 +15,12 @@
 
 - [What is Techne?](#what-is-techne)
 - [Architecture](#architecture)
-- [The 11-Phase Pipeline](#the-11-phase-pipeline)
-- [Workshop Garage](#workshop-garage)
+- [The ./next Loop](#the-next-loop)
+- [Enforcement Stack](#enforcement-stack)
+- [Context Amortization](#context-amortization)
+- [Wikilink Knowledge Graph](#wikilink-knowledge-graph)
+- [EVAL System](#eval-system)
 - [GRPO Engine](#grpo-engine)
-- [Receptionist Pattern](#receptionist-pattern)
 - [Quick Start](#quick-start)
 - [Project Status](#project-status)
 - [Documentation Map](#documentation-map)
@@ -25,17 +29,17 @@
 
 ## What is Techne?
 
-Techne is a **project-attached engineering workshop** that disciplines how code work happens. It has three parts:
+Techne is a **project-attached engineering workshop** that disciplines how code work happens. It has three actual systems:
 
-1. **The pipeline** — an 11-phase loop (RECALL → IMPLEMENT → ... → REFRESH_CONTEXT → DONE) that every code change goes through. No exceptions, no shortcuts for one-liners.
+1. **The `./next` loop** — a 5-phase pipeline (`RECALL → IMPLEMENT → VERIFY → CONCLUDE → DONE`) enforced by disk artifacts. Every code change goes through every phase. No exceptions.
 
-2. **The workshop garage** — a `.techne/` directory per project that holds:
-   - Context docs describing the codebase
-   - Generated indexes and knowledge graphs
-   - Memory: mistakes, lessons, decisions
-   - Scripts for context search and refresh
+2. **The Workshop Garage** — a `.techne/` directory per project that holds:
+   - Deterministic context packs (project digest, file roles, commands, risk boundaries)
+   - Wikilink knowledge graph rebuilt on every `CONCLUDE`
+   - RL event log, reward ledger, and mistake ledger
+   - Hermes plugin (`phase_guard`) that blocks writes outside the active pipeline
 
-3. **The GRPO engine** — reinforcement learning that compares pipeline runs, scores prompt variants and skills, and proposes improvements for human ratification.
+3. **The GRPO/RL Engine** — reinforcement learning that compares pipeline runs, scores skills and prompts, computes group-relative advantages, and proposes framework skill edits for human ratification.
 
 > **Techne never calls a model and never needs an API key.** Your agent runs every reasoning turn. Techne supplies the deterministic spine: gates, scoring, memory writes, and RL proposals.
 
@@ -45,25 +49,34 @@ Techne is a **project-attached engineering workshop** that disciplines how code 
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                      HOST (Receptionist)                     │
+│                      HOST (Planner)                          │
 │                                                              │
-│  • Plans and classifies requests                             │
-│  • Writes tickets (MODE / OBJECTIVE / CONTEXT / CONSTRAINTS) │
-│  • Dispatches via delegate_task                              │
-│  • Verifies reports and maintains the session plan           │
-│  • Synthesizes results after each task                       │
+│  • Holds session context and intent                          │
+│  • Writes precise tickets (OBJECTIVE / CONSTRAINTS)         │
+│  • Delegates via MODE dispatch                               │
+│  • Verifies reports before closing tickets                   │
 └────────────────────────────┬─────────────────────────────────┘
-                             │ delegate_task()
-                             │ (ticket schema)
+                             │ ./next phase artifacts
+                             │ (.techne/loop/recall.txt, etc.)
                              ▼
 ┌──────────────────────────────────────────────────────────────┐
-│                      TECHNE (Workshop)                       │
+│                      TECHNE (Engine)                         │
 │                                                              │
-│  • Executes pipeline phases (RECALL → ... → REFRESH_CONTEXT) │
-│  • Enforces hard gates on every phase output                │
-│  • Scores runs (100-point EVAL)                              │
-│  • Records to Honcho + workshop memory                       │
-│  • Runs GRPO: classify → score → advantage → propose        │
+│  ./next loop:                                                │
+│    • RECALL  →  .techne/loop/recall.txt    (gate: WORKSHOP_) │
+│    • IMPLEMENT → .techne/loop/diff.txt     (gate: diff hdrs) │
+│    • VERIFY   →  .techne/loop/test_output.txt (gate: SHA)    │
+│    • CONCLUDE →  .techne/loop/conclude.txt  (gate: git)     │
+│    • DONE     →  (task closed)                              │
+│                                                              │
+│  Enforcement stack (live on every run):                     │
+│    phase_guard  — blocks writes without active pipeline      │
+│    audit_chain  — tamper-evident .techne/audit/chain.jsonl │
+│    watchdog    — cron detects stalled/tampered pipelines   │
+│                                                              │
+│  post_run_evolve():                                          │
+│    • RL reward → wikilink rebuild → context amortization    │
+│    • Batch mode: TrajectoryQueue for rl_batch_size > 1      │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -80,118 +93,236 @@ Techne is a **project-attached engineering workshop** that disciplines how code 
 **You plan. Techne builds. Never the two in one.**
 
 - **Host** = planner, dispatcher, verifier. Holds session context. Reads tickets and reports.
-- **Techne** = execution engine. Runs phases, enforces gates, scores, records memory. Calls no models.
-
-See [docs/host-integration-guide.md](docs/host-integration-guide.md) for the full operational contract.
+- **Techne** = execution engine. Runs `./next` phases, enforces gates, scores, records memory. Calls no models.
 
 ---
 
-## The 11-Phase Pipeline
+## The ./next Loop
+
+### Primary Pipeline: 5-Phase ./next Loop
 
 ```
-RECALL → IMPLEMENT → CONTEXT_GUARD → CRITIQUE → REVIEW → VERIFY → EVAL → RETRO → CONCLUDE → REFRESH_CONTEXT → DONE
+RECALL → IMPLEMENT → VERIFY → CONCLUDE → DONE
 ```
 
-| Phase | What it does | Gate |
-|-------|-------------|------|
-| **RECALL** | Search Honcho + workshop graph for relevant context, past mistakes, decisions | `WORKSHOP_CONTEXT:` header required |
-| **IMPLEMENT** | Subagent produces a unified diff | `@@`/`--- ` diff markers required |
-| **CONTEXT_GUARD** | Scope audit + docs/Honcho punch list closure | Punch list section required |
-| **CRITIQUE** | Risk analysis; can `BLOCK_HITL` for human judgment | Risk-level parsing |
-| **REVIEW** | Read-only correctness + security check | `HARD_FAIL` substring blocks pipeline |
-| **VERIFY** | Run tests, capture real stdout | SHA gate checks pass indicators |
-| **EVAL** | Deterministic 100-point score (5 dimensions) | Automatic |
-| **RETRO** | 7-question structured retrospective | ≥100 chars + phase references |
-| **CONCLUDE** | Honcho write-back, git commit, proof lines | Git state check for `.techne/context` |
-| **REFRESH_CONTEXT** | Rebuild workshop graph, generated docs | Script exit code |
-| **DONE** | Task closed | — |
+Every task passes through every phase. Phases are never skipped — not even for one-liners.
+
+| Phase | Artifact | What it does | Gate |
+|-------|----------|-------------|------|
+| **RECALL** | `.techne/loop/recall.txt` | Search wikilink graph + ledger for relevant context, past mistakes, decisions | `WORKSHOP_CONTEXT:` header required |
+| **IMPLEMENT** | `.techne/loop/diff.txt` | Unified diff for all file changes | `@@`/`--- ` diff markers required |
+| **VERIFY** | `.techne/loop/test_output.txt` | Run tests, capture real stdout | SHA gate checks pass indicators |
+| **CONCLUDE** | `.techne/loop/conclude.txt` | Honcho write-back, git commit, proof lines; triggers `post_run_evolve()` | Git state check for `.techne/context` |
+| **DONE** | — | Task closed; wikilink graph rebuilt | — |
 
 ### Phase Modes
 
-| Mode | RECALL | CONCLUDE | REFRESH_CONTEXT | Use for |
+| Mode | RECALL | CONCLUDE | Context rebuild | Use for |
 |------|--------|----------|-----------------|---------|
 | `full` (default) | ✅ | ✅ | ✅ | All code changes |
 | `fast` | ❌ | ❌ | ❌ | Review-only, no file edits |
 
 **There is no `fast` escape for code changes.** A typo fix still goes through the full pipeline.
 
-### HITL Recovery
+### Phase Artifact Paths
 
-When CRITIQUE triggers `BLOCK_HITL`, the pipeline pauses for human judgment. To resume:
+Each phase writes its artifact to `.techne/loop/`:
 
-```python
-p.unblock(task_id, "proceed")   # or "debug"
-# Then submit the NEXT phase (not the blocked one)
+```
+.techne/loop/
+├── state.json        # current task + phase (source of truth)
+├── recall.txt        # RECALL output
+├── diff.txt          # IMPLEMENT output (unified diff)
+├── test_output.txt   # VERIFY output (real test stdout)
+└── conclude.txt      # CONCLUDE output
+```
+
+### Running the Loop
+
+```bash
+# Initialize (one-time per project)
+mkdir -p .techne/loop .techne/audit .techne/memory .techne/events
+echo '{"task_id":"my-task-1","phase":"RECALL"}' > .techne/loop/state.json
+
+# Advance one phase (after writing the current phase's artifact)
+python3 /path/to/techne/scripts/next.py
+
+# Or symlink for convenience
+ln -s /path/to/techne/scripts/next.py ./.next
+./next
+```
+
+### Legacy Pipeline (Deprecated)
+
+The old 11-phase `OrchestratorLoop` still exists in `harness/orchestrator_loop.py` but is **not recommended**. Use `./next` for all new work.
+
+The 11-phase sequence was: `RECALL → IMPLEMENT → CONTEXT_GUARD → CRITIQUE → REVIEW → VERIFY → EVAL → RETRO → CONCLUDE → REFRESH_CONTEXT → DONE`
+
+---
+
+## Enforcement Stack
+
+Three independent enforcement mechanisms work together to guarantee pipeline integrity.
+
+### phase_guard
+
+`plugins/techne/plugin.yaml` + `harness/plugins/phase_guard.py` — blocks writes that violate phase discipline:
+
+- **No active pipeline**: Blocks all writes to project source files. Agent must call `./next` first.
+- **Wrong phase artifact**: Blocks writes to other phase's artifact files.
+- **Audit dir**: Blocks all writes to `.techne/audit/` — the agent must not touch the audit trail.
+- **Blocked log**: Every blocked write is appended to `.techne/audit/blocked.log`.
+
+The Hermes plugin (`pre_tool_call` hook) activates automatically when a `.techne/` directory is detected in the project root.
+
+### Audit Chain
+
+`.techne/audit/chain.jsonl` — a tamper-evident, append-only log with SHA-256 hash chaining:
+
+- Every entry seals with `entry_hash = SHA256(seq + timestamp + task_id + phase + gates + summary + prev_hash)`
+- First entry uses `prev_hash = "0" * 64` (genesis)
+- Tampering with any past entry breaks the chain and is detectable by `watchdog`
+- Each pipeline phase produces exactly one audit entry
+
+### Watchdog
+
+`scripts/watchdog.py` — runs via cron every 5 minutes:
+
+```
+*/5 * * * * cd /project && python3 /path/to/techne/scripts/watchdog.py
+```
+
+Exit codes:
+| Code | Meaning |
+|------|---------|
+| 0 | Healthy |
+| 1 | **STALL** — `state.json` not updated within `phase_timeout_min` (default 30 min) |
+| 2 | **TAMPER** — `chain.jsonl` hash chain is broken |
+| 3 | **SKIP** — Phase advanced but no matching audit entry |
+| 4 | **ORPHAN** — No `state.json` but recent task dirs exist |
+
+### Enforcement Eval Suite
+
+`tests/evals/graders/enforcement_grader.py` — evaluates phase_guard, audit_chain, and watchdog behavior deterministically. Run with:
+
+```bash
+python3 tests/evals/run_evals.py enforcement
 ```
 
 ---
 
-## Workshop Garage
+## Context Amortization
 
-The `.techne/` directory is your project's workshop shell. It lives **in the repo**, not in the skill directory — each project has its own.
+Context amortization means **no agent starts with a blank repo**. Every `RECALL` begins with a deterministic context pack derived from the current repo state — no model call, no tokens spent on rediscovery.
 
-```
-.techne/
-├── config.yaml              # Project name, context glob, generated dir
-├── context/
-│   ├── root.CONTEXT.md      # Repo-level context
-│   ├── harness.CONTEXT.md   # Techne internals context
-│   ├── memory.CONTEXT.md     # Memory system context
-│   └── project_digest.md    # Auto-generated project overview
-├── generated/
-│   ├── context_index.json   # File-to-subsystem graph
-│   ├── subsystem_map.json   # Subsystem ownership
-│   └── change_log.json      # What changed in last run
-├── memory/
-│   ├── wikilinks.json       # Knowledge graph (files + mistakes + decisions)
-│   ├── wikilinks.md         # Human-readable mirror
-│   └── prompt_variants.json # RL-proposed prompt variants
-├── proposals/               # GRPO-proposed changes awaiting ratification
-├── scripts/
-│   ├── context_index.py     # Build the search index
-│   ├── context_search.py     # Graph-aware retrieval at RECALL
-│   └── refresh_generated_docs.py  # Refresh stale generated docs
-└── tasks/                   # Per-task run artifacts
-```
+### Context Files (`.techne/context/`)
 
-### Keeping Knowledge Fresh
+| File | What it contains | Generated by |
+|------|-----------------|-------------|
+| `project_digest.md` | Project name, detected stack, top-level layout, README lead | `context_build.py` |
+| `commands.md` | Test/build/lint commands from `package.json`, `Makefile`, `pyproject.toml` | `context_build.py` |
+| `file_roles.md` | Top-level dirs grouped with one-line roles + file counts | `context_build.py` |
+| `risk_boundaries.md` | HITL boundaries + sensitive areas detected in the tree | `context_build.py` |
+| `*.CONTEXT.md` | Human-written or enriched context (preserved across runs) | Human or enrichment layer |
 
-The `REFRESH_CONTEXT` phase runs after every `CONCLUDE`. It:
-
-1. Rebuilds `generated/context_index.json` from the current codebase
-2. Updates `generated/subsystem_map.json` if files changed
-3. Flags stale authored docs in `generated/stale_docs.json`
-4. Rebuilds the wikilink graph connecting files → subsystems → mistakes
-
-Without REFRESH_CONTEXT, context grows stale. With it, RECALL surfaces what actually matters — not just what's nearby.
-
-### Memory Architecture
+### How It Works
 
 ```
-RECAST TIME (before IMPLEMENT):
-  ┌─────────────────────────────────────────────────────┐
-  │ RECALL Prompt built by _build_user_context()        │
-  │  • Task title + tags                                │
-  │  • Honcho context (via honcho_search API)           │
-  │  • Workshop retrieval packet (via context_search.py)│
-  │    - Relevant .CONTEXT.md docs                      │
-  │    - Relevant files from index                       │
-  │    - Related subsystems                              │
-  │    - Past mistakes/lessons/decisions                │
-  │  • Latest eval trends                               │
-  └─────────────────────────────────────────────────────┘
+ensure_context()  ←  called at RECALL start
+  • Computes context hash from repo state (stack, top-level files, commands)
+  • If hash changed since last run → regenerates the 4 deterministic files
+  • If hash unchanged → uses cached files (zero re-derivation)
+  • Human-owned files (risk_boundaries.md, docs/) are NEVER overwritten
 
-CONCLUDE TIME (after run completes):
-  ┌─────────────────────────────────────────────────────┐
-  │ Auto-Update Triggers                                 │
-  │  1. honcho_conclude() — save durable facts          │
-  │  2. mistakes.py — log gate failures (if any)       │
-  │  3. reward.py — log CLEAN/SOLVED (if applicable)   │
-  │  4. reward_log.record() — composite reward         │
-  │  5. post_run_evolve() — stage prompt/gate proposals│
-  │  6. REFRESH_CONTEXT — rebuild generated docs       │
-  └─────────────────────────────────────────────────────┘
+conclude_context()  ←  called at DONE
+  • Updates docs index for files changed in this run
+  • Marks context as current for next ensure_context() cycle
 ```
+
+### Project-Root Awareness
+
+All scripts (`next.py`, `phase_guard`, `watchdog`, `audit_chain`) walk up from `cwd` to find the nearest `.techne/` directory. This means the project root is wherever `.techne/` lives — no configuration required.
+
+---
+
+## Wikilink Knowledge Graph
+
+`scripts/knowledge_graph.py` — connects mistakes, ledger entries, tasks, files, and subsystems into a queryable graph. Rebuilt on every `CONCLUDE` (via `post_run_evolve` + `./next CONCLUDE`).
+
+### Node Types
+
+Files, tasks, mistakes, ledger entries, subsystems, and skills are all nodes. Edges encode relationships (file → subsystem, task → file, mistake → related task).
+
+### Query Commands
+
+```bash
+python3 scripts/knowledge_graph.py status              # node/edge counts, RL summary
+python3 scripts/knowledge_graph.py phases             # phase outcome breakdown
+python3 scripts/knowledge_graph.py mistakes           # mistake recurrence
+python3 scripts/knowledge_graph.py skill <name>      # skill graph
+python3 scripts/knowledge_graph.py file <path>        # file graph (project mode)
+python3 scripts/knowledge_graph.py search <term>      # search nodes
+python3 scripts/knowledge_graph.py rewards            # RL reward history
+```
+
+### Techne's Own Graph
+
+The techne repo's own graph has **4000+ nodes**. Run `python3 scripts/knowledge_graph.py status` in the techne repo to explore it.
+
+---
+
+## EVAL System
+
+`harness/evaluator.py` — deterministic scoring after every pipeline completion (pass or fail). No model call.
+
+### 8 Dimensions (120 raw points → weighted 100pt scale)
+
+| Dimension | Raw max | Weight | Focus |
+|-----------|---------|--------|-------|
+| Gate Compliance | 20 | 1.2 | Phase gates passed without workaround |
+| Verification Integrity | 20 | 1.2 | Tests ran and actually pass |
+| Process Discipline | 20 | 1.0 | All phases followed in order |
+| Review Quality | 20 | 1.0 | Diff review thoroughness |
+| Retro Value | 20 | 0.8 | Retrospective insight quality |
+| RL/GRPO Contribution | 15 | 0.8 | RL event log completeness |
+| Enforcement Compliance | 15 | 1.0 | phase_guard blocks respected |
+| Execution Efficiency | 10 | 0.6 | Pipeline completed in reasonable time |
+
+### Grades
+
+| Score | Grade |
+|-------|-------|
+| ≥90 | EXCELLENT |
+| ≥75 | GOOD |
+| ≥60 | FAIR |
+| ≥40 | POOR |
+| <40 | CRITICAL |
+
+### Regression Detection
+
+Compares last N eval scores against N previous runs. Severity: `none` / `warning` / `critical`.
+
+### Threshold Gating
+
+- `PASS` — score ≥ 75
+- `WARN` — score 60–74 (logged but task continues)
+- `BLOCK` — score < 60 (requires human sign-off to proceed)
+
+### Eval Suites
+
+Run all evals or pick a suite:
+
+```bash
+python3 tests/evals/run_evals.py              # all suites
+python3 tests/evals/run_evals.py router       # skill routing
+python3 tests/evals/run_evals.py gates        # gate enforcement
+python3 tests/evals/run_evals.py intent       # intent classification
+python3 tests/evals/run_evals.py pipeline     # ./next loop correctness
+python3 tests/evals/run_evals.py rl            # RL/GRPO engine
+python3 tests/evals/run_evals.py enforcement   # phase_guard, audit_chain, watchdog
+```
+
+Baseline comparison: `tests/evals/` contains baseline expectation files. Current eval suites: **86/87 passing** (1 pre-existing router issue).
 
 ---
 
@@ -205,113 +336,57 @@ CONCLUDE TIME (after run completes):
 ┌─────────────────────────────────────────────────────────────┐
 │                    GRPO CYCLE                               │
 │                                                             │
-│  1. CLASSIFY — Group runs by task type (auth, ui, api…)   │
+│  1. CLASSIFY — Group runs by task type (auth, ui, api…)  │
 │                    ↓                                        │
-│  2. SCORE — EVAL produces 100-point score per run         │
+│  2. SCORE — EVAL produces 100-point score per run        │
 │                    ↓                                        │
 │  3. ADVANTAGE — advantage = score - mean(scores_in_group) │
 │                 (requires ≥2 runs in group to compute)     │
 │                    ↓                                        │
-│  4. PROPOSE — High-advantage variants → proposals          │
+│  4. PROPOSE — High-advantage variants → proposals         │
 │               • prompt_evolution: Propose prompt variants   │
 │               • grpo: propose_skill_edits() for skills     │
+│               • propose_framework_edits() — framework self-improvement │
 │               • gate_evolution: Pattern-based gate tweaks   │
 │                    ↓                                        │
 │  5. RATIFY — Human reviews and approves/rejects            │
 │               (via apply_retro.py — never auto-applied)    │
 │                    ↓                                        │
-│  6. APPLY — Approved changes written to skills/*.md        │
+│  6. APPLY — Approved changes written to skills/*.md       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ### Two Comparison Axes
-
-GRPO tracks advantage on two independent axes:
 
 | Axis | What it compares | Key file |
 |------|-----------------|----------|
 | **Prompt variants** | `v1_strict` vs `v2_pragmatic` vs `v3_contextual` | `.techne/memory/prompt_variants.json` |
 | **Skills** | `implementer` vs `diagnose` vs `tdd` vs task-type matches | `skills/*.md` |
 
-> **Safety clamp:** GRPO proposals never auto-apply. Every proposed change goes through `apply_retro.py` for human ratification. The `auto_apply_pending()` function exists but is intentionally not wired to anything.
+### post_run_evolve() — DONE phase hook
 
-### What Got Built (Track B)
+Called automatically at `CONCLUDE` (before `DONE`):
 
-- `harness/grpo.py` — GRPO proposal engine (proposes to skills + prompts)
-- `harness/classify.py` — Task-type classifier from `discipline`/`tags`
-- `RewardLog.compute_batch_advantages()` — Group-relative scoring
-- `RewardLog.high_advantage_variants()` / `high_advantage_skills()` — Winner detection
-- `harness/trajectory_queue.py` — Multi-trajectory queue for variant comparison
-- `harness/reward_log.py` — SQLite-backed reward recording with `skill` field
+1. **RL reward log** — composite score recorded to `.techne/memory/rewards.db`
+2. **Wikilink rebuild** — `build_graph()` rebuilds the knowledge graph
+3. **Context amortization** — `conclude_context()` finalizes the context pack
+4. **GRPO proposals** — staged to `.techne/proposals/` for human ratification
 
----
+### Batch Mode
 
-## Receptionist Pattern
+When `rl_batch_size > 1` in config, `TrajectoryQueue` holds multiple trajectories for group-relative scoring. The RL event log (`.techne/events/rl.jsonl`) records every RL event for post-hoc analysis.
 
-The **host agent operates as a Receptionist**. Your job is to hold context, understand intent, write precise tickets, delegate execution, verify reports, and maintain the running plan.
+### Knowledge Graph CLI
 
-### The Cycle
-
-```
-INTAKE → CLASSIFY → PLAN → TICKET → DISPATCH → VERIFY REPORT → UPDATE PLAN → next ticket or DONE → SYNTHESIZE
+```bash
+python3 scripts/knowledge_graph.py rewards  # RL reward history from rewards.db
 ```
 
-### The Three Modes (post-P5.1 collapse)
+### RL Event Log
 
-| Mode | Purpose | When to use |
-|------|---------|-------------|
-| **EXPLORE** | Build situational awareness of the current codebase | You don't have an accurate map of relevant files |
-| **SCOUT** | External research / feasibility for unknown APIs | The answer isn't in the codebase |
-| **IMPLEMENT** | ALL code changes — net-new, wiring, bug fixes, config edits | BUILD and DEBUGGING absorbed here |
+`.techne/events/rl.jsonl` — every RL cycle event (classify, score, advantage, propose) is appended with a timestamp. Use for audit and regression analysis.
 
-### Ticket Schema
-
-Every `delegate_task` call uses this exact shape:
-
-```yaml
-MODE: [EXPLORE | SCOUT | IMPLEMENT]
-OBJECTIVE: <1-2 sentences, single outcome>
-CONTEXT: <curated file paths/excerpts — NEVER the whole repo>
-CONSTRAINTS: <architecture rules, layer boundaries, do-not-touch>
-DONE_WHEN: <concrete, checkable verification criteria>
-OUTPUT_FORMAT: <diff | report | both>
-FIX_OF: <optional — fill for fix tickets, omit for net-new work.
-         When present, subagent MUST include: root cause statement,
-         the specific failure being fixed, regression risk note.>
-```
-
-### Automatic Dispatch Rule
-
-> **If the request will result in any file being created, edited, or deleted, dispatch `MODE: IMPLEMENT`.**
-
-This is absolute. The only work that stays outside Techne's pipeline is read-only analysis, research, or planning that will never produce a diff.
-
-### Verification Protocol
-
-After each subagent returns:
-
-1. **Read the report** — does it match `DONE_WHEN`?
-2. **Run tests** — confirm existing tests still pass
-3. If tests fail due to **intentional contract changes** → fix assertions (verification)
-4. If tests fail due to **implementation bugs** → write `FIX_OF` ticket, do NOT patch
-5. If report is ambiguous → re-ticket with tighter constraints (max 1 retry)
-
-**You never edit implementation code directly.** The one exception is updating test assertions for intentional contract changes.
-
-### ReceptionistEnforcer
-
-`harness/receptionist_enforcer.py` enforces dispatch protocol rules mechanically:
-- Mode exclusivity (one mode per ticket)
-- One retry max
-- Verify-before-close
-- `FIX_OF` requirements
-
-Call it explicitly at your dispatch points:
-```python
-receptionist_enforcer.can_dispatch(ticket)     # before delegate_task
-receptionist_enforcer.mark_verified(ticket_id)  # before ticket close
-receptionist_enforcer.mark_retry(ticket_id)     # on rejected report
-```
+> **Safety clamp:** GRPO proposals never auto-apply. Every proposed change goes through `apply_retro.py` for human ratification.
 
 ---
 
@@ -357,7 +432,7 @@ generated_dir: .techne/generated
 
 ```bash
 cd your-project/
-python .techne/scripts/context_index.py
+python3 .techne/scripts/context_index.py
 ```
 
 This builds `.techne/generated/context_index.json` — the searchable graph for RECALL.
@@ -366,96 +441,85 @@ This builds `.techne/generated/context_index.json` — the searchable graph for 
 
 ```bash
 cd techne/
-python tests/test_workshop_foundation.py      # expect 5/5
-python tests/test_orchestrator_driver.py      # expect 52/52
+python3 tests/test_workshop_foundation.py      # expect 5/5
+python3 tests/test_orchestrator_driver.py      # expect 52/52
 ```
 
 ### 6. Your first task
 
-```python
-from task_db import TaskDB
-from orchestrator_loop import OrchestratorLoop
+```bash
+# Create the task state (phase = RECALL)
+mkdir -p .techne/loop .techne/audit .techne/memory .techne/events
+echo '{"task_id":"my-task-1","phase":"RECALL"}' > .techne/loop/state.json
 
-db = TaskDB("techne/tasks.db")
-tid = db.create_task(
-    title="Add login button to header",
-    description="...",
-    tags=["ui", "p1"],
-    phase_mode="full"   # default; omit for review-only
-)
+# Write your RECALL artifact
+echo "WORKSHOP_CONTEXT:
+- File: src/auth.py (authentication module)
+- Past mistake: forgot to hash passwords in A7
+- Decision: use argon2 for password hashing" > .techne/loop/recall.txt
 
-loop = OrchestratorLoop(db)
-prompt = loop.get_prompt(tid, "RECALL")
-# Run prompt as your turn, then:
-result = loop.submit(tid, "RECALL", your_output)
+# Advance to IMPLEMENT
+python3 /path/to/techne/scripts/next.py
+
+# Write your IMPLEMENT artifact (unified diff)
+echo "--- a/src/auth.py
++++ b/src/auth.py
+@@ -10,6 +10,8 @@ def hash_password(password):
++    import argon2
++    return argon2.PasswordHasher().hash(password)" > .techne/loop/diff.txt
+
+# Advance to VERIFY
+python3 /path/to/techne/scripts/next.py
+
+# Write VERIFY output (real test run)
+python -m pytest tests/auth_test.py > .techne/loop/test_output.txt
+
+# Advance to CONCLUDE
+python3 /path/to/techne/scripts/next.py
+
+# Write CONCLUDE artifact
+echo "Git commit: a1b2c3d
+Proof lines: src/auth.py:12-13" > .techne/loop/conclude.txt
+
+# Advance to DONE (triggers post_run_evolve)
+python3 /path/to/techne/scripts/next.py
 ```
 
 ---
 
 ## Project Status
 
-### Tracks A & B — Complete
+### Current State
 
-**Track A — Workshop Knowledge Loop:**
-```
-A1. Resolve memory-location decision                   ✅
-A2. Wire REFRESH_CONTEXT as a real pipeline phase      ✅
-A3. Connect entries to subsystem nodes                 ✅
-A4. Add task nodes + task-triggered edges              ✅
-A5. CONCLUDE git-state scoping fix                     ✅
-A6. HITL re-entry state machine fix                   ✅
-A7. Honcho proof-verification (checkpoint.py)         ✅
-A8. Adapters for symbol/route/schema/test node types   (deferred)
-```
+| Area | Status |
+|------|--------|
+| Pipeline | 781 tests, `./next` loop primary, 5 phases |
+| Enforcement | phase_guard + audit_chain + watchdog all live |
+| RL | Closed loop with framework skills, batch mode, event log |
+| EVAL | 8 dimensions, 6 eval suites, baseline comparison |
+| Context | Amortization deterministic, project-root-aware |
+| Wikilinks | Rebuilt on every DONE, 4000+ nodes in techne's own graph |
+| Eval suites | 86/87 passing (1 pre-existing router issue) |
 
-**Track B — GRPO:**
-```
-B0. Fix skill-write path before scoring               ✅
-B1. Task-type classifier from discipline/tags          ✅
-B2. Group-based scoring / advantage computation        ✅
-B3. Policy update — write through B0's path            ✅
-B4. Multi-trajectory queue                             ✅
-```
+### What Got Built
 
-### Post-Build Audit (Patch 001 — 2026-06-21)
+**Framework Skills Self-Improvement:**
+- `propose_framework_edits()` — GRPO can propose edits to Techne's own skill files
+- Wikilink rebuild on every DONE via `post_run_evolve`
+- `TrajectoryQueue` for batch RL (rl_batch_size > 1)
+- RL event log at `.techne/events/rl.jsonl`
 
-Five issues found and resolved after verifying all built code:
+**Production Enforcement:**
+- phase_guard: Hermes plugin, `pre_tool_call` hook, auto-activation on `.techne/` detection
+- Audit chain: SHA256 hash-chained `chain.jsonl`
+- Watchdog: cron-detectable stall/tamper/skip/orphan conditions
+- Blocked writes: `.techne/audit/blocked.log`
 
-| Patch | Severity | Finding | Status |
-|-------|----------|---------|--------|
-| P1 | 🔴 | GRPO `compute_batch_advantages()` never called on normal pipeline path | ✅ Fixed |
-| P2 | 🔴 | `prompt_variants.json` shared file with no test isolation | ✅ Fixed |
-| P3 | 🟡 | Honcho gate shipped without updating 3 test files | ✅ Fixed |
-| P4 | 🟡 | GRPO only targets prompts, not skills | ✅ Fixed |
-| P5 | 🟢 | Receptionist handoff had no auto-trigger rule | ✅ Fixed |
-
-### Test Suite
-
-```
-34 test files
-525+ test functions
-65/65 eval suite (deterministic gates + router + intent)
-```
-
-### What's Working
-
-- Complete 11-phase pipeline with real gates on every phase
-- Deterministic EVAL (100-point, no model call needed)
-- Phase-mode fast/full for review-only vs code-change tasks
-- HITL recovery with proper state machine handling
-- Workshop retrieval in RECALL (graph-aware context search)
-- GRPO under human ratification (propose → ratify → apply firewall)
-- Structured RECALL contract (`HONCHO_CONTEXT` + `WORKSHOP_CONTEXT` + `LESSONS` + `FOCUS`)
-- CONCLUDE git-state gate (`.techne/context` must be committed)
-
-### What's Next (Build Guide §5-6)
-
-- Workshop health check command (`techne workshop health`)
-- Auto-run context index rebuild after every CONCLUDE
-- Per-agent prompt evolution (not just implementer)
-- Value function to predict EVAL from early-phase signals
-- Parallel task execution for independent tasks
-- Post-DONE deploy/PR hook
+**Context Amortization:**
+- `ensure_context()` at RECALL — deterministic, zero model call
+- `conclude_context()` at DONE — finalizes context for next cycle
+- Context hash freshness tracking — regenerates only when repo state changes
+- Human-owned files preserved (risk_boundaries.md, docs/)
 
 ---
 
@@ -466,10 +530,14 @@ Five issues found and resolved after verifying all built code:
 | **[SKILL.md](SKILL.md)** | **Start here.** Skill router + full pipeline reference |
 | **[INSTALL.md](INSTALL.md)** | Install options, verification steps, Pipeline API |
 | **[COMPONENTS.md](COMPONENTS.md)** | Every skill, agent, gate, and module catalog |
-| **[docs/host-integration-guide.md](docs/host-integration-guide.md)** | **Host agent contract.** Two-layer architecture, dispatch protocol, quick reference |
-| **[docs/plans/techne-workshop-garage.md](docs/plans/techne-workshop-garage.md)** | Workshop vision: memory architecture, GRPO integration, build plan |
-| **[docs/plans/techne-workshop-build-guide.md](docs/plans/techne-workshop-build-guide.md)** | Operational audit: what's real, what to build, exact steps |
-| **[docs/plans/techne-build-guide-patch-001.md](docs/plans/techne-build-guide-patch-001.md)** | Post-build audit: 5 live bugs found, all fixed |
+| **[docs/host-integration-guide.md](docs/host-integration-guide.md)** | **Host agent contract.** Two-layer architecture, dispatch protocol |
+| **[docs/enforcement-operations.md](docs/enforcement-operations.md)** | phase_guard, audit_chain, watchdog operations |
+| **[docs/plans/2026-06-23-production-enforcement.md](docs/plans/2026-06-23-production-enforcement.md)** | Enforcement design and implementation plan |
+| **[scripts/next.py](scripts/next.py)** | The `./next` loop driver |
+| **[scripts/knowledge_graph.py](scripts/knowledge_graph.py)** | Wikilink graph query CLI |
+| **[harness/context_build.py](harness/context_build.py)** | Context amortization (ensure_context, conclude_context) |
+| **[harness/evaluator.py](harness/evaluator.py)** | 8-dimension EVAL system |
+| **[harness/plugins/phase_guard.py](harness/plugins/phase_guard.py)** | phase_guard enforcement logic |
 
 ### Key References
 
@@ -479,7 +547,6 @@ references/
 ├── orchestrator-pipeline-fixes.md            # RECALL/CONCLUDE/RETRO fixes
 ├── orchestrator-pipeline-modification.md     # Adding new phases
 ├── rl-pipeline-notes.md                      # Field notes from real runs
-├── receptionist-protocol.md                   # Full Receptionist protocol
 └── hook-gate-bridge.md                      # Hermes pre_tool_call → Techne gates
 ```
 

@@ -19,17 +19,24 @@ from pathlib import Path
 
 EVALS_DIR = Path(__file__).parent
 sys.path.insert(0, str(EVALS_DIR / "graders"))
+# Add repo root for harness package imports (import harness.grpo)
+REPO_ROOT = EVALS_DIR.parent.parent
+sys.path.insert(0, str(REPO_ROOT))
 
 from router_grader import run as run_router
 from gate_grader import run as run_gates
 from intent_grader import run as run_intent
 from pipeline_grader import run as run_pipeline
+from rl_grader import run as run_rl
+from enforcement_grader import run as run_enforcement
 
 SUITE_MAP = {
     "router": run_router,
     "gates": run_gates,
     "intent": run_intent,
     "pipeline": run_pipeline,
+    "rl": run_rl,
+    "enforcement": run_enforcement,
 }
 
 PASS = "\033[92mPASS\033[0m"
@@ -73,6 +80,9 @@ def _print_summary(results: list[dict], baseline: dict | None):
     print("EVAL RESULTS")
     print("=" * 64)
 
+    critical_suites = []
+    warning_suites = []
+
     for r in results:
         if r.get("skipped"):
             icon = SKIP
@@ -83,21 +93,40 @@ def _print_summary(results: list[dict], baseline: dict | None):
             pct = 100 * r["passed"] // max(r["total"], 1)
             line = f"  {icon} {r['suite']:20} {r['passed']}/{r['total']} ({pct}%)"
         else:
-            icon = FAIL
             pct = 100 * r["passed"] // max(r["total"], 1)
-            line = f"  {icon} {r['suite']:20} {r['passed']}/{r['total']} ({pct}%) - {r['failed']} failed"
+            fail_pct = 100 * r["failed"] // max(r["total"], 1)
+            if fail_pct > 50:
+                icon = "\033[91mCRITICAL\033[0m"
+                severity_label = "🔴 CRITICAL"
+                critical_suites.append(r["suite"])
+                line = f"  {icon} {r['suite']:20} {r['passed']}/{r['total']} ({pct}%) - {r['failed']} failed"
+            else:
+                icon = "\033[93mWARNING\033[0m"
+                severity_label = "⚠️ WARNING"
+                warning_suites.append(r["suite"])
+                line = f"  {icon} {r['suite']:20} {r['passed']}/{r['total']} ({pct}%) - {r['failed']} failed"
 
         print(line)
 
         if r.get("failures"):
             for f in r["failures"]:
-                print(f"      X {f}")
+                # Add severity label to each failure line
+                fail_severity = "🔴" if (100 * r["failed"] // max(r["total"], 1)) > 50 else "⚠️"
+                print(f"      {fail_severity} {f}")
 
     total_p = sum(r["passed"] for r in results)
     total_t = sum(r["total"] for r in results)
     total_pct = 100 * total_p // max(total_t, 1) if total_t else 0
 
     print(f"\nOVERALL: {total_p}/{total_t} ({total_pct}%)")
+
+    # Severity summary
+    if critical_suites:
+        print(f"\n🔴 CRITICAL: {', '.join(critical_suites)}")
+    if warning_suites:
+        print(f"⚠️ WARNING: {', '.join(warning_suites)}")
+    if not critical_suites and not warning_suites:
+        print("\n✅ ALL PASS")
 
     if baseline:
         baseline_total = baseline.get("total_passed", 0)
@@ -118,14 +147,14 @@ def main():
     parser.add_argument("--verbose", "-v", action="store_true")
     parser.add_argument("--l3", action="store_true", help="No-op: L3 is host-judged (run via host, not CI)")
     parser.add_argument("--save-baseline", action="store_true")
-    parser.add_argument("--suite", choices=["router", "gates", "intent", "pipeline"])
+    parser.add_argument("--suite", choices=["router", "gates", "intent", "pipeline", "rl", "enforcement"])
     args = parser.parse_args()
 
     print("=" * 64)
     print("TECHNE EVALS")
     print("=" * 64)
 
-    suites_to_run = [args.suite] if args.suite else ["router", "gates", "intent", "pipeline"]
+    suites_to_run = [args.suite] if args.suite else ["router", "gates", "intent", "pipeline", "rl", "enforcement"]
     results = []
 
     for suite_name in suites_to_run:
