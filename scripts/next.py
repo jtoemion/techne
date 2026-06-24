@@ -38,6 +38,7 @@ from datetime import datetime, timezone
 
 # ── Configurable scope limit (read from .techne/config.yaml) ─────────────────
 _SCOPE_LIMIT = 10
+_STRICT_NODES = False  # Set via --strict-nodes flag
 
 def _load_config() -> None:
     """Read scope_limit from .techne/config.yaml if present."""
@@ -305,6 +306,42 @@ def _check_verify_gates(path: Path) -> list[GateResult]:
             "pass signal found" if has_pass else "no pass signal detected",
         ))
 
+    # ── Node-discipline gate (soft by default; hard block with --strict-nodes) ──
+    try:
+        node_gate_script = _HERE / "node_gate.py"
+        if node_gate_script.exists():
+            import subprocess
+            node_result = subprocess.run(
+                [sys.executable, str(node_gate_script),
+                 "--project-dir", str(Path.cwd()), "--json"],
+                capture_output=True, text=True, timeout=60,
+            )
+            if node_result.returncode == 0:
+                results.append(GateResult(
+                    "node discipline",
+                    True,
+                    "all module boundaries respected",
+                ))
+            else:
+                try:
+                    import json as _json
+                    report = _json.loads(node_result.stdout)
+                    high = report.get("counts", {}).get("high", 0)
+                    total = report.get("counts", {}).get("total", 0)
+                    msg = f"{high} HIGH / {total} total violation(s)"
+                    if _STRICT_NODES and high > 0:
+                        results.append(GateResult("node discipline", False, msg))
+                    else:
+                        results.append(GateResult("node discipline", True, msg))
+                except Exception:
+                    results.append(GateResult(
+                        "node discipline", True, "scan completed (parse warnings)"
+                    ))
+    except Exception as exc:
+        results.append(GateResult(
+            "node discipline", True, f"scan skipped ({exc})"
+        ))
+
     return results
 
 
@@ -554,7 +591,16 @@ def main() -> int:
         "--force", action="store_true",
         help="Allow --init to overwrite existing state.json"
     )
+    parser.add_argument(
+        "--strict-nodes", action="store_true",
+        help="Block VERIFY phase if node-discipline violations found (default: soft report)"
+    )
     args, remaining = parser.parse_known_args()
+
+    # Propagate strict-nodes to gate functions
+    if args.strict_nodes:
+        global _STRICT_NODES
+        _STRICT_NODES = True
 
     if args.help_phases:
         print("Techne ./next pipeline phases:\n")
