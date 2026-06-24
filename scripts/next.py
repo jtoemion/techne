@@ -369,12 +369,111 @@ def _phase_requirements(phase: str) -> list[str]:
     return reqs.get(phase, [f"Complete the {phase} phase, write artifact, call ./next"])
 
 
+# Phase artifact map (mirrors phase_guard.py — kept to avoid import coupling)
+_PHASE_ARTIFACT_MAP = {
+    "RECALL":     "recall.txt",
+    "IMPLEMENT":  "diff.txt",
+    "VERIFY":     "test_output.txt",
+    "CONCLUDE":   "conclude.txt",
+}
+
+
 def format_footer(phase: str, results: list[GateResult]) -> str:
     """Print a compact line suitable for tool output summary."""
     passed = sum(1 for r in results if r.passed)
     total = len(results)
     symbol = _ok("") if passed == total else _fail("")
     return f"  {symbol} {phase}: {passed}/{total} gates passed"
+
+
+def format_phase_report(state: LoopState, old_phase: str, results: list[GateResult],
+                        cwd: Path) -> str:
+    """Generate a detailed phase completion report for the user.
+
+    Printed after successful phase transition. The agent should forward
+    this to the user as a structured summary.
+    """
+    artifact_name = _PHASE_ARTIFACT_MAP.get(old_phase, "N/A")
+    artifact_path = cwd / ".techne" / "loop" / artifact_name
+    artifact_size = artifact_path.stat().st_size if artifact_path.exists() else 0
+    artifact_preview = ""
+    if artifact_path.exists():
+        artifact_lines = artifact_path.read_text(
+            encoding="utf-8", errors="replace"
+        ).splitlines()
+        artifact_preview = "\n".join(artifact_lines[:5]) if artifact_lines else "(empty)"
+
+    gates_pass = sum(1 for r in results if r.passed)
+    gates_total = len(results)
+    gate_lines = "\n".join(
+        f"  {'✓' if r.passed else '✗'} {r.name}: {r.detail}"
+        for r in results
+    )
+
+    next_reqs = _phase_requirements(state.phase)
+    next_reqs_text = "\n".join(f"  • {r}" for r in next_reqs)
+
+    lines = [
+        "",
+        "=" * 64,
+        f"  PHASE COMPLETE — {old_phase} → {state.phase}",
+        "=" * 64,
+        f"  Task:    {state.task_id}",
+        f"  Project: {cwd.name}",
+        f"  Time:    {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
+        "",
+        "  GATES:",
+        gate_lines,
+        f"  ({gates_pass}/{gates_total} passed)",
+        "",
+        "  ARTIFACT:",
+        f"    Path: .techne/loop/{artifact_name}",
+        f"    Size: {artifact_size} bytes",
+    ]
+
+    if artifact_preview:
+        lines.extend([
+            "    Preview:",
+            f"      {artifact_preview[:200]}",
+        ])
+
+    # Phase-specific metrics
+    if old_phase == "VERIFY" and artifact_path.exists():
+        text = artifact_path.read_text(encoding="utf-8", errors="replace")
+        passed_m = re.search(r"(\d+)\s+passed", text)
+        failed_m = re.search(r"(\d+)\s+failed", text)
+        if passed_m or failed_m:
+            p = passed_m.group(1) if passed_m else "?"
+            f = failed_m.group(1) if failed_m else "0"
+            lines.append(f"  TESTS: {p} passed, {f} failed")
+
+    if old_phase == "IMPLEMENT" and artifact_path.exists():
+        text = artifact_path.read_text(encoding="utf-8", errors="replace")
+        added = text.count("\n+") - text.count("\n+++")
+        removed = text.count("\n-") - text.count("\n---")
+        files_changed = len(re.findall(r"^\+\+\+ b/", text, re.MULTILINE)) if text.strip() else 0
+        if added or removed or files_changed:
+            lines.append(f"  DIFF: {files_changed} file(s), +{added} -{removed} lines")
+
+    if old_phase == "CONCLUDE" and artifact_path.exists():
+        text = artifact_path.read_text(encoding="utf-8", errors="replace")
+        honcho_match = re.search(r"HONCHO:\s*(\S+)", text)
+        if honcho_match:
+            lines.append(f"  HONCHO ID: {honcho_match.group(1)}")
+
+    lines.extend([
+        "",
+        "  NEXT PHASE:",
+        f"    {state.phase}",
+        "",
+        "  REQUIREMENTS:",
+        next_reqs_text,
+        "",
+        "=" * 64,
+        "",
+    ])
+
+    return "\n".join(lines)
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -507,6 +606,10 @@ def main() -> int:
             except Exception:
                 # Context conclude is best-effort
                 pass
+
+        # Print detailed phase report for the user
+        report = format_phase_report(state, old_phase, results, cwd)
+        print(report)
 
         return 0
     else:

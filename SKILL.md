@@ -14,6 +14,51 @@ description: Harness engineering entry point. Routes to the right sub-skill base
 > anything beyond a single `read_file`, you should have created a task for it.
 > The user will call it out if you don't. This has been corrected repeatedly.
 
+## HARD RULES (MUST FOLLOW)
+
+> **RULE 1 — PIPELINE:**
+> You **MUST** follow the `./next` pipeline: **RECALL → IMPLEMENT → VERIFY → CONCLUDE → DONE**.
+> No code changes happen outside this pipeline. A one-line typo fix still goes through all 5 phases.
+> There is **NO hotfix exception.**
+
+> **RULE 2 — ./next:**
+> You **MUST** call `./next` between every phase.
+> - Before writing any code: `./next --init <task-id>` to create the pipeline state.
+> - After completing a phase artifact: call `./next` to advance to the next phase.
+> - If `./next` returns BLOCKED by a gate, fix the issue and call `./next` again — **do NOT skip the phase.**
+
+> **RULE 3 — SUBAGENTS:**
+> You **MUST** use `delegate_task` for implementation work.
+> - The host agent does **NOT** write code directly. Implementation is delegated to subagents.
+> - The host verifies reports, runs tests, and advances the pipeline.
+> - Direct `write_file`/`patch` calls by the host will be **BLOCKED.**
+
+> **RULE 4 — ARTIFACTS:**
+> You **MUST** write the correct phase artifact before calling `./next`:
+> - **RECALL:**   `.techne/loop/recall.txt`
+> - **IMPLEMENT:** `.techne/loop/diff.txt` (git diff output)
+> - **VERIFY:**   `.techne/loop/test_output.txt` (pytest output)
+> - **CONCLUDE:** `.techne/loop/conclude.txt` (honcho conclusion)
+> - **DONE:**     (terminal phase, no artifact)
+> Writing to the wrong artifact will be **BLOCKED** by phase_guard.
+
+> **RULE 5 — ENFORCEMENT:**
+> Phase_guard will **BLOCK** your writes if:
+> - No `.techne/` directory → block all source writes
+> - No `state.json` in `.techne/` → block, prompt `'./next --init'`
+> - Wrong phase artifact → block, show expected artifact
+> - Writing to `.techne/audit/` → block (tamper-evident chain)
+> This is **not optional.** If your write gets blocked, fix the violation and retry.
+
+> **RULE 6 — PHASE REPORTS:**
+> After `./next` successfully advances a phase, it prints a detailed report.
+> You **MUST** forward this report to the user after every phase transition.
+> The report includes gates, artifact details, test results, and next steps.
+> Use `send_message` or a direct reply to deliver the report.
+> Do NOT summarize or filter — the full report is actionable intelligence.
+
+See below for pipeline details, enforcement stack reference, and troubleshooting.
+
 ## Quick Route
 
 | You're doing... | Load this |

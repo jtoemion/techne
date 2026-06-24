@@ -508,6 +508,46 @@ def register(ctx) -> None:
         # ── Read loop state for phase-aware enforcement ───────────────
         current_phase, task_id, state_raw = _read_loop_state()
 
+        # ── Host-direct-write detection ────────────────────────────────
+        # The techne plugin only loads in the host agent session.
+        # Subagents spawned via delegate_task do NOT load this plugin,
+        # so any write_file/patch intercepted here is the HOST agent
+        # attempting a direct source-file write — which must be routed
+        # through delegate_task(MODE=IMPLEMENT) instead.
+        if tool_name in _WRITE_TOOLS:
+            path = ""
+            if isinstance(tool_input, dict):
+                path = tool_input.get("path", tool_input.get("file_path", ""))
+            if path and _SOURCE_FILE_EXTS.search(path) and not _is_allowed_path(path):
+                _log_block(tool_name, f"host-direct write: {path}")
+                return {
+                    "action": "block",
+                    "message": (
+                        f"[TECHNE] WRITE BLOCKED: {path}\n"
+                        f"[TECHNE] Reason: Host agent attempted direct write. Use delegate_task for implementation.\n"
+                        f"[TECHNE] Fix: Delegate to a subagent via delegate_task with MODE: IMPLEMENT\n"
+                    ),
+                }
+
+        # ── No-state check: block source-file writes when no pipeline active ─
+        # This fires BEFORE phase artifact checks so the agent gets a clear signal
+        # to run ./next --init rather than a confusing phase-mismatch error.
+        if not current_phase and tool_name in _WRITE_TOOLS:
+            path = ""
+            if isinstance(tool_input, dict):
+                path = tool_input.get("path", tool_input.get("file_path", ""))
+            # Only block project source files (skip .techne/, .hermes/, /tmp/)
+            if path and not _is_allowed_path(path) and _SOURCE_FILE_EXTS.search(path):
+                _log_block(tool_name, f"no-pipeline source write: {path}")
+                return {
+                    "action": "block",
+                    "message": (
+                        f"[TECHNE] WRITE BLOCKED: {path}\n"
+                        f"[TECHNE] Reason: No active pipeline\n"
+                        f"[TECHNE] Fix: Run './next --init <task-id>' to start\n"
+                    ),
+                }
+
         # ── Phase timeout check ────────────────────────────────────────
         if current_phase and state_raw:
             timeout_msg = _check_phase_timeout(state_raw)
@@ -548,7 +588,11 @@ def register(ctx) -> None:
                         _log_block(tool_name, f"audit dir write: {path}")
                         return {
                             "action": "block",
-                            "message": "Write to .techne/audit/ is forbidden. The audit trail is append-only.",
+                            "message": (
+                                f"[TECHNE] WRITE BLOCKED: {path}\n"
+                                f"[TECHNE] Reason: .techne/audit/ is append-only — direct writes forbidden\n"
+                                f"[TECHNE] Fix: The audit log is written automatically by the pipeline\n"
+                            ),
                         }
 
                     # Check phase artifact paths
@@ -565,10 +609,10 @@ def register(ctx) -> None:
                                     return {
                                         "action": "block",
                                         "message": (
-                                            f"{Path(path).name} belongs to a different phase.\n\n"
-                                            f"Current phase: {current_phase}\n"
-                                            f"Allowed artifacts: {', '.join(allowed_artifacts) if allowed_artifacts else 'any path'}\n\n"
-                                            f"Call `./next` to advance first.\n"
+                                            f"[TECHNE] WRITE BLOCKED: {path}\n"
+                                            f"[TECHNE] Reason: Artifact belongs to a different phase\n"
+                                            f"[TECHNE] Current phase: {current_phase}\n"
+                                            f"[TECHNE] Fix: Run './next' to advance phases\n"
                                         ),
                                     }
 
@@ -635,18 +679,15 @@ def register(ctx) -> None:
 
         # Block
         _log_block(tool_name, reason)
+        path_for_msg = ""
+        if isinstance(tool_input, dict):
+            path_for_msg = tool_input.get("path", tool_input.get("file_path", "<unknown>"))
         return {
             "action": "block",
             "message": (
-                "Pipeline enforcement: no active task found.\n\n"
-                "All file writes must go through a pipeline task. "
-                "Create one:\n"
-                "  1. /techne (if not already loaded)\n"
-                "  2. Create .techne/loop/state.json with phase=\"RECALL\"\n"
-                "  3. Drive through RECALL → IMPLEMENT → … → DONE\n\n"
-                "Temporary bypass: /techne bypass (3 writes)\n"
-                "Disable enforcement: /techne off\n"
-                f"Active task DB: {db_path}"
+                f"[TECHNE] WRITE BLOCKED: {path_for_msg}\n"
+                f"[TECHNE] Reason: No active pipeline task\n"
+                f"[TECHNE] Fix: Run './next --init <task-id>' to start a pipeline\n"
             ),
         }
 
@@ -674,7 +715,12 @@ def register(ctx) -> None:
         if techne_found:
             _state["active"] = True
             ctx.inject_message(
-                "Techne project detected — pipeline enforcement auto-activated.",
+                "╔══════════════════════════════════════════════════╗\n"
+                "║   TECHNE WORKSHOP DETECTED                      ║\n"
+                "║   Pipeline enforcement is ACTIVE                ║\n"
+                "║   Start: ./next --init <task-id>                ║\n"
+                "║   Status: ./next (shows current phase)          ║\n"
+                "╚══════════════════════════════════════════════════╝",
                 role="assistant",
             )
 

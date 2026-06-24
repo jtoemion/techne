@@ -234,7 +234,7 @@ class TestPreToolCallHook:
         result = hook(tool_name="write_file", tool_input={"path": "src/main.py"})
         assert result is not None
         assert result["action"] == "block"
-        assert "no active task" in result["message"] or "no task database" in result["message"]
+        assert "WRITE BLOCKED" in result["message"] and ("Host agent" in result["message"] or "No active pipeline" in result["message"])
 
     def test_hook_allows_write_to_techne(self, active_plugin):
         """Writes to .techne/ paths bypass enforcement."""
@@ -242,7 +242,8 @@ class TestPreToolCallHook:
         cmd = active_plugin._commands["techne"]
         cmd()
 
-        result = hook(tool_name="write_file", tool_input={"path": ".techne/context/project.md"})
+        # RECALL phase artifact should be allowed
+        result = hook(tool_name="write_file", tool_input={"path": ".techne/loop/recall.txt"})
         assert result is None, ".techne/ write should be allowed"
 
     def test_hook_allows_write_with_bypass(self, active_plugin):
