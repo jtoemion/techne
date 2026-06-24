@@ -56,7 +56,7 @@ def check_git() -> list[str]:
             path = l.split(None, 1)[1] if " " in l else l[3:]
             if ".techne/tasks/" in path or ".techne/memory/" in path:
                 issues.append(f"  Generated artifact leak: {path}")
-    except: pass
+    except Exception: pass
     return issues
 
 def check_state() -> list[str]:
@@ -68,7 +68,7 @@ def check_state() -> list[str]:
             state = json.loads(state_file.read_text())
             if not state.get("honcho_conclusion_id"):
                 issues.append("harness-state.json missing honcho_conclusion_id (RECALL gate will loop)")
-        except: pass
+        except Exception: pass
     return issues
 
 def main():

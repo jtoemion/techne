@@ -91,7 +91,7 @@ def main():
                 state["pipeline_runs"] = max(0, state["pipeline_runs"] - 1)
                 STATE_FILE.write_text(json.dumps(state, indent=2))
                 print(f"  Updated harness-state.json.")
-        except: pass
+        except Exception: pass
 
     print(f"\nTask {tid[:12]} reset to {new_status}/{new_phase}")
     print("Remember to log why: python3 scripts/mistakes_logger.py log ...")

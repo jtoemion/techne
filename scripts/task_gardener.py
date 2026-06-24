@@ -86,7 +86,7 @@ def check_leak(rel_path: str) -> bool:
     try:
         r = subprocess.run(["git", "check-ignore", rel_path], capture_output=True, text=True, cwd=ROOT, timeout=10)
         return r.returncode == 0
-    except: return False
+    except Exception: return False
 
 def main():
     parser = argparse.ArgumentParser(description="Task Gardener — clean pipeline artifacts")

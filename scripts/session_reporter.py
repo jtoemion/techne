@@ -49,13 +49,13 @@ def load_tasks(db_path: Path, limit: int = 10) -> list[Task]:
         tasks = [Task(r) for r in cur.fetchall()]
         conn.close()
         return tasks
-    except: return []
+    except Exception: return []
 
 def load_state() -> dict:
     if not STATE_FILE.exists():
         return {}
     try: return json.loads(STATE_FILE.read_text())
-    except: return {}
+    except Exception: return {}
 
 def format_task_list(tasks: list[Task], full: bool) -> str:
     if not tasks:
@@ -75,7 +75,7 @@ def recent_git_activity() -> list[str]:
                          capture_output=True, text=True, cwd=ROOT, timeout=10)
         if r.stdout.strip():
             return [f"  {l.split(' ', 1)[1][:50] if ' ' in l else l}" for l in r.stdout.strip().split("\n")]
-    except: pass
+    except Exception: pass
     return []
 
 def main():

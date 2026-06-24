@@ -19,6 +19,7 @@ What it does:
 
 from __future__ import annotations
 
+import argparse
 import re
 import sys
 from pathlib import Path
@@ -381,11 +382,59 @@ def format_footer(phase: str, results: list[GateResult]) -> str:
 def main() -> int:
     cwd = Path.cwd()
 
+    parser = argparse.ArgumentParser(
+        description="Advance the Techne ./next loop to the next phase.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--init", metavar="TASK_ID",
+        help="Initialize a new task in RECALL phase and create state.json"
+    )
+    parser.add_argument(
+        "--help-phases", action="store_true",
+        help="Show requirements for each pipeline phase"
+    )
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Allow --init to overwrite existing state.json"
+    )
+    args, remaining = parser.parse_known_args()
+
+    if args.help_phases:
+        print("Techne ./next pipeline phases:\n")
+        for phase in ["RECALL", "IMPLEMENT", "VERIFY", "CONCLUDE", "DONE"]:
+            reqs = _phase_requirements(phase)
+            print(f"  {phase}:")
+            for r in reqs:
+                print(f"    • {r}")
+            print()
+        return 0
+
+    if args.init:
+        from next_state import create_initial_state, state_path as _state_path
+        sp = _state_path(cwd)
+        if sp.exists() and not args.force:
+            print(f"Error: state.json already exists at {sp}")
+            print("Use --force to overwrite.")
+            return 1
+        state = create_initial_state(args.init, cwd=cwd)
+        write_state(state, cwd)
+        print(f"Task '{args.init}' initialized in RECALL phase")
+        print()
+        print("Next steps:")
+        for r in _phase_requirements("RECALL"):
+            print(f"  • {r}")
+        print("Then call ./next again.")
+        return 0
+
     state = read_state(cwd)
     if state is None:
         print(_fail("No active loop found."))
-        print(f"  Create .techne/loop/state.json or call create_task first.")
-        print(f"  Expected at: {state_path(cwd)}")
+        print()
+        print("To start a new task:")
+        print(f"  {sys.argv[0]} --init <task-id>")
+        print()
+        print("Or manually create .techne/loop/state.json")
         return 1
 
     if state.is_terminal():

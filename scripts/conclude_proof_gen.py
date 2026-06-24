@@ -15,7 +15,7 @@ def get_head_sha() -> str:
     try:
         r = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=ROOT, timeout=10)
         return r.stdout.strip() if r.returncode == 0 else ""
-    except: return ""
+    except Exception: return ""
 
 def main():
     parser = argparse.ArgumentParser(description="Generate CONCLUDE proof")

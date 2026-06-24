@@ -104,7 +104,7 @@ def main():
                             "type": "imports",
                             "weight": 1,
                         })
-                except: pass
+                except Exception: pass
 
     output = {
         "project": project.name,
