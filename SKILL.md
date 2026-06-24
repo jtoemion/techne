@@ -76,9 +76,7 @@ See below for pipeline details, enforcement stack reference, and troubleshooting
 
 | You're doing... | Load this |
 |---|---|
-| **Say `ultrawork <task>` to run hands-free** | `skills/ultrawork/SKILL.md` |
-| **Planning — turn vague request into a ticket** | `skills/techne-interview/SKILL.md` |
-| **End of session / resume tomorrow** | `skills/techne-handoff/SKILL.md` |
+| **`ultrawork <task>` / `ulw` — run full pipeline autonomously** | load `skills/orchestrator.md`, run `techne init` then loop phases hands-free |
 | Building a feature or fix | `skills/implementer.md` |
 | Something is broken | `skills/diagnose.md` |
 | Writing tests first | `skills/tdd.md` |
