@@ -4,7 +4,7 @@
 # First match on condition wins. Higher weight = higher priority on ties.
 
 version: "1.0"
-updated: "2026-06-09"
+updated: "2026-06-25"
 
 # ROUTING TABLE — evaluated top-to-bottom, first match wins
 routing:
@@ -13,6 +13,24 @@ routing:
     skill_path: "skills/diagnose.md"
     weight: 90
     note: "Always diagnose before attempting a fix. Removed 'error' — too generic, collides with TypeScript routing."
+
+  - id: "ultrawork"
+    condition: "ultrawork, ulw, just do it, run autonomously, full autonomous loop, run the pipeline autonomously"
+    skill_path: "skills/ultrawork/SKILL.md"
+    weight: 95
+    note: "Highest weight — explicit autonomy trigger. Runs full pipeline hands-free. Scouting report item D."
+
+  - id: "techne-interview"
+    condition: "techne plan, plan a task, interview before implementing, decision-complete ticket, planning interview"
+    skill_path: "skills/techne-interview/SKILL.md"
+    weight: 89
+    note: "Prometheus for Techne — Socratic intake interview before techne init. Scouting report item B."
+
+  - id: "techne-handoff"
+    condition: "techne handoff, session handoff, resume tomorrow, hand off session, write handoff, save session state, before I stop"
+    skill_path: "skills/techne-handoff/SKILL.md"
+    weight: 87
+    note: "Session continuity — writes handoff.md + resume protocol. Scouting report item E."
 
   - id: "writing-skill"
     condition: "write a skill, create a skill, new skill, skill template, audit skill, refactor skill"
@@ -47,6 +65,12 @@ routing:
     condition: "stress-test plan, challenge design, grill, review approach, before implementing"
     skill_path: "skills/grill.md"
     weight: 80
+
+  - id: "node-discipline"
+    condition: "node isolation, module boundary, layered architecture, code node, gateway node, trigger node, n8n isolation"
+    skill_path: "skills/node-discipline.md"
+    weight: 79
+    note: "Enforces n8n-style module isolation — TRIGGER/CODE/GATEWAY layers. Includes scan scripts and ./next gate."
 
   - id: "improve-architecture"
     condition: "improve architecture, refactoring opportunities, deepen module, more testable, consolidate coupling, architecture review"

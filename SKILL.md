@@ -23,8 +23,8 @@ description: Harness engineering entry point. Routes to the right sub-skill base
 
 > **RULE 2 — ./next:**
 > You **MUST** call `./next` between every phase.
-> - **Setup:** Create a symlink: `ln -sf /path/to/techne/repo/next ./next` from the project root. Create `.techne/loop/` directory. Then create `.techne/loop/state.json` with `task_id` matching the TaskDB entry and `phase` set to `"RECALL"`.
-> - **`./next --init <task-id>` does NOT exist** in the current `scripts/next.py` — ignore any help text that suggests it. Manually create state.json instead.
+> - **Setup (preferred):** `techne init <task-id>` scaffolds `.techne/loop/` and writes `state.json` in RECALL phase. If the `techne` CLI is not installed (`pip install -e /path/to/techne/`), fall back to: create a symlink `ln -sf /path/to/techne/repo/next ./next`, create `.techne/loop/` manually, then write `state.json` with `task_id` matching the TaskDB entry and `phase` set to `"RECALL"`.
+> - **`./next --init <task-id>` does NOT exist** in `scripts/next.py` — use `techne init <task-id>` instead, or create state.json manually.
 > - **State alignment:** Never hardcode a task_id in state.json — always read the task_id from the `create_task()` return value and write it into state.json. A mismatch means `./next` checks the wrong task.
 > - After completing a phase artifact: call `./next` to advance to the next phase.
 > - If `./next` returns BLOCKED by a gate, fix the issue and call `./next` again — **do NOT skip the phase.**
@@ -76,6 +76,9 @@ See below for pipeline details, enforcement stack reference, and troubleshooting
 
 | You're doing... | Load this |
 |---|---|
+| **Say `ultrawork <task>` to run hands-free** | `skills/ultrawork/SKILL.md` |
+| **Planning — turn vague request into a ticket** | `skills/techne-interview/SKILL.md` |
+| **End of session / resume tomorrow** | `skills/techne-handoff/SKILL.md` |
 | Building a feature or fix | `skills/implementer.md` |
 | Something is broken | `skills/diagnose.md` |
 | Writing tests first | `skills/tdd.md` |
