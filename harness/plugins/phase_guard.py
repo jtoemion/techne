@@ -20,11 +20,13 @@ from typing import Optional
 
 
 # Phase artifact mapping (mirrors next_state.artifact_path_for)
+# None = any path allowed (normal dev work) or no artifact needed
 _PHASE_ARTIFACT_MAP = {
     "RECALL":     "recall.txt",
-    "IMPLEMENT":  "diff.txt",
+    "IMPLEMENT":  None,       # None = any path allowed (normal dev work)
     "VERIFY":     "test_output.txt",
     "CONCLUDE":   "conclude.txt",
+    "DONE":       None,       # None = no artifact needed
 }
 
 _TECHNE_DIR = Path(".techne")

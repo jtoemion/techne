@@ -40,6 +40,7 @@ REVOLVER_STATE_PATH = HOME / ".hermes" / ".revolver_state.json"
 # Import phase_guard from the techne repo — bypass harness/plugins/__init__.py
 # to avoid triggering the full plugin chain (builtin_gates → gates import)
 _PHASE_GUARD_PATH = TECHNE_REPO / "harness" / "plugins" / "phase_guard.py"
+_HAS_PHASE_GUARD = False
 if _PHASE_GUARD_PATH.exists():
     import importlib.util as _importlib_util
     _spec = _importlib_util.spec_from_file_location("_techne_phase_guard", str(_PHASE_GUARD_PATH))
@@ -50,18 +51,19 @@ if _PHASE_GUARD_PATH.exists():
     _pg_get_blocked_log = _pg_mod.get_blocked_log
     _HAS_PHASE_GUARD = True
     logger.info("[techne] phase_guard loaded from %s", _PHASE_GUARD_PATH)
-else:
-    _HAS_PHASE_GUARD = False
-    logger.warning("[techne] phase_guard not found at %s — using inline enforcement", _PHASE_GUARD_PATH)
 
-# Phase artifact mapping — each phase can only write to these paths
-_PHASE_ARTIFACT_PATHS = {
-    "RECALL":   {".techne/loop/recall.txt"},
-    "IMPLEMENT": set(),  # code files — any path allowed (normal dev work)
-    "VERIFY":   {".techne/loop/test_output.txt"},
-    "CONCLUDE": {".techne/loop/conclude.txt"},
-    "DONE":     set(),   # no artifact needed
-}
+# Phase artifact map — sourced from phase_guard.py (canonical)
+# When phase_guard is loaded, use its map. Fallback for inline enforcement.
+if _HAS_PHASE_GUARD:
+    _PHASE_ARTIFACT_MAP = _pg_mod._PHASE_ARTIFACT_MAP
+else:
+    _PHASE_ARTIFACT_MAP = {
+        "RECALL": "recall.txt",
+        "IMPLEMENT": None,
+        "VERIFY": "test_output.txt",
+        "CONCLUDE": "conclude.txt",
+        "DONE": None,
+    }
 
 # Tool-count thresholds per phase — after this many tools, force ./next call
 _PHASE_TOOL_LIMITS = {
@@ -203,23 +205,35 @@ def _find_audit_log_path() -> Path | None:
 
 
 def _read_loop_state() -> tuple[str, str, dict | None]:
-    """Read .techne/loop/state.json from CWD walk-up.
+    """Read .techne/loop/state.json by finding .techne root first.
 
     Returns (phase, task_id, raw_state_dict) or ("", "", None) if no state file.
     Returns the raw dict so callers can check updated_at, phase_timeout_min, etc.
     """
-    cwd = Path.cwd().resolve()
-    for parent in [cwd] + list(cwd.parents):
-        state_file = parent / ".techne" / "loop" / "state.json"
-        if state_file.exists():
-            try:
-                data = json.loads(state_file.read_text(encoding="utf-8"))
-                phase = data.get("phase", "").upper()
-                task_id = data.get("task_id", "")
-                return (phase, task_id, data)
-            except (json.JSONDecodeError, OSError):
-                return ("", "", None)
-    return ("", "", None)
+    if _HAS_PHASE_GUARD:
+        root = _pg_mod._find_techne_root()
+    else:
+        # Inline version of root finding
+        cwd = Path.cwd().resolve()
+        root = None
+        for parent in [cwd] + list(cwd.parents):
+            if (parent / ".techne").is_dir():
+                root = parent
+                break
+
+    if root is None:
+        return ("", "", None)
+
+    state_file = root / ".techne" / "loop" / "state.json"
+    if not state_file.exists():
+        return ("", "", None)
+    try:
+        data = json.loads(state_file.read_text(encoding="utf-8"))
+        phase = data.get("phase", "").upper()
+        task_id = data.get("task_id", "")
+        return (phase, task_id, data)
+    except (json.JSONDecodeError, OSError):
+        return ("", "", None)
 
 
 def _increment_tool_count(phase: str) -> int:
@@ -508,6 +522,25 @@ def register(ctx) -> None:
         # ── Read loop state for phase-aware enforcement ───────────────
         current_phase, task_id, state_raw = _read_loop_state()
 
+        # ── No-state check: block source-file writes when no pipeline active ─
+        # This fires FIRST so the agent gets a clear signal to run ./next --init
+        # rather than a confusing host-direct-write error.
+        if not current_phase and tool_name in _WRITE_TOOLS:
+            path = ""
+            if isinstance(tool_input, dict):
+                path = tool_input.get("path", tool_input.get("file_path", ""))
+            # Only block project source files (skip .techne/, .hermes/, /tmp/)
+            if path and not _is_allowed_path(path) and _SOURCE_FILE_EXTS.search(path):
+                _log_block(tool_name, f"no-pipeline source write: {path}")
+                return {
+                    "action": "block",
+                    "message": (
+                        f"[TECHNE] WRITE BLOCKED: {path}\n"
+                        f"[TECHNE] Reason: No active pipeline\n"
+                        f"[TECHNE] Fix: Run './next --init <task-id>' to start\n"
+                    ),
+                }
+
         # ── Host-direct-write detection ────────────────────────────────
         # The techne plugin only loads in the host agent session.
         # Subagents spawned via delegate_task do NOT load this plugin,
@@ -526,25 +559,6 @@ def register(ctx) -> None:
                         f"[TECHNE] WRITE BLOCKED: {path}\n"
                         f"[TECHNE] Reason: Host agent attempted direct write. Use delegate_task for implementation.\n"
                         f"[TECHNE] Fix: Delegate to a subagent via delegate_task with MODE: IMPLEMENT\n"
-                    ),
-                }
-
-        # ── No-state check: block source-file writes when no pipeline active ─
-        # This fires BEFORE phase artifact checks so the agent gets a clear signal
-        # to run ./next --init rather than a confusing phase-mismatch error.
-        if not current_phase and tool_name in _WRITE_TOOLS:
-            path = ""
-            if isinstance(tool_input, dict):
-                path = tool_input.get("path", tool_input.get("file_path", ""))
-            # Only block project source files (skip .techne/, .hermes/, /tmp/)
-            if path and not _is_allowed_path(path) and _SOURCE_FILE_EXTS.search(path):
-                _log_block(tool_name, f"no-pipeline source write: {path}")
-                return {
-                    "action": "block",
-                    "message": (
-                        f"[TECHNE] WRITE BLOCKED: {path}\n"
-                        f"[TECHNE] Reason: No active pipeline\n"
-                        f"[TECHNE] Fix: Run './next --init <task-id>' to start\n"
                     ),
                 }
 
@@ -595,26 +609,26 @@ def register(ctx) -> None:
                             ),
                         }
 
-                    # Check phase artifact paths
-                    allowed_artifacts = _PHASE_ARTIFACT_PATHS.get(current_phase, set())
-                    for artifact_rel in allowed_artifacts:
-                        if artifact_rel in path:
-                            break  # allowed — right phase artifact
+                    # Check phase artifact using _PHASE_ARTIFACT_MAP
+                    artifact_name = _PHASE_ARTIFACT_MAP.get(current_phase)
+                    if artifact_name is None:
+                        # IMPLEMENT or DONE — any path allowed
+                        pass
+                    elif artifact_name and artifact_name in path:
+                        # Correct artifact for this phase — allowed
+                        pass
                     else:
-                        # Check if it's any phase's artifact → wrong phase
-                        for all_artifacts in _PHASE_ARTIFACT_PATHS.values():
-                            for other_artifact in all_artifacts:
-                                if other_artifact in path and other_artifact not in allowed_artifacts:
-                                    _log_block(tool_name, f"wrong-phase artifact: {path}")
-                                    return {
-                                        "action": "block",
-                                        "message": (
-                                            f"[TECHNE] WRITE BLOCKED: {path}\n"
-                                            f"[TECHNE] Reason: Artifact belongs to a different phase\n"
-                                            f"[TECHNE] Current phase: {current_phase}\n"
-                                            f"[TECHNE] Fix: Run './next' to advance phases\n"
-                                        ),
-                                    }
+                        # Wrong artifact or no state
+                        _log_block(tool_name, f"wrong-phase artifact: {path}")
+                        return {
+                            "action": "block",
+                            "message": (
+                                f"[TECHNE] WRITE BLOCKED: {path}\n"
+                                f"[TECHNE] Reason: Artifact belongs to a different phase\n"
+                                f"[TECHNE] Current phase: {current_phase}\n"
+                                f"[TECHNE] Fix: Run './next' to advance phases\n"
+                            ),
+                        }
 
         # ── If we have a phase, track tool count and check limits ──────
         if current_phase:
