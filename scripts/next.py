@@ -36,6 +36,23 @@ from next_state import (
 from audit_chain import AuditEntry, append_entry as audit_append
 from datetime import datetime, timezone
 
+# ── Configurable scope limit (read from .techne/config.yaml) ─────────────────
+_SCOPE_LIMIT = 10
+
+def _load_config() -> None:
+    """Read scope_limit from .techne/config.yaml if present."""
+    global _SCOPE_LIMIT
+    try:
+        cfg_path = Path.cwd() / ".techne" / "config.yaml"
+        if cfg_path.exists():
+            for line in cfg_path.read_text().splitlines():
+                line = line.strip()
+                if line.startswith("scope_limit:"):
+                    _SCOPE_LIMIT = int(line.split(":", 1)[1].strip())
+                    break
+    except Exception:
+        pass
+
 
 # ── Coloured terminal output ─────────────────────────────────────────────────
 # ANSI codes — safe on Linux/macOS terminals
@@ -201,7 +218,7 @@ def _check_implement_gates(path: Path) -> list[GateResult]:
         scope = f"{len(files_changed)} file(s)" if files_changed else "unknown"
         results.append(GateResult(
             "scope estimation",
-            len(files_changed) <= 10,
+            len(files_changed) <= _SCOPE_LIMIT,
             scope,
         ))
 
@@ -527,6 +544,7 @@ def main() -> int:
         return 0
 
     state = read_state(cwd)
+    _load_config()
     if state is None:
         print(_fail("No active loop found."))
         print()
