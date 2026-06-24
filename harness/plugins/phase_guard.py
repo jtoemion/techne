@@ -23,10 +23,10 @@ from typing import Optional
 # None = any path allowed (normal dev work) or no artifact needed
 _PHASE_ARTIFACT_MAP = {
     "RECALL":     "recall.txt",
-    "IMPLEMENT":  None,       # None = any path allowed (normal dev work)
+    "IMPLEMENT":  "diff.txt",
     "VERIFY":     "test_output.txt",
     "CONCLUDE":   "conclude.txt",
-    "DONE":       None,       # None = no artifact needed
+    "DONE":       None,       # None = terminal phase, no artifact needed
 }
 
 _TECHNE_DIR = Path(".techne")
@@ -129,6 +129,9 @@ def check_write_allowed(path_str: str, cwd: str | None = None) -> tuple[bool, st
     if is_under_techne:
         # Check if it's the current phase's artifact
         artifact_name = _PHASE_ARTIFACT_MAP.get(current_phase)
+        if artifact_name is None:
+            # IMPLEMENT or DONE — any artifact path under .techne/ is allowed
+            return (True, "")
         if artifact_name:
             current_artifact = loop_path / artifact_name
             if requested.resolve() == current_artifact.resolve():

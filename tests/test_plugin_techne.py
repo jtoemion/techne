@@ -207,12 +207,19 @@ class TestIsWriteFile:
 class TestPreToolCallHook:
 
     def test_hook_allows_when_inactive(self, mock_ctx):
-        """With pipeline inactive, all tools pass through."""
+        """With pipeline inactive, host-direct-write still blocks source files."""
         hook = mock_ctx._hooks.get("pre_tool_call")
         assert hook is not None
 
+        # Host-direct-write blocks source files even when inactive
         result = hook(tool_name="write_file", tool_input={"path": "src/main.py"})
-        assert result is None, f"Expected None (allow), got {result}"
+        assert result is not None
+        assert result["action"] == "block"
+        assert "Host agent" in result["message"]
+
+        # Non-source paths still pass
+        result2 = hook(tool_name="write_file", tool_input={"path": "/tmp/test.txt"})
+        assert result2 is None, "Non-source writes should pass when inactive"
 
     def test_hook_allows_read_file_when_active_no_task(self, active_plugin):
         """Read-only tools always pass even when pipeline is active."""
@@ -247,26 +254,40 @@ class TestPreToolCallHook:
         assert result is None, ".techne/ write should be allowed"
 
     def test_hook_allows_write_with_bypass(self, active_plugin):
-        """/techne bypass grants temporary write access."""
+        """/techne bypass grants temporary write access for non-source paths."""
         hook = active_plugin._hooks["pre_tool_call"]
         cmd = active_plugin._commands["techne"]
 
         cmd()  # activate
         cmd("bypass")  # grant 3 bypasses
 
+        # Host-direct-write blocks source files regardless of bypass
         result = hook(tool_name="write_file", tool_input={"path": "src/main.py"})
-        assert result is None, "Bypass should allow write"
+        assert result is not None
+        assert result["action"] == "block"
+        assert "Host agent" in result["message"]
+
+        # Bypass should allow writes to non-source/non-blocked paths
+        result2 = hook(tool_name="write_file", tool_input={"path": "/tmp/test.txt"})
+        assert result2 is None, "Bypass should allow temp writes"
 
     def test_techne_off_disables_enforcement(self, active_plugin):
-        """/techne off disables enforcement."""
+        """/techne off disables pipeline enforcement but host-direct-write still blocks."""
         hook = active_plugin._hooks["pre_tool_call"]
         cmd = active_plugin._commands["techne"]
 
         cmd()  # activate
         cmd("off")  # deactivate
 
+        # Host-direct-write always blocks host-level source writes
         result = hook(tool_name="write_file", tool_input={"path": "src/main.py"})
-        assert result is None, "After /techne off, writes should pass"
+        assert result is not None
+        assert result["action"] == "block"
+        assert "Host agent" in result["message"]
+
+        # Non-source writes should pass after /techne off
+        result2 = hook(tool_name="write_file", tool_input={"path": "/tmp/test.txt"})
+        assert result2 is None, "Non-source writes should pass after off"
 
     def test_block_log_on_hook_block(self, active_plugin):
         """Blocked tools are recorded in the block log."""

@@ -508,6 +508,29 @@ def register(ctx) -> None:
         if tool_input is None:
             tool_input = {}
 
+        # ── Host-direct-write detection ────────────────────────────────
+        # The techne plugin only loads in the host agent session.
+        # Subagents spawned via delegate_task do NOT load this plugin,
+        # so any write_file/patch intercepted here is the HOST agent
+        # attempting a direct source-file write — which must be routed
+        # through delegate_task(MODE=IMPLEMENT) instead.
+        # This check fires BEFORE the _state["active"] gate so it always
+        # enforces regardless of pipeline activation state.
+        if tool_name in _WRITE_TOOLS:
+            path = ""
+            if isinstance(tool_input, dict):
+                path = tool_input.get("path", tool_input.get("file_path", ""))
+            if path and _SOURCE_FILE_EXTS.search(path) and not _is_allowed_path(path):
+                _log_block(tool_name, f"host-direct write: {path}")
+                return {
+                    "action": "block",
+                    "message": (
+                        f"[TECHNE] WRITE BLOCKED: {path}\n"
+                        f"[TECHNE] Reason: Host agent attempted direct write. Use delegate_task for implementation.\n"
+                        f"[TECHNE] Fix: Delegate to a subagent via delegate_task with MODE: IMPLEMENT\n"
+                    ),
+                }
+
         if not _state["active"]:
             return None  # pipeline not activated — allow everything
 
@@ -538,27 +561,6 @@ def register(ctx) -> None:
                         f"[TECHNE] WRITE BLOCKED: {path}\n"
                         f"[TECHNE] Reason: No active pipeline\n"
                         f"[TECHNE] Fix: Run './next --init <task-id>' to start\n"
-                    ),
-                }
-
-        # ── Host-direct-write detection ────────────────────────────────
-        # The techne plugin only loads in the host agent session.
-        # Subagents spawned via delegate_task do NOT load this plugin,
-        # so any write_file/patch intercepted here is the HOST agent
-        # attempting a direct source-file write — which must be routed
-        # through delegate_task(MODE=IMPLEMENT) instead.
-        if tool_name in _WRITE_TOOLS:
-            path = ""
-            if isinstance(tool_input, dict):
-                path = tool_input.get("path", tool_input.get("file_path", ""))
-            if path and _SOURCE_FILE_EXTS.search(path) and not _is_allowed_path(path):
-                _log_block(tool_name, f"host-direct write: {path}")
-                return {
-                    "action": "block",
-                    "message": (
-                        f"[TECHNE] WRITE BLOCKED: {path}\n"
-                        f"[TECHNE] Reason: Host agent attempted direct write. Use delegate_task for implementation.\n"
-                        f"[TECHNE] Fix: Delegate to a subagent via delegate_task with MODE: IMPLEMENT\n"
                     ),
                 }
 
