@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "techne"
+version = "0.1.0"
+description = "Disciplined engineering harness for AI coding agents"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+techne = "techne_cli.main:cli"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["techne_cli*"]

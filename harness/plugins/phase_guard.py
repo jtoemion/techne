@@ -69,8 +69,7 @@ def check_write_allowed(path_str: str, cwd: str | None = None) -> tuple[bool, st
     """
     root = _find_techne_root(Path(cwd) if cwd else None)
     if root is None:
-        # No .techne found — allow nothing meaningful
-        return (False, "No .techne directory found.")
+        return (True, "")  # No Techne project — allow all writes
 
     techne_path = root / _TECHNE_DIR
     audit_path = root / _AUDIT_DIR
