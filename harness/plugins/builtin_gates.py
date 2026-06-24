@@ -11,7 +11,7 @@ To disable the Next.js gates for a non-Next.js project, either:
 """
 import re
 
-from gates import GateViolation, _strip_diff_marker, _is_comment
+from harness.gates import GateViolation, _strip_diff_marker, _is_comment
 
 
 def _gate_no_redirect_outside_middleware(diff: str):

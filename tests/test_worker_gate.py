@@ -17,7 +17,7 @@ ROOT = TESTS_DIR.parent
 sys.path.insert(0, str(ROOT / "harness"))
 
 import worker_gate as wg
-from gates import GateViolation
+from harness.gates import GateViolation
 
 PASS = "\033[92mPASS\033[0m"
 FAIL = "\033[91mFAIL\033[0m"

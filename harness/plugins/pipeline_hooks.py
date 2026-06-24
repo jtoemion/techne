@@ -25,8 +25,8 @@ import json
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from gate_registry import GateRegistry, GateMeta
-    from pipeline_enforcer import PipelineEnforcer
+    from harness.gate_registry import GateRegistry, GateMeta
+    from harness.pipeline_enforcer import PipelineEnforcer
 
 
 def install_pipeline_hooks(
@@ -131,6 +131,4 @@ def set_task_context(registry: "GateRegistry", task_id: str | None) -> None:
         registry._pipeline_ctx["task_id"] = task_id  # type: ignore
 
 
-class GateViolation(Exception):
-    """Raised when a gate or pipeline check fails."""
-    pass
+from harness.gates import GateViolation

@@ -135,7 +135,7 @@ class GateRegistry:
             GateViolation on first hard-gate failure.
         """
         # Import here to avoid circular dependency
-        from gates import GateViolation
+        from harness.gates import GateViolation
 
         for meta in list(self._gates.values()):
             if not meta.enabled:
@@ -225,10 +225,15 @@ class GateRegistry:
             )
             if spec and spec.loader:
                 mod = importlib.util.module_from_spec(spec)
+                mod_name = f"techne.plugins.{py_file.stem}"
                 try:
                     spec.loader.exec_module(mod)
-                except Exception:
-                    continue  # skip broken plugins silently
+                except Exception as _e:
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        "Plugin %s failed to load: %s", mod_name, _e
+                    )
+                    continue
                 if hasattr(mod, "register") and callable(mod.register):
                     mod.register(self)
 

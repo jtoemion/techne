@@ -257,7 +257,7 @@ def verdict_to_gate(verdict: "IntentVerdict | dict", task: str) -> None:
 
     Accepts both IntentVerdict dataclass and plain dict (from full_intent_check).
     """
-    from gates import GateViolation
+    from harness.gates import GateViolation
 
     # Accept dict (from full_intent_check) or IntentVerdict dataclass
     if isinstance(verdict, dict):

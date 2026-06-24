@@ -11,7 +11,7 @@ import json
 import os
 from datetime import datetime, timezone
 
-from gates import GateViolation
+from harness.gates import GateViolation
 
 
 def sha256_file(path: str) -> str:

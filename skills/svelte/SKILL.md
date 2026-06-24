@@ -68,6 +68,34 @@ Static `import` fails at build bundling; dynamic `import()` fails at Vite's tran
 - Something broken at runtime? → `skills/diagnose.md`
 
 ## RL-Proposed Additions
+### [2026-06-24] GRPO skill improvement for ui
+- **Source:** GRPO proposal; 2 runs observed
+- **Evidence:** avg score 0.900, advantage 0.400
+- **Advantage:** 0.400
+- **Pattern:** High-advantage (task_type=ui, skill=svelte) pair
+- **Fix:** Review and promote this pattern to the skill body if stable
+
+### [2026-06-24] GRPO skill improvement for ui
+- **Source:** GRPO proposal; 2 runs observed
+- **Evidence:** avg score 0.900, advantage 0.400
+- **Advantage:** 0.400
+- **Pattern:** High-advantage (task_type=ui, skill=svelte) pair
+- **Fix:** Review and promote this pattern to the skill body if stable
+
+### [2026-06-24] GRPO skill improvement for ui
+- **Source:** GRPO proposal; 2 runs observed
+- **Evidence:** avg score 0.900, advantage 0.400
+- **Advantage:** 0.400
+- **Pattern:** High-advantage (task_type=ui, skill=svelte) pair
+- **Fix:** Review and promote this pattern to the skill body if stable
+
+### [2026-06-24] GRPO skill improvement for ui
+- **Source:** GRPO proposal; 2 runs observed
+- **Evidence:** avg score 0.900, advantage 0.400
+- **Advantage:** 0.400
+- **Pattern:** High-advantage (task_type=ui, skill=svelte) pair
+- **Fix:** Review and promote this pattern to the skill body if stable
+
 ### [2026-06-23] GRPO skill improvement for ui
 - **Source:** GRPO proposal; 2 runs observed
 - **Evidence:** avg score 0.900, advantage 0.400

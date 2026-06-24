@@ -8,7 +8,7 @@ To enable: add "security" to active_stacks in gate-config.yaml.
 """
 import re
 
-from gates import GateViolation, _strip_diff_marker, _is_comment
+from harness.gates import GateViolation, _strip_diff_marker, _is_comment
 
 
 def _gate_no_hardcoded_secrets(diff: str):

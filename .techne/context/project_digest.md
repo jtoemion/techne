@@ -6,20 +6,24 @@
 ## What it is
 
 # Techne
-> A project-attached engineering workshop: a disciplined pipeline that governs how code work happens, a `.techne/` shell that holds context and memory, and a GRPO engine that improves prompts and skills over time.
-[![Tests](https://img.shields.io/badge/tests-525%2B-brightgreen)](#project-status)
-[![Pipeline](https://img.shields.io/badge/pipeline-11%20phases-blue)](#the-11-phase-pipeline)
+> A project-attached engineering workshop: a disciplined `./next` loop with disk-proven enforcement, a `.techne/` context shell that amortizes project understanding, and a GRPO engine that improves skills and prompts over time.
+[![Tests](https://img.shields.io/badge/tests-781%2B-brightgreen)](#project-status)
+[![Pipeline](https://img.shields.io/badge/pipeline-5--phase%20./next%20loop-blue)](#the-next-loop)
+[![Enforcement](https://img.shields.io/badge/enforcement-phase__guard%20%2B%20audit%20chain%20%2B%20watchdog-green)](#enforcement-stack)
+[![GRPO/RL](https://img.shields.io/badge/GRPO-RL%20engine%20%2B%20framework%20skills-purple)](#grpo-engine)
 [![Python](https://img.shields.io/badge/python-3.10%2B-orange)](#requirements)
 [![No API Key](https://img.shields.io/badge/API%20key-none%20required-lightgrey)](#architecture)
----
-## Table of Contents
 
 ## Canonical docs (kept HOT — recall reads, conclude updates)
 
   docs/adr/ADR-FORMAT.md
+  docs/enforcement-operations.md
   docs/host-integration-guide.md
   docs/plans/2026-06-14-gate-plugins-and-hardening.md
   docs/plans/2026-06-20-techne-project-workshop-redesign.md
+  docs/plans/2026-06-23-framework-skills-rl.md
+  docs/plans/2026-06-23-grpo-production-plan.md
+  docs/plans/2026-06-23-production-enforcement.md
   docs/plans/techne-build-guide-patch-001.md
   docs/plans/techne-worker-metaprompt.md
   docs/plans/techne-workshop-build-guide.md
@@ -43,6 +47,7 @@
   docs/
   harness/
   memory/
+  next
   plugins/
   references/
   scripts/

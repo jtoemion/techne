@@ -19,7 +19,7 @@ TESTS_DIR = Path(__file__).parent
 ROOT = TESTS_DIR.parent
 sys.path.insert(0, str(ROOT / "harness"))
 
-from gates import (
+from harness.gates import (
     GateViolation,
     gate_no_console_log,
     gate_no_gSSP,

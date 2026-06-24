@@ -25,11 +25,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from gates import GateViolation
-from gate_registry import GateRegistry
-from measure import run_measurements
-from intent_reasoner import verdict_to_gate
-from sha_gate import gate_test_output
+from harness.gates import GateViolation
+from harness.gate_registry import GateRegistry
+from harness.measure import run_measurements
+from harness.intent_reasoner import verdict_to_gate
+from harness.sha_gate import gate_test_output
 
 HARNESS_DIR = Path(__file__).parent
 MEMORY_DIR = HARNESS_DIR.parent / ".techne" / "memory"

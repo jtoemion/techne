@@ -26,7 +26,7 @@ from measure import (
     gate_intent,
     run_measurements,
 )
-from gates import GateViolation
+from harness.gates import GateViolation
 
 PASS = "\033[92mPASS\033[0m"
 FAIL = "\033[91mFAIL\033[0m"

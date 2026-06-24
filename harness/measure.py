@@ -195,7 +195,7 @@ def gate_intent(task: str, diff: str, threshold: float = 0.3) -> None:
     (diff has almost nothing to do with the task). Raise to 0.5 once
     the gate has been calibrated against real runs.
     """
-    from gates import GateViolation
+    from harness.gates import GateViolation
 
     result = measure_intent(task, diff)
     if result["score"] < threshold:

@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'harness'))
 
 from gate_registry import GateRegistry, GateMeta, _parse_yaml_simple
-from gates import GateViolation
+from harness.gates import GateViolation
 
 
 def test_register_and_run():

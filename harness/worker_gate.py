@@ -25,7 +25,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from gates import GateViolation
+from harness.gates import GateViolation
 
 # A non-durable location. SINGLE-segment markers match a whole path component exactly
 # (so "templates"/"attempt" are NOT flagged); multi-segment markers match as substrings.
