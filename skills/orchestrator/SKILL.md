@@ -1,11 +1,76 @@
 ---
 name: orchestrator
-description: Subagent dispatch protocol + loop runner. Parent agent reads this to decompose plans and drive the pipeline. Uses orchestrator_loop.py for deterministic phase transitions, HITL blocking, and debugger escalation.
+description: Subagent dispatch protocol + loop runner. Parent agent reads this to decompose plans and drive the pipeline. Includes CC autonomous mode (ultrawork / ulw trigger).
 ---
 
 # Orchestrator — Pipeline Loop Runner
 
-## Who Reads This
+## Claude Code Autonomous Mode (`ultrawork` / `ulw`)
+
+> **Trigger words:** `ultrawork <task-description>` or `ulw <task-description>`
+>
+> When the user says this, run the full pipeline hands-free from RECALL to DONE,
+> surfacing only phase reports and HITL blocks. Claude Code IS the model — no
+> `run_plan()` call needed.
+
+### Loop sequence
+
+```
+1. techne init <task-id>          # scaffolds .techne/loop/, sets phase=RECALL
+
+2. RECALL
+   • Read .techne/context/ (project digest, file roles)
+   • Search codebase / memory for relevant prior work
+   • Write .techne/loop/recall.txt  (must contain WORKSHOP_CONTEXT: line)
+   • techne next  → IMPLEMENT
+
+3. IMPLEMENT
+   • Make all code changes (via Edit/Write tools — phase_guard enforces phase)
+   • git diff > .techne/loop/diff.txt
+   • techne next  → VERIFY    (Hashline gate validates diff context here)
+
+4. VERIFY
+   • pytest > .techne/loop/test_output.txt  (or project's test command)
+   • techne next  → CONCLUDE
+
+5. CONCLUDE
+   • Write .techne/loop/conclude.txt  (summary + HONCHO: <id> line)
+   • techne next  → DONE
+
+6. Forward the phase report printed by techne next to the user after each transition.
+```
+
+### HITL blocking protocol
+
+Stop and surface to the user when:
+- `techne next` exits non-zero (gate failure) — show the full report, do NOT edit state.json
+- Hashline gate rejects the diff (`stale read`) — re-read the file(s) named in the error, regenerate diff
+- VERIFY finds failing tests — fix then re-run VERIFY phase (don't skip ahead)
+- Any phase requires a decision only the user can make (design choice, external credential, etc.)
+
+### Phase guard
+
+Claude Code's writes are gated by the PreToolUse hook in `.claude/settings.json`.
+Writing to the wrong artifact path will be **BLOCKED** — fix the phase, not the hook.
+
+```
+RECALL    → write .techne/loop/recall.txt only
+IMPLEMENT → write source files + .techne/loop/diff.txt
+VERIFY    → write .techne/loop/test_output.txt only
+CONCLUDE  → write .techne/loop/conclude.txt only
+```
+
+### Health commands
+
+```bash
+techne status    # current phase + stall check
+techne doctor    # 6-category check (hook wired, chain intact, context fresh)
+techne handoff   # write handoff.md for session continuity / resume tomorrow
+```
+
+---
+
+## Who Reads This (model-backed / Hermes mode)
 
 The PARENT agent reads this to:
 1. Decompose the plan into atomic tasks

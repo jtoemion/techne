@@ -111,3 +111,34 @@ def test_doctor_detects_no_techne_dir() -> None:
         r = _run("doctor", cwd=Path(tmp))
         assert r.returncode == 0
         assert "✗" in r.stdout or "not found" in r.stdout.lower()
+
+
+def test_handoff_no_pipeline_exits_zero() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        (tmp / ".techne").mkdir()  # shadow parent .techne
+        r = _run("handoff", cwd=tmp)
+        assert r.returncode == 0
+        assert "nothing to hand off" in r.stdout.lower() or "no active" in r.stdout.lower()
+
+
+def test_handoff_writes_markdown_file() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        _write(tmp / ".techne" / "config.yaml", "project_name: test\n")
+        _run("init", "handoff-task-1", cwd=tmp)
+        r = _run("handoff", cwd=tmp)
+        assert r.returncode == 0
+        handoff_path = tmp / ".techne" / "loop" / "handoff.md"
+        assert handoff_path.exists(), "handoff.md should be written"
+        content = handoff_path.read_text()
+        assert "handoff-task-1" in content
+        assert "RECALL" in content
+        # Should include next-action instructions
+        assert "recall.txt" in content or "techne next" in content
+
+
+def test_help_includes_handoff() -> None:
+    r = _run("--help")
+    assert r.returncode == 0
+    assert "handoff" in r.stdout
