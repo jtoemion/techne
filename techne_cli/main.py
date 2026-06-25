@@ -107,6 +107,139 @@ def cmd_status(args):
             print(f"  Last: reward={last.get('reward','?')} advantage={last.get('advantage','?')}")
 
 
+def cmd_handoff(args):
+    """Write a handoff document and print it for session continuity."""
+    from techne_cli.core import read_state, read_entries, PHASE_SEQUENCE
+
+    cwd = Path.cwd()
+    state = read_state(cwd)
+
+    if state is None:
+        print("No active pipeline — nothing to hand off.")
+        sys.exit(0)
+
+    # Audit chain phases completed
+    try:
+        entries = read_entries()
+        phases_done = [e.phase for e in entries if e.task_id == state.task_id]
+    except Exception:
+        phases_done = []
+
+    # RL health
+    rl_log = cwd / ".techne" / "events" / "rl.jsonl"
+    rl_entries = []
+    if rl_log.exists():
+        for line in rl_log.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.strip():
+                try:
+                    rl_entries.append(json.loads(line))
+                except Exception:
+                    pass
+
+    # Artifact inventory
+    loop_dir = cwd / ".techne" / "loop"
+    artifact_names = ["recall.txt", "diff.txt", "test_output.txt", "conclude.txt"]
+    artifacts = {}
+    for name in artifact_names:
+        p = loop_dir / name
+        if p.exists() and p.stat().st_size > 0:
+            artifacts[name] = p.stat().st_size
+
+    now = datetime.now(timezone.utc)
+    now_str = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    _next_reqs = {
+        "RECALL":    [
+            "Write `.techne/loop/recall.txt` with `WORKSHOP_CONTEXT:` header",
+            "Run: `techne next`",
+        ],
+        "IMPLEMENT": [
+            "Make code changes",
+            "Run: `git diff > .techne/loop/diff.txt`",
+            "Run: `techne next`",
+        ],
+        "VERIFY":    [
+            "Run: `pytest > .techne/loop/test_output.txt`",
+            "Run: `techne next`",
+        ],
+        "CONCLUDE":  [
+            "Write `.techne/loop/conclude.txt` with Honcho ID",
+            "Run: `techne next`",
+        ],
+        "DONE":      ["Pipeline complete — nothing left to do."],
+    }
+    reqs = _next_reqs.get(state.phase, [f"Complete the {state.phase} phase, then `techne next`"])
+
+    doc_lines = [
+        f"# Techne Handoff — {state.task_id}",
+        f"",
+        f"Generated: {now_str}  |  Project: {cwd.name}",
+        f"",
+        f"## Current State",
+        f"",
+        f"| Field | Value |",
+        f"|---|---|",
+        f"| Task | `{state.task_id}` |",
+        f"| Phase | **{state.phase}** |",
+        f"| Updated | {state.updated_at} |",
+        f"| Terminal | {'Yes — DONE' if state.is_terminal() else 'No'} |",
+        f"",
+    ]
+
+    if phases_done:
+        doc_lines += [
+            "## Phases Completed (audit chain)",
+            "",
+            *[f"- {p}" for p in phases_done],
+            "",
+        ]
+
+    if artifacts:
+        doc_lines += [
+            "## Artifacts On Disk",
+            "",
+            *[f"- `.techne/loop/{name}` — {size} bytes" for name, size in artifacts.items()],
+            "",
+        ]
+
+    if rl_entries:
+        last = rl_entries[-1]
+        doc_lines += [
+            "## RL Health",
+            "",
+            f"- Events logged: {len(rl_entries)}",
+            f"- Last reward: {last.get('reward', '?')}",
+            f"- Last advantage: {last.get('advantage', '?')}",
+            "",
+        ]
+
+    doc_lines += [
+        "## Next Action",
+        "",
+        *[f"- {r}" for r in reqs],
+        "",
+        "## Resume Commands",
+        "",
+        "```bash",
+        f"cd {cwd}",
+        "techne status   # confirm current state",
+        f"# complete {state.phase} requirements above",
+        "techne next",
+        "```",
+        "",
+    ]
+
+    doc = "\n".join(doc_lines)
+
+    handoff_path = loop_dir / "handoff.md"
+    handoff_path.parent.mkdir(parents=True, exist_ok=True)
+    handoff_path.write_text(doc, encoding="utf-8")
+
+    print(_bold(f"Handoff written → {handoff_path}"))
+    print()
+    print(doc)
+
+
 def cmd_doctor(args):
     """Run a 6-category health check."""
     from techne_cli.core import read_state, verify_chain
@@ -206,6 +339,9 @@ def cli():
 
     p_doctor = sub.add_parser("doctor", help="Run a 6-category health check")
     p_doctor.set_defaults(func=cmd_doctor)
+
+    p_handoff = sub.add_parser("handoff", help="Write a handoff doc for session continuity")
+    p_handoff.set_defaults(func=cmd_handoff)
 
     args = parser.parse_args()
     args.func(args)

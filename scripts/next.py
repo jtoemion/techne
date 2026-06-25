@@ -490,90 +490,129 @@ def format_footer(phase: str, results: list[GateResult]) -> str:
     return f"  {symbol} {phase}: {passed}/{total} gates passed"
 
 
+def _read_rl_delta(cwd: Path) -> str | None:
+    """Return a one-line RL summary from rl.jsonl, or None if unavailable."""
+    rl_log = cwd / ".techne" / "events" / "rl.jsonl"
+    if not rl_log.exists():
+        return None
+    try:
+        entries = [
+            __import__("json").loads(l)
+            for l in rl_log.read_text(encoding="utf-8").splitlines()
+            if l.strip()
+        ]
+    except Exception:
+        return None
+    if not entries:
+        return None
+    last = entries[-1]
+    r = last.get("reward", "?")
+    adv = last.get("advantage", "?")
+    return f"{len(entries)} events — last reward={r} advantage={adv}"
+
+
 def format_phase_report(state: LoopState, old_phase: str, results: list[GateResult],
                         cwd: Path) -> str:
     """Generate a detailed phase completion report for the user.
 
-    Printed after successful phase transition. The agent should forward
-    this to the user as a structured summary.
+    Printed after successful phase transition. The agent MUST forward this
+    to the user verbatim — it is actionable intelligence, not internal log.
     """
     artifact_name = _PHASE_ARTIFACT_MAP.get(old_phase, "N/A")
     artifact_path = cwd / ".techne" / "loop" / artifact_name
     artifact_size = artifact_path.stat().st_size if artifact_path.exists() else 0
-    artifact_preview = ""
-    if artifact_path.exists():
-        artifact_lines = artifact_path.read_text(
-            encoding="utf-8", errors="replace"
-        ).splitlines()
-        artifact_preview = "\n".join(artifact_lines[:5]) if artifact_lines else "(empty)"
 
     gates_pass = sum(1 for r in results if r.passed)
     gates_total = len(results)
     gate_lines = "\n".join(
-        f"  {'✓' if r.passed else '✗'} {r.name}: {r.detail}"
+        f"    {'✓' if r.passed else '✗'} {r.name}"
+        + (f": {r.detail}" if r.detail else "")
         for r in results
     )
 
     next_reqs = _phase_requirements(state.phase)
-    next_reqs_text = "\n".join(f"  • {r}" for r in next_reqs)
 
-    lines = [
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    lines: list[str] = [
         "",
-        "=" * 64,
-        f"  PHASE COMPLETE — {old_phase} → {state.phase}",
-        "=" * 64,
+        "╔" + "═" * 62 + "╗",
+        f"  PHASE COMPLETE  {old_phase} → {state.phase}",
+        "╠" + "═" * 62 + "╣",
         f"  Task:    {state.task_id}",
         f"  Project: {cwd.name}",
-        f"  Time:    {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
+        f"  Time:    {now_str}",
         "",
         "  GATES:",
         gate_lines,
-        f"  ({gates_pass}/{gates_total} passed)",
+        f"  └─ {gates_pass}/{gates_total} passed",
         "",
-        "  ARTIFACT:",
-        f"    Path: .techne/loop/{artifact_name}",
-        f"    Size: {artifact_size} bytes",
     ]
 
-    if artifact_preview:
-        lines.extend([
-            "    Preview:",
-            f"      {artifact_preview[:200]}",
-        ])
+    # ── Artifact section ────────────────────────────────────────────────────
+    lines.extend([
+        "  ARTIFACT:",
+        f"    .techne/loop/{artifact_name}  ({artifact_size} bytes)",
+    ])
 
-    # Phase-specific metrics
+    if artifact_path.exists():
+        artifact_lines = artifact_path.read_text(
+            encoding="utf-8", errors="replace"
+        ).splitlines()
+        preview_lines = artifact_lines[:6]
+        if preview_lines:
+            lines.append("    ┌─ preview ─────────────────────────────────────────")
+            for pl in preview_lines:
+                lines.append(f"    │ {pl[:80]}")
+            if len(artifact_lines) > 6:
+                lines.append(f"    │ … ({len(artifact_lines) - 6} more lines)")
+            lines.append("    └──────────────────────────────────────────────────")
+
+    # ── Phase-specific metrics ───────────────────────────────────────────────
     if old_phase == "VERIFY" and artifact_path.exists():
         text = artifact_path.read_text(encoding="utf-8", errors="replace")
         passed_m = re.search(r"(\d+)\s+passed", text)
         failed_m = re.search(r"(\d+)\s+failed", text)
+        error_m  = re.search(r"(\d+)\s+error", text)
         if passed_m or failed_m:
-            p = passed_m.group(1) if passed_m else "?"
-            f = failed_m.group(1) if failed_m else "0"
-            lines.append(f"  TESTS: {p} passed, {f} failed")
+            p  = passed_m.group(1) if passed_m else "?"
+            f  = failed_m.group(1) if failed_m else "0"
+            e  = error_m.group(1) if error_m else "0"
+            lines.append(f"  TESTS:    {p} passed  {f} failed  {e} errors")
 
     if old_phase == "IMPLEMENT" and artifact_path.exists():
         text = artifact_path.read_text(encoding="utf-8", errors="replace")
-        added = text.count("\n+") - text.count("\n+++")
-        removed = text.count("\n-") - text.count("\n---")
-        files_changed = len(re.findall(r"^\+\+\+ b/", text, re.MULTILINE)) if text.strip() else 0
-        if added or removed or files_changed:
-            lines.append(f"  DIFF: {files_changed} file(s), +{added} -{removed} lines")
+        from hash_gate import parse_diff_files
+        parsed = parse_diff_files(text)
+        n_files = len(parsed)
+        added   = sum(1 for l in text.splitlines() if l.startswith("+") and not l.startswith("+++"))
+        removed = sum(1 for l in text.splitlines() if l.startswith("-") and not l.startswith("---"))
+        lines.append(f"  DIFF:     {n_files} file(s)  +{added} -{removed} lines")
 
     if old_phase == "CONCLUDE" and artifact_path.exists():
         text = artifact_path.read_text(encoding="utf-8", errors="replace")
-        honcho_match = re.search(r"HONCHO:\s*(\S+)", text)
-        if honcho_match:
-            lines.append(f"  HONCHO ID: {honcho_match.group(1)}")
+        honcho_m = re.search(r"HONCHO[:\s]+(\S+)", text)
+        if honcho_m:
+            lines.append(f"  HONCHO:   {honcho_m.group(1)}")
 
+    # ── RL delta ────────────────────────────────────────────────────────────
+    rl_summary = _read_rl_delta(cwd)
+    if rl_summary:
+        lines.append(f"  RL:       {rl_summary}")
+
+    # ── Next phase ──────────────────────────────────────────────────────────
     lines.extend([
         "",
-        "  NEXT PHASE:",
-        f"    {state.phase}",
+        "╠" + "═" * 62 + "╣",
+        f"  NEXT: {state.phase}",
         "",
-        "  REQUIREMENTS:",
-        next_reqs_text,
+    ])
+    for req in next_reqs:
+        lines.append(f"    • {req}")
+    lines.extend([
         "",
-        "=" * 64,
+        "  Run:  techne next",
+        "╚" + "═" * 62 + "╝",
         "",
     ])
 
