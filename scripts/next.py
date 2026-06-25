@@ -34,6 +34,7 @@ from next_state import (
     PHASE_SEQUENCE, artifact_path_for,
 )
 from audit_chain import AuditEntry, append_entry as audit_append
+from hash_gate import validate_diff_context
 from datetime import datetime, timezone
 
 # ── Configurable scope limit (read from .techne/config.yaml) ─────────────────
@@ -236,6 +237,15 @@ def _check_implement_gates(path: Path) -> list[GateResult]:
             has_diff_markers,
             "diff markers found" if has_diff_markers else "no @@ or --- markers",
         ))
+
+        # Hashline gate: context lines in diff must match actual file content
+        if has_diff_markers:
+            _hg_passed, _hg_detail = validate_diff_context(text, Path.cwd())
+            results.append(GateResult(
+                "hashline: context matches file",
+                _hg_passed,
+                _hg_detail if _hg_passed else f"stale read — {_hg_detail} — re-read the file",
+            ))
 
         # Count added/deleted lines
         added = len([l for l in text.split("\n") if l.startswith("+") and not l.startswith("+++")])
