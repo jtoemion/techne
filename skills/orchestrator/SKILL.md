@@ -1,9 +1,39 @@
 ---
 name: orchestrator
-description: Subagent dispatch protocol + loop runner. Parent agent reads this to decompose plans and drive the pipeline. Includes CC autonomous mode (ultrawork / ulw trigger).
+description: Subagent dispatch protocol + loop runner. Parent agent reads this to decompose plans and drive the pipeline. Works in Claude Code (ultrawork / ulw) and Hermes Agent (/techne).
 ---
 
 # Orchestrator — Pipeline Loop Runner
+
+## Skill Discovery
+
+Before selecting a skill for any phase, check available skills in this order:
+
+```
+1. .hermes/skills/     — Hermes-native skills (omh-deep-research, omh-ralplan, etc.)
+2. skills/             — Techne skills (grill, persona-brainstorm, writing-skill, etc.)
+3. .claude/commands/   — CC slash commands
+```
+
+List available skills at the start of a session:
+```bash
+ls .hermes/skills/ 2>/dev/null   # Hermes ecosystem
+ls skills/                        # Techne library
+```
+
+Select the best skill for the task at each phase — you are not limited to Techne's library.
+Techne enforces the pipeline. It does not decide which skill runs inside it.
+
+---
+
+## Entry Points
+
+| Runtime | Command |
+|---|---|
+| Claude Code | `/techne` then `ultrawork <task>` |
+| Hermes Agent | `/techne` (`.hermes/skills/techne.md`) |
+
+---
 
 ## Claude Code Autonomous Mode (`ultrawork` / `ulw`)
 
