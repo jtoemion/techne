@@ -760,6 +760,16 @@ def main() -> int:
                 # Context conclude is best-effort
                 pass
 
+            # Persist retro (lessons learned) to the retro store
+            try:
+                sys.path.insert(0, str(Path(__file__).parent.parent / "harness"))
+                from _retro_conclude import _persist_retro
+                conclude_text = (cwd / ".techne" / "loop" / "conclude.txt").read_text()
+                _persist_retro(state.task_id, conclude_text, state.task_id)
+            except Exception:
+                # best-effort — never block DONE on retro failure
+                pass
+
         # Print detailed phase report for the user
         report = format_phase_report(state, old_phase, results, cwd)
         print(report)
