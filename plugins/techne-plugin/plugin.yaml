@@ -1,0 +1,22 @@
+name: techne-plugin
+version: "1.0.0"
+description: >
+  Techne enforcement adapter — delegates gate checks to the techne gate CLI.
+  Hooks pre_tool_call to run:
+    - techne gate hashline  (IMPLEMENT phase: check diff linearity)
+    - techne gate forbidden (any write: block forbidden patterns)
+    - techne gate audit    (log every gate outcome)
+  Writes RL events to .techne/events/rl.jsonl.
+
+author: Techne
+repo: https://github.com/jtoemion/techne
+
+hooks:
+  on_session_start: true
+  pre_tool_call: true
+
+commands:
+  - name: techne-plugin
+    description: >
+      Techne enforcement control.
+      Subcommands: status, off
