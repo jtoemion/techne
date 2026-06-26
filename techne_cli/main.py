@@ -365,6 +365,28 @@ def cmd_doctor(args):
     print()
 
 
+def cmd_proposals(args):
+    """Review pending GRPO proposals."""
+    cwd = Path.cwd()
+    proposals_path = cwd / ".techne" / "memory" / "retro_proposals.md"
+    if not proposals_path.exists():
+        print("No pending GRPO proposals.")
+        sys.exit(0)
+
+    content = proposals_path.read_text()
+    pending = content.count("PROPOSE ADD")
+    if pending == 0:
+        print("No pending proposals.")
+        sys.exit(0)
+
+    print(f"\n  ⚡  {pending} GRPO proposal(s) ready for review:")
+    print(f"  File: {proposals_path}")
+    print()
+    print(content)
+    print()
+    print(f"Run: python3 harness/apply_retro.py to accept/reject proposals")
+
+
 def cli():
     parser = argparse.ArgumentParser(
         prog="techne",
@@ -395,6 +417,11 @@ def cli():
     p_gate.add_argument("name", choices=["hashline", "forbidden", "audit"])
     p_gate.add_argument("target", help="diff file path or JSON event string")
     p_gate.set_defaults(func=cmd_gate)
+
+    p_proposals = sub.add_parser("proposals", help="Review pending GRPO proposals")
+    p_proposals.add_argument("action", nargs="?", default="review",
+                              choices=["review"], help="Action to perform (default: review)")
+    p_proposals.set_defaults(func=cmd_proposals)
 
     args = parser.parse_args()
     args.func(args)

@@ -803,6 +803,16 @@ def main() -> int:
                 # best-effort — never block DONE on retro failure
                 pass
 
+            # Check for unreviewed GRPO proposals
+            proposals_path = cwd / ".techne" / "memory" / "retro_proposals.md"
+            if proposals_path.exists():
+                content = proposals_path.read_text()
+                pending = content.count("PROPOSE ADD")
+                if pending > 0:
+                    print(f"\n  ⚡  {pending} GRPO proposal(s) ready for review:")
+                    print(f"      Run: techne proposals review")
+                    print(f"      File: .techne/memory/retro_proposals.md")
+
         # Print detailed phase report for the user
         report = format_phase_report(state, old_phase, results, cwd)
         print(report)
