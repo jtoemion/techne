@@ -363,6 +363,28 @@ def _check_conclude_gates(path: Path) -> list[GateResult]:
     if path.exists():
         text = path.read_text(encoding="utf-8", errors="replace")
 
+        # 3a — Require retro markers (DECISION: / LESSON: / DISCIPLINE:)
+        has_markers = bool(re.search(
+            r"^\s*[-*]\s+(DECISION|LESSON|DISCIPLINE):", text, re.MULTILINE
+        ))
+        results.append(GateResult(
+            "retro markers",
+            has_markers,
+            "markers found" if has_markers
+            else "missing retro markers — add: DECISION: / LESSON: / DISCIPLINE:",
+        ))
+
+        # 3b — Require VERIFY reference
+        has_verify_ref = bool(re.search(
+            r"(?:tests?\s+pass|all\s+\d+\s+pass|pytest|test_output|✓)", text, re.I
+        ))
+        results.append(GateResult(
+            "verify reference",
+            has_verify_ref,
+            "test reference found" if has_verify_ref
+            else "no test reference — mention test results in conclude.txt",
+        ))
+
         # Must reference Honcho
         has_honcho = "HONCHO" in text or "honcho" in text
         results.append(GateResult(
@@ -371,12 +393,23 @@ def _check_conclude_gates(path: Path) -> list[GateResult]:
             "found" if has_honcho else "missing — include honcho conclusion ID",
         ))
 
-        # Must be more than a stub
-        has_content = len(text.strip()) >= 20
+        # 3d — HONCHO ID must match task context (kebab-case)
+        has_valid_honcho = bool(re.search(
+            r"HONCHO:\s+[a-z][a-z0-9-]{3,}", text
+        ))
+        results.append(GateResult(
+            "valid honcho id",
+            has_valid_honcho,
+            "valid honcho id found" if has_valid_honcho
+            else "missing valid HONCHO id — format: HONCHO: kebab-case-id",
+        ))
+
+        # Must be more than a stub (3c — raise min from 20 → 150 chars)
+        has_content = len(text.strip()) >= 150
         results.append(GateResult(
             "substance",
             has_content,
-            f"{len(text.strip())} chars" if has_content else "too short (< 20 chars)",
+            f"{len(text.strip())} chars" if has_content else "too short (< 150 chars)",
         ))
 
     return results
