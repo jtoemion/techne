@@ -159,6 +159,38 @@ def _check_recall_gates(path: Path) -> list[GateResult]:
 
     if path.exists():
         text = path.read_text(encoding="utf-8", errors="replace")
+
+        # 4a — Require context reference
+        has_context_ref = bool(re.search(
+            r"\.techne/context/|project_digest|file_roles|context_hash", text
+        ))
+        results.append(GateResult(
+            "context reference",
+            has_context_ref,
+            "context file referenced" if has_context_ref
+            else "no .techne/context/ reference — read context pack before RECALL",
+        ))
+
+        # 4b — Require FILE_SCOPE declaration
+        has_scope = bool(re.search(r"^FILE_SCOPE:", text, re.MULTILINE))
+        results.append(GateResult(
+            "FILE_SCOPE declared",
+            has_scope,
+            "FILE_SCOPE found" if has_scope
+            else "missing FILE_SCOPE: line — list expected files to change",
+        ))
+
+        # If FILE_SCOPE present, extract file list and write to file_scope.json
+        if has_scope:
+            import json
+            scope_lines = re.findall(r"^FILE_SCOPE:\s*(.*)", text, re.MULTILINE)
+            files = []
+            for line in scope_lines:
+                files.extend(f.strip() for f in line.split(",") if f.strip())
+            if files:
+                scope_file = path.parent / "file_scope.json"
+                scope_file.write_text(json.dumps(files))
+
         # Must contain evidence of Honcho context recall
         has_honcho = "HONCHO_CONTEXT:" in text or "HONCHO:" in text
         has_workshop = "WORKSHOP_CONTEXT:" in text
@@ -177,6 +209,17 @@ def _check_recall_gates(path: Path) -> list[GateResult]:
             len(lines) >= 3,
             f"{len(lines)} non-empty line(s)" if len(lines) >= 3
             else f"only {len(lines)} line(s) — need at least 3",
+        ))
+
+        # 10 — Knowledge graph consultation
+        has_kg_ref = bool(re.search(
+            r"knowledge.graph|kg.search|wikilink|prior.task|previous.task|ledger", text, re.I
+        ))
+        results.append(GateResult(
+            "knowledge graph consulted",
+            has_kg_ref,
+            "KG reference found" if has_kg_ref
+            else "no knowledge graph reference — run: techne kg search <term>",
         ))
 
     return results
@@ -247,6 +290,24 @@ def _check_implement_gates(path: Path) -> list[GateResult]:
                 _hg_detail if _hg_passed else f"stale read — {_hg_detail} — re-read the file",
             ))
 
+        # File-scope gate — diff only touches declared files
+        scope_file = Path.cwd() / ".techne" / "loop" / "file_scope.json"
+        if scope_file.exists():
+            import json
+            declared = set(json.loads(scope_file.read_text()))
+            touched = {
+                line[6:].partition("\t")[0].strip()
+                for line in text.split("\n")
+                if line.startswith("+++ ") and line[6:].strip() != "/dev/null"
+            }
+            undeclared = touched - declared
+            results.append(GateResult(
+                "file scope",
+                not undeclared,
+                f"all {len(touched)} file(s) in scope" if not undeclared
+                else f"undeclared file(s): {', '.join(sorted(undeclared))}",
+            ))
+
         # Count added/deleted lines
         added = len([l for l in text.split("\n") if l.startswith("+") and not l.startswith("+++")])
         deleted = len([l for l in text.split("\n") if l.startswith("-") and not l.startswith("---")])
@@ -314,6 +375,24 @@ def _check_verify_gates(path: Path) -> list[GateResult]:
             "pass indicator",
             has_pass,
             "pass signal found" if has_pass else "no pass signal detected",
+        ))
+
+        # 9a — Detect empty test suite
+        ran_zero = bool(re.search(r"ran\s+0\s+test|0\s+passed|collected\s+0\s+item", text, re.I))
+        results.append(GateResult(
+            "non-empty test suite",
+            not ran_zero,
+            "tests ran" if not ran_zero
+            else "empty test suite — 0 tests ran, nothing verified",
+        ))
+
+        # 9b — Require explicit test count
+        has_count = bool(re.search(r"\d+\s+passed", text, re.I))
+        results.append(GateResult(
+            "explicit test count",
+            has_count,
+            "test count found" if has_count
+            else "no test count — output must show N passed",
         ))
 
     # ── Node-discipline gate (soft by default; hard block with --strict-nodes) ──
