@@ -373,6 +373,125 @@ and walks the agent through accept/reject for each pending entry.
 
 ---
 
+### Task 13 — Sterile Techne Repo Restructure
+
+**What:** Strip `repos/techne` down to enforcement only. Everything that is not a gate, hook, audit, or CLI moves out.
+
+**Keep in `repos/techne/`:**
+```
+hooks/phase_guard_hook.py       ← CC enforcement adapter
+scripts/next.py                 ← phase transitions + gate checks
+scripts/next_state.py
+scripts/hash_gate.py            ← hashline gate
+scripts/audit_chain.py          ← audit chain
+scripts/init_project.py         ← scaffold (.techne/)
+techne_cli/                     ← CLI (gate, init, next, doctor, handoff, status)
+harness/gates.py                ← gate functions
+harness/pipeline_enforcer.py    ← phase mode classifier
+harness/enforcement.py
+harness/mistakes.py             ← gate failure store (enforcement reads it)
+harness/ledger.py               ← enforcement writes here
+harness/_retro_conclude.py      ← wisdom extraction (wired in Task 2)
+harness/grpo.py                 ← RL event logic
+tests/                          ← all tests stay
+```
+
+**Move out:**
+```
+skills/          → .hermes/skills/techne-skills/   (Techne skill library)
+agents/          → .hermes/agents/                 (phase agent prompts)
+harness/orchestrator_loop.py  → orchestrator plugin (Task 14)
+harness/driver.py             → orchestrator plugin (Task 14)
+harness/task_db.py            → orchestrator plugin (Task 14)
+harness/phase_skills.py       → orchestrator plugin (Task 14)
+docs/            → keep (plans, retros, ADRs stay with source)
+```
+
+After this task, a reader opening `repos/techne/` should see only enforcement machinery.
+No skills, no orchestration, no agent prompts.
+
+**Verify:** `ls repos/techne/` shows no `skills/` or `agents/` directory. `techne doctor` still passes. All enforcement tests still pass.
+
+---
+
+### Task 14 — Orchestrator as Hermes Plugin
+
+**Files:** `.hermes/plugins/orchestrator/plugin.yaml` + `.hermes/plugins/orchestrator/__init__.py`
+
+**What:** Elevate the orchestrator from a SKILL.md (prose the model follows) to a registered Hermes plugin with lifecycle hooks and deterministic state management. The plugin handles what prose cannot enforce.
+
+**plugin.yaml:**
+```yaml
+name: orchestrator
+version: "1.0.0"
+description: >
+  Techne pipeline orchestrator — drives RECALL → IMPLEMENT → VERIFY → CONCLUDE.
+  Tracks phase state, enforces retry caps, surfaces HITL blocks, manages session
+  continuity via handoff.md.
+
+hooks:
+  on_session_start: true   # read state.json, surface active phase to agent
+  pre_tool_call: true      # enforce retry cap (block if phase exceeded 3 attempts)
+  on_session_end: true     # write handoff.md if task incomplete
+
+commands:
+  - name: orchestrator
+    description: Start or resume a Techne pipeline task
+    subcommands: [status, retry, block, unblock, handoff]
+```
+
+**`__init__.py` — key responsibilities:**
+- `on_session_start`: read `.techne/loop/state.json`, print current phase + attempt count
+- `pre_tool_call`: if `attempt_count > 3` for current phase → `{"blocked": True, "reason": "retry cap — HITL required"}`
+- `on_session_end`: if phase != DONE → call `techne handoff` to write continuity doc
+- Phase routing: on user message containing `ultrawork` or `ulw` → inject pipeline instructions
+
+Skills are still loaded as prose (SKILL.md files from `.hermes/skills/`). The plugin handles the state and caps; the skill handles the instructions.
+
+**Verify:** Start a task, fail IMPLEMENT gate 4 times → assert plugin blocks on 4th attempt with HITL message. Session end with incomplete task → assert handoff.md written.
+
+---
+
+### Task 15 — Revolver Plugin Reintroduction
+
+**What:** Revolver is the delegation fallback plugin — when a model/provider fails or produces garbage output, Revolver rotates to the next cylinder (model/key combination) and retries without human intervention. It was documented in `docs/techne-domains.md` (Domain 9) and `skills/receptionist/references/revolver-plugin-hardening.md` but is not wired into the current grand plan.
+
+**Reintroduce in three steps:**
+
+**15a. Document as required companion** in `ref/HANDOFF-HERMES.md`:
+```
+## Required Companion Plugins
+
+### Revolver (~/.hermes/plugins/revolver/)
+Delegation fallback — rotates model/provider on failure.
+Required for production Techne use. Without it, a blocked IMPLEMENT
+(e.g. model API failure) stalls the pipeline permanently.
+
+Setup: copy revolver-plugin-hardening.md config into ~/.hermes/revolver.yaml
+Commands: /revolver status, /revolver graph, /revolver next
+```
+
+**15b. Add Revolver health check to `techne doctor`** (extend Task 11):
+```
+Revolver checks:
+✓/✗  ~/.hermes/plugins/revolver/ exists
+✓/✗  ~/.hermes/revolver.yaml cylinder pool configured
+✓/✗  /revolver status callable
+```
+
+**15c. Wire Revolver into orchestrator plugin** (extend Task 14):
+When orchestrator's `pre_tool_call` detects a model failure pattern (empty output,
+repeated identical errors, API error codes), emit:
+```python
+{"blocked": False, "inject": "/revolver next — model failure detected, rotating cylinder"}
+```
+This nudges Hermes to rotate before the next call rather than retrying the same
+failing model.
+
+**Verify:** `techne doctor` shows Revolver section. `ref/HANDOFF-HERMES.md` includes Revolver setup instructions.
+
+---
+
 ### Task 5 — Promote Orchestrator to `/techne` Skill Entry Point *(execute last)*
 
 **Files:**
@@ -381,13 +500,13 @@ and walks the agent through accept/reject for each pending entry.
 
 **What:** Single `SKILL.md` at `.hermes/skills/techne/SKILL.md` contains:
 
-1. Doctor check + skill inventory (both `.hermes/skills/` and `skills/`)
+1. Doctor check + skill inventory (`.hermes/skills/` and `.hermes/skills/techne-skills/`)
 2. Full loop: RECALL → IMPLEMENT → VERIFY → CONCLUDE with artifact requirements
 3. Skill routing table (when to call omh-deep-research, omh-ralplan, omh-deep-interview)
-4. Phase guard cheatsheet (what each gate now checks, per Tasks 3,4,8,9,10)
+4. Phase guard cheatsheet (what each gate checks, per Tasks 3,4,8,9,10)
 5. HITL blocking protocol
 6. Knowledge graph consultation instruction at RECALL
-7. Health commands
+7. Health commands including Revolver status
 
 Delete `.hermes/skills/techne.md` (flat file) once directory-based version exists.
 Keep `skills/orchestrator/SKILL.md` as redirect for CC backward compat.
@@ -399,17 +518,20 @@ Keep `skills/orchestrator/SKILL.md` as redirect for CC backward compat.
 ## Execution Order
 
 ```
+Task 13  — repo restructure (do early — clarifies what's enforcement vs ecosystem)
 Task 6   — gate CLI (everything else calls techne gate)
-Task 7   — pre-flight at init (standalone, no deps)
-Task 1   — Hermes plugin (needs Task 6)
+Task 7   — pre-flight at init (standalone)
+Task 1   — Hermes enforcement plugin (needs Task 6)
+Task 14  — orchestrator plugin (needs Task 13 — files moved out first)
+Task 15  — Revolver reintroduction (needs Task 11 for doctor, Task 14 for wiring)
 Task 2   — wire _persist_retro (independent)
-Task 3   — harden CONCLUDE gate (needs Task 2 wired first)
+Task 3   — harden CONCLUDE gate (needs Task 2)
 Task 12  — GRPO proposal review (needs Task 2 + Task 3)
 Task 4   — harden RECALL gate + FILE_SCOPE write
-Task 8   — file-scope gate at IMPLEMENT (needs Task 4 to write file_scope.json)
+Task 8   — file-scope gate at IMPLEMENT (needs Task 4)
 Task 9   — harden VERIFY gate (independent)
-Task 10  — KG consultation at RECALL (needs Task 4, modifies same function)
-Task 11  — Hermes doctor (needs Task 1 to check)
+Task 10  — KG consultation at RECALL (needs Task 4)
+Task 11  — Hermes doctor (needs Task 1 + Task 15)
 Task 5   — orchestrator skill merge (last — documents everything above)
 ```
 
@@ -417,26 +539,29 @@ Task 5   — orchestrator skill merge (last — documents everything above)
 
 ## What Does NOT Change
 
-- Path constants — `.techne/` stays relative; no code changes
-- `harness/` internals — model-backed driver unchanged
-- CC PreToolUse hook (`hooks/phase_guard_hook.py`) — still works
+- Path constants — `.techne/` stays relative; no code changes needed
+- CC PreToolUse hook (`hooks/phase_guard_hook.py`) — still works unchanged
 - `scripts/hash_gate.py` — gate logic unchanged; exposed via CLI in Task 6
 - `harness/grpo.py` — GRPO proposal logic unchanged; Task 1 adds RL event writes
+- `harness/` enforcement modules — internals unchanged; only orchestration modules move
 
 ---
 
 ## Done When
 
+- [ ] `repos/techne/` contains only enforcement (no skills/, no agents/) (Task 13)
 - [ ] `techne gate hashline` / `forbidden` / `audit` callable as CLI (Task 6)
 - [ ] `techne init` prints relevant mistakes + KG hits before scaffolding (Task 7)
 - [ ] `.hermes/plugins/techne_plugin.py` blocks stale diffs, writes rl.jsonl (Task 1)
+- [ ] `.hermes/plugins/orchestrator/` registered, enforces retry cap + handoff (Task 14)
+- [ ] Revolver documented as companion, wired into doctor + orchestrator (Task 15)
 - [ ] CONCLUDE → DONE writes to `.techne/memory/` (Task 2)
 - [ ] conclude.txt without retro markers / verify ref / valid HONCHO → blocked (Task 3)
 - [ ] recall.txt without context ref / FILE_SCOPE → blocked; file_scope.json written (Task 4)
 - [ ] diff touching undeclared file → blocked with file list (Task 8)
 - [ ] `0 passed` / empty suite → VERIFY blocked (Task 9)
 - [ ] recall.txt without KG reference → blocked (Task 10)
-- [ ] `techne doctor` shows Hermes health section (Task 11)
+- [ ] `techne doctor` shows Hermes + Revolver health sections (Task 11)
 - [ ] GRPO pending proposals surfaced at CONCLUDE (Task 12)
 - [ ] `/techne` loads from `.hermes/skills/techne/SKILL.md` (Task 5)
 - [ ] All existing tests still pass
