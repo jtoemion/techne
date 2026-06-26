@@ -240,6 +240,54 @@ def cmd_handoff(args):
     print(doc)
 
 
+def cmd_gate(args):
+    """Run a named gate check: hashline, forbidden, or audit."""
+    # Ensure scripts/ and harness/ are on sys.path
+    _gate_repo = _repo_root()
+    for _p in [str(_gate_repo / "scripts"), str(_gate_repo / "harness")]:
+        if _p not in sys.path:
+            sys.path.insert(0, _p)
+    from hash_gate import validate_diff_context
+    from next import _check_no_forbidden_patterns, GateResult
+    from audit_chain import append_entry, AuditEntry
+
+    if args.name == "hashline":
+        diff_text = Path(args.target).read_text(encoding="utf-8")
+        passed, detail = validate_diff_context(diff_text)
+        if passed:
+            print(_ok(f"hashline: {detail}"))
+            sys.exit(0)
+        else:
+            print(_fail(f"hashline: {detail}"))
+            sys.exit(1)
+
+    elif args.name == "forbidden":
+        results = _check_no_forbidden_patterns(Path(args.target))
+        failures = [r for r in results if not r.passed]
+        if not failures:
+            print(_ok("no forbidden patterns detected"))
+            sys.exit(0)
+        for r in failures:
+            print(_fail(f"forbidden: {r.name} — {r.detail}"))
+        sys.exit(1)
+
+    elif args.name == "audit":
+        event = json.loads(args.target)
+        # Build AuditEntry with sensible defaults for required fields
+        entry = AuditEntry(
+            seq=event.get("seq", 0),
+            timestamp=event.get("timestamp", datetime.now(timezone.utc).isoformat()),
+            task_id=event.get("task_id", ""),
+            phase=event.get("phase", ""),
+            gates=event.get("gates", []),
+            summary=event.get("summary", ""),
+            prev_hash=event.get("prev_hash", ""),
+        )
+        entry_hash = append_entry(entry)
+        print(f"entry_hash={entry_hash}")
+        sys.exit(0)
+
+
 def cmd_doctor(args):
     """Run a 6-category health check."""
     from techne_cli.core import read_state, verify_chain
@@ -342,6 +390,11 @@ def cli():
 
     p_handoff = sub.add_parser("handoff", help="Write a handoff doc for session continuity")
     p_handoff.set_defaults(func=cmd_handoff)
+
+    p_gate = sub.add_parser("gate", help="Run a named gate check")
+    p_gate.add_argument("name", choices=["hashline", "forbidden", "audit"])
+    p_gate.add_argument("target", help="diff file path or JSON event string")
+    p_gate.set_defaults(func=cmd_gate)
 
     args = parser.parse_args()
     args.func(args)
