@@ -272,3 +272,13 @@ the Hashline gate blocks it before `techne next` is called.
 - `techne_cli/` — the CLI is shared; install Techne as a package, don't rewrite it
 - `scripts/` gate utilities — shared; call via subprocess
 - `.claude/settings.json` — CC-only; Hermes uses `.hermes/config.yaml` instead
+
+## Required Companion Plugins
+
+### Revolver (~/.hermes/plugins/revolver/)
+Delegation fallback — rotates model/provider on failure.
+Required for production Techne use. Without it, a blocked IMPLEMENT
+(e.g. model API failure) stalls the pipeline permanently.
+
+Setup: copy revolver-plugin-hardening.md config into ~/.hermes/revolver.yaml
+Commands: /revolver status, /revolver graph, /revolver next

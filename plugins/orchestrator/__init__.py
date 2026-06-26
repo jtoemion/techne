@@ -11,6 +11,30 @@ TECHNE_STATE = "loop/state.json"
 MAX_RETRIES = 3
 
 
+def _detect_model_failure(tool_name: str, tool_input: dict, tool_output) -> bool:
+    """
+    Detect patterns that suggest a model/API failure requiring Revolver rotation.
+    At pre_tool_call stage we only see the outgoing call, not the response yet,
+    so detection is based on indirect signals:
+      - Tool names that suggest model invocation with empty/null output
+      - Repeated identical tool_input (retry loop indicator)
+      - API error codes (401, 429, 502, 503) in tool_input
+    """
+    if tool_output is None or tool_output == "":
+        # Empty output on a model-adjacent tool may signal API failure
+        if tool_name in ("terminal", "bash", "read_file", "grep", "search_files"):
+            return True
+
+    input_str = str(tool_input or "")
+
+    # API error codes in the input payload suggest a failing upstream call
+    api_error_codes = ("401", "429", "502", "503")
+    if any(code in input_str for code in api_error_codes):
+        return True
+
+    return False
+
+
 def _read_state():
     """Read orchestrator state from JSON file."""
     if STATE_FILE.exists():
@@ -128,6 +152,13 @@ def register(ctx):
                 ),
             }
             return inject
+
+        # Model-failure detection — inject Revolver rotation suggestion
+        if _detect_model_failure(tool_name, tool_input, tool_input):  # tool_output unavailable at pre_call
+            return {
+                "action": "inject",
+                "message": "/revolver next — model failure detected, rotating cylinder",
+            }
 
         # HITL block check
         if state.get("hitl_blocked", False):
