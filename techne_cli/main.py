@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -361,6 +362,59 @@ def cmd_doctor(args):
                 pass
     if not hook_found:
         print(_warn("PreToolUse hook not wired — see HANDOFF-CC-V0.md §7"))
+
+    # 7 — Hermes checks
+    hermes_dir = Path.home() / ".hermes"
+    print(f"\n{_bold('Hermes')}\n" + "─" * 40)
+
+    config_exists = (hermes_dir / "config.yaml").exists()
+    print(_ok("config.yaml exists") if config_exists else _fail("config.yaml missing — run: hermes setup"))
+
+    plugin_registered = False
+    config_path = hermes_dir / "config.yaml"
+    if config_path.exists():
+        try:
+            import yaml
+            config = yaml.safe_load(config_path.read_text())
+            plugins = config.get("plugins", {}).get("enabled", [])
+            plugin_registered = "techne-plugin" in plugins or "techne" in plugins
+        except Exception:
+            pass
+    print(_ok("techne plugin registered") if plugin_registered else _warn("techne plugin not registered in config.yaml"))
+
+    skill_exists = (hermes_dir / "skills" / "techne" / "SKILL.md").exists()
+    print(_ok("techne SKILL.md found") if skill_exists else _warn("techne SKILL.md not found"))
+
+    gate_works = False
+    try:
+        r = subprocess.run(
+            ["python3", "-m", "techne_cli.main", "gate", "hashline", "/dev/null"],
+            capture_output=True, text=True, timeout=10,
+        )
+        gate_works = r.returncode == 0
+    except Exception:
+        pass
+    print(_ok("techne gate hashline callable") if gate_works else _warn("techne gate hashline failed"))
+
+    chain_ok = False
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+        from audit_chain import verify_chain
+        ok, msg = verify_chain()
+        chain_ok = ok
+    except Exception:
+        pass
+    print(_ok("audit chain intact") if chain_ok else _warn("audit chain not verified"))
+
+    # 8 — Revolver checks
+    revolver_dir = hermes_dir / "plugins" / "revolver"
+    revolver_config = Path.home() / ".revolver.yaml"
+    revolver_installed = revolver_dir.exists()
+    print(_ok("Revolver plugin installed") if revolver_installed else _warn("Revolver plugin not found"))
+    if revolver_config.exists():
+        print(_ok("~/.revolver.yaml configured"))
+    else:
+        print(_warn("~/.revolver.yaml not found — see ref/HANDOFF-HERMES.md"))
 
     print()
 
