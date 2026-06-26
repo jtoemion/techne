@@ -1,1 +1,0 @@
-retro-learn/SKILL.md

@@ -1,1 +1,0 @@
-prototype/SKILL.md

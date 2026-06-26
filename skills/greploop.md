@@ -1,1 +1,0 @@
-greploop/SKILL.md

@@ -47,7 +47,7 @@ triggers:
 
 ## Next Steps
 
-- <next> → back to `skills/skill-router.yaml`
+- <next> → back to `.hermes/skills/techne-skills/skill-router.yaml`
 """
 
 TECHNIQUE_TEMPLATE = """\
@@ -80,7 +80,7 @@ triggers:
 
 ## Next Steps
 
-- <next> → back to `skills/skill-router.yaml`
+- <next> → back to `.hermes/skills/techne-skills/skill-router.yaml`
 """
 
 SCRIPT_TEMPLATE = """\
@@ -151,7 +151,7 @@ def scaffold(name: str, skill_type: str, description: str, with_script: bool):
             print(f"  — scripts/{name}.py already exists")
 
     print(f"\nCreated {name} ({skill_type})")
-    print(f"Next: add router entry to skills/skill-router.yaml")
+    print(f"Next: add router entry to .hermes/skills/techne-skills/skill-router.yaml")
 
 def main():
     parser = argparse.ArgumentParser(description="Scaffold a new skill from template")

@@ -65,7 +65,7 @@ description: Harness engineering entry point. Routes to the right sub-skill base
 > **RULE 7 — SKILLS INSIDE TECHNE:**
 > Techne IS the skills library. Every skill — including new ones built in-session — lives
 > under `~/.hermes/skills/techne/skills/`. No standalone Hermes skills outside techne.
-> - New capability bundles go as a new file `skills/<name>.md` or as a directory `skills/<name>/` with sub-skills.
+> - New capability bundles go as a new file in `techne-skills/` or as a directory `techne-skills/<name>/` with sub-skills.
 > - Project-specific reference documents (node maps, handoff docs, audits) go in the project's `docs/` directory, not in techne's `references/`.
 > - The only exceptions are vendored capability skills (see SOURCES.md) and skills installed via `hermes skills install`.
 > - This rule was explicitly set: "techne is the main framework and skills library for hermes."
@@ -76,39 +76,39 @@ See below for pipeline details, enforcement stack reference, and troubleshooting
 
 | You're doing... | Load this |
 |---|---|
-| **`ultrawork <task>` / `ulw` — run full pipeline autonomously** | load `skills/orchestrator.md`, run `techne init` then loop phases hands-free |
-| Building a feature or fix | `skills/implementer.md` |
-| Something is broken | `skills/diagnose.md` |
-| Writing tests first | `skills/tdd.md` |
-| Stress-testing a plan | `skills/grill.md` |
-| Node isolation & architecture discipline | `skills/node-discipline.md` |
-| Discovering what to build | `skills/persona-brainstorm.md` |
-| Prototyping a design question | `skills/prototype.md` |
-| Finding refactor/architecture wins | `skills/improve-architecture.md` |
-| Checking a pull request (one pass) | `skills/check-pr.md` |
-| Iterating a PR to a perfect review | `skills/greploop.md` |
-| Writing a new skill | `skills/writing-skill.md` |
-| UI design decisions | `skills/ui-grill.md` |
-| Prompting LLM for UI | `skills/ui-craft.md` |
-| UI specificity standard | `skills/ui-physics.md` |
-| Design-to-dev handoff | `skills/ui-handoff.md` |
-| Reviewing agent output | `skills/evaluation.md` |
-| Context preflight / project context | `skills/context-amortization.md` |
+| **`ultrawork <task>` / `ulw` — run full pipeline autonomously** | load `orchestrator`, run `techne init` then loop phases hands-free |
+| Building a feature or fix | `implementer` |
+| Something is broken | `diagnose` |
+| Writing tests first | `tdd` |
+| Stress-testing a plan | `grill` |
+| Node isolation & architecture discipline | `node-discipline` |
+| Discovering what to build | `persona-brainstorm` |
+| Prototyping a design question | `prototype` |
+| Finding refactor/architecture wins | `improve-architecture` |
+| Checking a pull request (one pass) | `check-pr` |
+| Iterating a PR to a perfect review | `greploop` |
+| Writing a new skill | `writing-skill` |
+| UI design decisions | `ui-grill` |
+| Prompting LLM for UI | `ui-craft` |
+| UI specificity standard | `ui-physics` |
+| Design-to-dev handoff | `ui-handoff` |
+| Reviewing agent output | `evaluation` |
+| Context preflight / project context | `context-amortization` |
 | Creating project documentation (5-file pattern) | `references/context-amortization-creation.md` |
-| Honcho checkpoint before compaction | `skills/honcho-precompaction-checkpoint.md` |
+| Honcho checkpoint before compaction | `honcho-precompaction-checkpoint` |
 | SSE / stream abort cleanup in React | `react-sse-abort-pattern` (in `software-development/`) |
 | Slicing codebase into 5 layers for review | `references/bug-hunt-report-format.md` — see "Layer Classification" section |
 | TDD + YAGNI within pipeline | `references/tdd-yagni-pipeline-guide.md` — RED→GREEN cycle, YAGNI rules, gate formats |
 | Context refresh after every change | `references/context-refresh-bookend.md` |
-| TypeScript type errors | `skills/typescript.md` |
-| React 19 + Vite work | `skills/react.md` |
-| Svelte/SvelteKit work | `skills/svelte.md` |
-| Testing a web app in a browser | `skills/webapp-testing/SKILL.md` |
-| Building an MCP server | `skills/mcp-builder/SKILL.md` |
+| TypeScript type errors | `typescript` |
+| React 19 + Vite work | `react` |
+| Svelte/SvelteKit work | `svelte` |
+| Testing a web app in a browser | `webapp-testing` |
+| Building an MCP server | `mcp-builder` |
 
 > The last two are **vendored capability skills** (Anthropic) — folders with `scripts/`
 > the agent runs as black-box tools. Bundle format, not Techne house format; do not edit
-> their internals. Provenance + re-sync: `skills/SOURCES.md`.
+> their internals. Provenance + re-sync: `techne-skills/SOURCES.md`.
 
 #### Node-discipline sub-skills & tools
 
@@ -116,10 +116,10 @@ The node-discipline skill ships with sub-skills and automated enforcement script
 
 | Sub-skill | Reference |
 |-----------|-----------|
-| CODE node deep reference | `skills/node-discipline/code-node.md` |
-| Gateway patterns (IF/MERGE/SET) | `skills/node-discipline/gateway-patterns.md` |
-| YAGNI decision tree | `skills/node-discipline/yagni-decision-tree.md` |
-| ESLint rules for enforcement | `skills/node-discipline/eslint-enforcement.md` |
+| CODE node deep reference | `techne-skills/node-discipline/code-node.md` |
+| Gateway patterns (IF/MERGE/SET) | `techne-skills/node-discipline/gateway-patterns.md` |
+| YAGNI decision tree | `techne-skills/node-discipline/yagni-decision-tree.md` |
+| ESLint rules for enforcement | `techne-skills/node-discipline/eslint-enforcement.md` |
 
 | Tool | Command |
 |------|---------|
@@ -164,12 +164,12 @@ For the full 10-phase pipeline implementation details, context injection pattern
 
 These are injected for every task — do not skip:
 
-- `skills/context-amortization.md` — mandatory context preflight and context packs
-- `skills/honcho-precompaction-checkpoint.md` — checkpoint durable facts to Honcho before compaction
-- `skills/nextjs.md` — hard gates that will reject your diff (Next.js projects only)
-- `skills/typescript.md` — hard gates that will reject your diff
+- `context-amortization` — mandatory context preflight and context packs
+- `honcho-precompaction-checkpoint` — checkpoint durable facts to Honcho before compaction
+- `nextjs` — hard gates that will reject your diff (Next.js projects only)
+- `typescript` — hard gates that will reject your diff
 
-**Scope note:** Techne's gates (`gate_no_redirect_outside_middleware`, `gate_no_router_import`, etc.) and its pipeline phases (IMPLEMENT → VERIFY → REVIEW → RETRO → EVALUATE) are designed for **Next.js full-stack projects**. For React 19 + Vite projects (e.g., pastpapr), the routing and middleware conventions don't apply. Use this router for sub-skill routing and load `skills/react.md` for the ESLint/TypeScript pitfalls, but skip the Next.js-specific gate logic.
+**Scope note:** Techne's gates (`gate_no_redirect_outside_middleware`, `gate_no_router_import`, etc.) and its pipeline phases (IMPLEMENT → VERIFY → REVIEW → RETRO → EVALUATE) are designed for **Next.js full-stack projects**. For React 19 + Vite projects (e.g., pastpapr), the routing and middleware conventions don't apply. Use this router for sub-skill routing and load `react` for the ESLint/TypeScript pitfalls, but skip the Next.js-specific gate logic.
 
 ## ⚠️ Receptionist Dispatch Pattern — MANDATORY (techne loaded = pipeline active)
 
@@ -585,7 +585,7 @@ The Workshop Garage build is complete. All items below are implemented and shipp
 
 2. **`prompt_evolution.ratify()` does not write to skill files.** It mutates an in-memory dict that vanishes on restart. If GRPO scoring is built before this is fixed, it produces numbers with nowhere to land.
 
-3. **The real skill-write path is `apply_retro.py`.** Its `apply_add()` / `apply_delete()` / `apply_resolve()` functions write directly into paths under `skills/`. If GRPO needs to update skills, extend this path.
+3. **The real skill-write path is `apply_retro.py`.** Its `apply_add()` / `apply_delete()` / `apply_resolve()` functions write directly into paths under `techne-skills/`. If GRPO needs to update skills, extend this path.
 
 4. **Don't duplicate the wikilink rebuild logic.** `_log_retro_learn_trigger()` and REFRESH_CONTEXT both rebuild parts of the graph.
 
@@ -613,9 +613,9 @@ task completes → reward logged → advantage computed (per task-type group)
 
 ### Framework Skills Self-Improvement
 
-Each skill in `skills/` can be improved via the GRPO loop:
+Each skill in `techne-skills/` can be improved via the GRPO loop:
 1. Task outcomes using that skill are scored and logged
-2. High-advantage outcomes generate proposals targeting `skills/{skill}.md`
+2. High-advantage outcomes generate proposals targeting `techne-skills/{skill}.md`
 3. Human review applies the proposal
 4. Future tasks using that skill get the improved version
 
@@ -637,17 +637,17 @@ This log is gitignored. Use it to audit RL behavior or diagnose why proposals we
 
 ### GRPO Test Pollution Warning
 
-The RL test suite (`tests/test_rl_event_log.py`, `tests/test_grpo_proposals.py`) runs `post_run_evolve()` against mock data. If the test environment does NOT use a temp directory for the events log and rewards DB, proposals get written to **real** `.techne/events/rl.jsonl` and **real** `skills/{skill}.md` files.
+The RL test suite (`tests/test_rl_event_log.py`, `tests/test_grpo_proposals.py`) runs `post_run_evolve()` against mock data. If the test environment does NOT use a temp directory for the events log and rewards DB, proposals get written to **real** `.techne/events/rl.jsonl` and **real** `techne-skills/{skill}.md` files.
 
 Symptoms: skill files suddenly gain 10+ identical GRPO proposal entries at the bottom, all with the same score (e.g. `avg score 0.900, advantage 0.400`). The proposals contain no actionable content because they were generated from synthetic mock data.
 
-**Fix:** Revert the skill file (`git checkout -- skills/{skill}/SKILL.md`) or remove the RL-Proposed Additions section entries. The root cause is test isolation — the test suite runs from the techne repo root and writes to `ROOT / "skills" / skill / "SKILL.md"` via `propose_framework_edits()`.
+**Fix:** Revert the skill file (`git checkout -- techne-skills/{skill}/SKILL.md`) or remove the RL-Proposed Additions section entries. The root cause is test isolation — the test suite runs from the techne repo root and writes to `ROOT / "techne-skills" / skill / "SKILL.md"` via `propose_framework_edits()`.
 
 ## Next Steps
 
-- Building something? → `skills/implementer.md`
-- Debugging? → `skills/diagnose.md`
-- Not sure what to do first? → `skills/grill.md`
+- Building something? → `techne-skills/implementer.md`
+- Debugging? → `techne-skills/diagnose.md`
+- Not sure what to do first? → `techne-skills/grill.md`
 - Production-readiness audit? → `references/production-readiness-scout.md` (tiered P0→P3 gap analysis: security, error boundaries, CSP, tsc, deps, CI)
 - Modifying the orchestrator pipeline? → `references/orchestrator-pipeline-modification.md` (phase addition patterns, pitfalls, schema migration)
 - Orchestrator pipeline fixes (RECALL/CONCLUDE phases, RETRO gate, phase_mode)? → `references/orchestrator-pipeline-fixes.md`
@@ -667,10 +667,10 @@ Symptoms: skill files suddenly gain 10+ identical GRPO proposal entries at the b
 - Fixing a bug with TDD + YAGNI through the pipeline? → `references/tdd-yagni-pipeline-guide.md` (RED→GREEN cycle, worked example, pipeline submission)
 - Creating project documentation from scratch (ARCHITECTURE/ERD/ADR/BUSINESS_RULES/APIs)? → `references/context-amortization-creation.md` (5-file pattern with codebase verification)
 - Refreshing context amortization after a change? → `references/context-refresh-bookend.md` (what to update, what to skip, YAGNI for context)
-- React SSE stream abort pattern (memory leak prevention)? → `skills/react-sse-abort-pattern.md` (useEffect cleanup for abort-on-unmount)
+- React SSE stream abort pattern (memory leak prevention)? → `techne-skills/react-sse-abort-pattern.md` (useEffect cleanup for abort-on-unmount)
 - UI design decisions? → `superpowers/frontend-avant-garde/SKILL.md` (Senior Frontend Architect — opinionated, output-first)
-- React 19 + Vite project work? → `skills/react.md` (useEffect deps, React Query mutation refs, exhaustive-deps guards)
-- Svelte project work? → `skills/svelte.md` ($state mutation through helpers, Dexie schema/types duality, dev-only route guard, dynamic imports)
+- React 19 + Vite project work? → `techne-skills/react.md` (useEffect deps, React Query mutation refs, exhaustive-deps guards)
+- Svelte project work? → `techne-skills/svelte.md` ($state mutation through helpers, Dexie schema/types duality, dev-only route guard, dynamic imports)
 - Stress-testing the pipeline (21 synthetic tasks, 39 checks)? → `tests/stress_test.py` (parameterized SyntheticModel, edge-case coverage for all 11 phases, 5 disciplines, both phase_modes)
 - User wants a per-phase tracking doc updated after every submit? → `references/per-phase-tracking-doc.md` (pattern for maintaining an external scratch doc that records lessons/anti-patterns discovered during each pipeline phase)
 - Rotating API keys / delegation model on 401/429 errors? → `~/.hermes/plugins/rotate_config/` (Hermes plugin with automatic + `/rotate-config` manual trigger)

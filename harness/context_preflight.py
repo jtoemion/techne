@@ -45,15 +45,10 @@ HASH_WATCH_PATTERNS = (
     "docker-compose.yml",
     "docker-compose.yaml",
     ".env.example",
-    "skills/skill-router.yaml",
+    ".hermes/skills/techne-skills/skill-router.yaml",
     "harness/gate-config.yaml",
     "harness/context_preflight.py",
-    "harness/orchestrator_loop.py",
     "harness/pipeline_enforcer.py",
-    "harness/task_db.py",
-    "agents/*.md",
-    "skills/*.md",
-    "skills/**/*.md",
 )
 
 PACK_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (

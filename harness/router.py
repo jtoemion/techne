@@ -16,7 +16,8 @@ except ImportError:
 
 HARNESS_DIR = Path(__file__).parent
 ROOT = HARNESS_DIR.parent
-ROUTER_PATH = HARNESS_DIR.parent / "skills" / "skill-router.yaml"
+_TECHNE_SKILLS = Path.home() / ".hermes" / "skills" / "techne-skills"
+ROUTER_PATH = _TECHNE_SKILLS / "skill-router.yaml"
 
 
 def _load_router() -> dict:

@@ -1,1 +1,0 @@
-ui-grill/SKILL.md

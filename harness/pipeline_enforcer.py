@@ -40,7 +40,10 @@ from pathlib import Path
 from typing import Optional
 
 from task_db import TaskDB, Task
-from phase_skills import _load_phase_skills
+try:
+    from phase_skills import _load_phase_skills
+except ImportError:
+    _load_phase_skills = None
 
 
 # ── Memory directory and override log ──────────────────────────────────────
@@ -1317,8 +1320,9 @@ def get_phase_prompt(task_id: str, phase: str, db: TaskDB) -> str:
     prompt += f"YOUR INSTRUCTIONS: {PHASE_DESCRIPTIONS.get(phase, phase)}\n"
 
     # Phase-specific skill
-    phase_skills = _load_phase_skills(phase.lower())
-    if phase_skills:
-        prompt += f"\n{phase_skills}\n"
+    if _load_phase_skills is not None:
+        phase_skills = _load_phase_skills(phase.lower())
+        if phase_skills:
+            prompt += f"\n{phase_skills}\n"
 
     return prompt
