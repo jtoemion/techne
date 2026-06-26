@@ -643,6 +643,31 @@ Symptoms: skill files suddenly gain 10+ identical GRPO proposal entries at the b
 
 **Fix:** Revert the skill file (`git checkout -- techne-skills/{skill}/SKILL.md`) or remove the RL-Proposed Additions section entries. The root cause is test isolation — the test suite runs from the techne repo root and writes to `ROOT / "techne-skills" / skill / "SKILL.md"` via `propose_framework_edits()`.
 
+## Phase Guard Cheatsheet (Grand Plan Gates)
+
+| Phase | Gate | What it checks |
+|-------|------|----------------|
+| RECALL | context reference | `.techne/context/`, `project_digest`, `file_roles`, or `context_hash` referenced |
+| RECALL | FILE_SCOPE declared | `FILE_SCOPE:` line present — writes `file_scope.json` |
+| RECALL | knowledge graph consulted | `knowledge.graph`, `kg.search`, `wikilink`, `prior.task`, `previous.task`, or `ledger` referenced |
+| RECALL | context recall evidence | `HONCHO_CONTEXT:` or `WORKSHOP_CONTEXT:` header present |
+| RECALL | substance | ≥3 non-empty lines |
+| IMPLEMENT | hashline | Diff context lines match file content on disk |
+| IMPLEMENT | file scope | Diff only touches files declared in FILE_SCOPE |
+| IMPLEMENT | forbidden patterns | No `console.log()`, `TODO`, `FIXME`, `@ts-ignore`, `@ts-expect-error`, `eslint-disable`, `debugger` |
+| IMPLEMENT | scope estimation | ≤ file limit |
+| VERIFY | has output | ≥2 non-empty lines |
+| VERIFY | no test failures | No `FAILED` or `ERROR` tokens (with pass indicator exceptions) |
+| VERIFY | pass indicator | `PASS`, `ok`, `passed`, `✓`, or similar |
+| VERIFY | non-empty test suite | No `ran 0 test` / `0 passed` / `collected 0 item` |
+| VERIFY | explicit test count | `N passed` pattern in output |
+| VERIFY | node discipline | Module boundary scan; strict mode blocks HIGH violations |
+| CONCLUDE | retro markers | `DECISION:`, `LESSON:`, or `DISCIPLINE:` bullet points |
+| CONCLUDE | verify reference | `tests pass`, `pytest`, `test_output`, or `✓` referenced |
+| CONCLUDE | honcho reference | `HONCHO` keyword present |
+| CONCLUDE | valid honcho id | `HONCHO: kebab-case-id` (format validation) |
+| CONCLUDE | substance | ≥150 chars |
+
 ## Next Steps
 
 - Building something? → `techne-skills/implementer.md`
