@@ -558,6 +558,76 @@ def cmd_promotion(args):
         return
 
 
+def cmd_calibration(args):
+    """W8 HITL-removal calibration — per-gate catch-rate + decommission."""
+    repo = _repo_root()
+    for p in [str(repo / "scripts")]:
+        if p not in sys.path:
+            sys.path.insert(0, p)
+    from calibration import calibrate_from_corpus, decommission_gate, show_calibration_status
+
+    if args.calib_cmd == "run":
+        runs = calibrate_from_corpus(gate_name=getattr(args, "gate", None))
+        if not runs:
+            print("  No calibration data (no eval corpus or no gate runs).")
+            return
+        for r in runs:
+            print(f"  {r.gate_name}: catch_rate={r.catch_rate:.1%} verdict={r.verdict}")
+        cands = [r.gate_name for r in runs if r.verdict == "decommission_candidate"]
+        if cands:
+            print(f"\n  Decommission candidates: {', '.join(cands)}")
+        return
+
+    if args.calib_cmd == "decommission":
+        if decommission_gate(args.gate_name):
+            print(f"  Decommissioned: {args.gate_name}")
+        else:
+            print(f"  Cannot decommission {args.gate_name} — not a decommission_candidate yet")
+            sys.exit(1)
+        return
+
+    if args.calib_cmd == "status":
+        show_calibration_status()
+        return
+
+
+def cmd_dispose(args):
+    """W8b Autonomous failure disposition — check and dispose stalled tasks."""
+    repo = _repo_root()
+    for p in [str(repo / "scripts")]:
+        if p not in sys.path:
+            sys.path.insert(0, p)
+    from failure_disposition import check_stall, dispose, show_status
+
+    cwd = Path.cwd()
+
+    if args.dispose_cmd == "check":
+        stall = check_stall(cwd, getattr(args, "stall_minutes", 60))
+        if stall is None:
+            print("  No active pipeline.")
+        elif stall.is_stalled:
+            print(f"  STALLED: {stall.task_id} in {stall.phase} — {stall.reason}")
+            print(f"  Recommended: {stall.recommended_disposition}")
+        else:
+            print(f"  Active: {stall.task_id} in {stall.phase} ({stall.minutes_in_phase:.0f}m)")
+        return
+
+    if args.dispose_cmd == "run":
+        stall = check_stall(cwd)
+        if stall is None or not stall.is_stalled:
+            print("  Not stalled — nothing to dispose.")
+            return
+        event = dispose(stall, cwd)
+        print(f"  Disposed: action={event.action}")
+        if event.okf_risk_note:
+            print(f"  OKF risk note: {event.okf_risk_note}")
+        return
+
+    if args.dispose_cmd == "status":
+        show_status(cwd)
+        return
+
+
 def cmd_ring(args):
     """Runtime Ring — snapshot, monitor, rollback, status."""
     repo = _repo_root()
@@ -658,6 +728,23 @@ def cli():
     p_proposals.add_argument("action", nargs="?", default="review",
                               choices=["review"], help="Action to perform (default: review)")
     p_proposals.set_defaults(func=cmd_proposals)
+
+    p_calib = sub.add_parser("calibration", help="W8 HITL-removal calibration — per-gate catch-rate")
+    calib_sub = p_calib.add_subparsers(dest="calib_cmd", required=True)
+    c_run = calib_sub.add_parser("run", help="Run calibration against eval corpus")
+    c_run.add_argument("--gate", help="Calibrate a specific gate only")
+    c_decom = calib_sub.add_parser("decommission", help="Mark a gate as human-decommissioned")
+    c_decom.add_argument("gate_name", help="Gate name to decommission")
+    calib_sub.add_parser("status", help="Show calibration status per gate")
+    p_calib.set_defaults(func=cmd_calibration)
+
+    p_dispose = sub.add_parser("dispose", help="W8b autonomous failure disposition")
+    disp_sub = p_dispose.add_subparsers(dest="dispose_cmd", required=True)
+    d_check = disp_sub.add_parser("check", help="Check if current task is stalled")
+    d_check.add_argument("--stall-minutes", type=float, default=60)
+    disp_sub.add_parser("run", help="Run disposition on a stalled task")
+    disp_sub.add_parser("status", help="Show stall + disposition history")
+    p_dispose.set_defaults(func=cmd_dispose)
 
     p_promo = sub.add_parser("promotion", help="Promotion Gate — W7 structural learning loop")
     promo_sub = p_promo.add_subparsers(dest="promo_cmd", required=True)
