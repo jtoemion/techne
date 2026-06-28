@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 
 # Add scripts/ and harness/ to path for direct imports
-_REPO = Path("/home/ubuntu/repos/techne")
+_REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO / "scripts"))
 sys.path.insert(0, str(_REPO / "harness"))
 
@@ -68,13 +68,17 @@ def write_diff_artifact(tmp_path: Path) -> None:
 
 
 def write_recall_artifact(tmp_path: Path) -> None:
-    """Write a valid RECALL artifact."""
+    """Write a valid RECALL artifact satisfying all gate requirements."""
     loop = tmp_path / ".techne" / "loop"
+    # Also create the context dir so .techne/context/ reference resolves
+    (tmp_path / ".techne" / "context").mkdir(parents=True, exist_ok=True)
     recall = loop / "recall.txt"
     recall.write_text(
         "HONCHO_CONTEXT: test-task-123\n"
         "Task: example task\n"
-        "Context: some context for the task\n",
+        "Context: .techne/context/index.md — project context pack loaded\n"
+        "FILE_SCOPE: src/app.py\n"
+        "knowledge.graph: prior tasks searched — none relevant\n",
         encoding="utf-8",
     )
 
@@ -170,6 +174,7 @@ def test_scenario_2_audit_chain_created(tmp_path: Path, capsys):
         cwd=str(tmp_path),
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=15,
     )
 
@@ -225,6 +230,7 @@ def test_scenario_3_tamper_detection(tmp_path: Path, capsys):
         cwd=str(tmp_path),
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=15,
     )
 

@@ -16,8 +16,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-# The phase sequence — every task passes through every phase.
+# The canonical phase sequence — every task passes through every phase.
 # Gates self-select inside each phase; the phase itself is never skipped.
+# This mirrors pipeline_enforcer.CANONICAL_PHASES — both must stay in sync.
+# W0 target: OrchestratorLoop (Autopilot driver) converges to this sequence.
 PHASE_SEQUENCE = ["RECALL", "IMPLEMENT", "VERIFY", "CONCLUDE", "DONE"]
 
 

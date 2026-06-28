@@ -24,6 +24,12 @@ import re
 import sys
 from pathlib import Path
 
+# Windows cp1252 consoles cannot encode Unicode — reconfigure stdout/stderr.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # Ensure scripts/ is on the path so we can import sibling modules
 _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
@@ -40,10 +46,12 @@ from datetime import datetime, timezone
 # ── Configurable scope limit (read from .techne/config.yaml) ─────────────────
 _SCOPE_LIMIT = 10
 _STRICT_NODES = False  # Set via --strict-nodes flag
+_STRICT_MUTATION = False  # Set via --strict-mutation flag
+_MUTATION_TEST_CMD: str | None = None  # Read from .techne/config.yaml mutation_test_cmd:
 
 def _load_config() -> None:
-    """Read scope_limit from .techne/config.yaml if present."""
-    global _SCOPE_LIMIT
+    """Read scope_limit and mutation_test_cmd from .techne/config.yaml if present."""
+    global _SCOPE_LIMIT, _MUTATION_TEST_CMD
     try:
         cfg_path = Path.cwd() / ".techne" / "config.yaml"
         if cfg_path.exists():
@@ -51,7 +59,8 @@ def _load_config() -> None:
                 line = line.strip()
                 if line.startswith("scope_limit:"):
                     _SCOPE_LIMIT = int(line.split(":", 1)[1].strip())
-                    break
+                elif line.startswith("mutation_test_cmd:"):
+                    _MUTATION_TEST_CMD = line.split(":", 1)[1].strip().strip("\"'")
     except Exception:
         pass
 
@@ -431,6 +440,60 @@ def _check_verify_gates(path: Path) -> list[GateResult]:
             "node discipline", True, f"scan skipped ({exc})"
         ))
 
+    # ── Mutation gate (soft by default; hard block with --strict-mutation) ──────
+    # Reads file_scope.json (written in RECALL) + mutation_test_cmd from config.
+    # If either is missing, soft-skip — the gate is only enforced when configured.
+    try:
+        mutation_gate_script = _HERE / "mutation_gate.py"
+        loop = loop_dir()
+        scope_file = loop / "file_scope.json"
+        test_cmd = _MUTATION_TEST_CMD
+        if mutation_gate_script.exists() and scope_file.exists() and test_cmd:
+            import json as _json
+            import subprocess
+            py_files = [
+                f for f in _json.loads(scope_file.read_text(encoding="utf-8"))
+                if f.endswith(".py") and Path(f).exists()
+            ]
+            if py_files:
+                for src_file in py_files[:3]:  # cap at 3 files per run
+                    mut_result = subprocess.run(
+                        [sys.executable, str(mutation_gate_script),
+                         "--source", src_file,
+                         "--test-cmd", test_cmd,
+                         "--json", "--max-mutants", "25"],
+                        capture_output=True, text=True, timeout=180,
+                    )
+                    try:
+                        report = _json.loads(mut_result.stdout)
+                        passed = report.get("passed", True)
+                        kr = report.get("kill_rate", 1.0)
+                        survived = report.get("survived", 0)
+                        msg = (f"kill_rate={kr:.2f} survived={survived}"
+                               f" [{Path(src_file).name}]")
+                        if not passed and _STRICT_MUTATION:
+                            results.append(GateResult("mutation strength", False, msg))
+                        else:
+                            results.append(GateResult("mutation strength", passed, msg))
+                    except Exception:
+                        results.append(GateResult(
+                            "mutation strength", True,
+                            f"result unparseable [{Path(src_file).name}]"
+                        ))
+            else:
+                results.append(GateResult(
+                    "mutation strength", True, "no Python files in scope — skipped"
+                ))
+        else:
+            results.append(GateResult(
+                "mutation strength", True,
+                "skipped (set mutation_test_cmd: in .techne/config.yaml to enable)"
+            ))
+    except Exception as exc:
+        results.append(GateResult(
+            "mutation strength", True, f"gate skipped ({exc})"
+        ))
+
     return results
 
 
@@ -756,12 +819,19 @@ def main() -> int:
         "--strict-nodes", action="store_true",
         help="Block VERIFY phase if node-discipline violations found (default: soft report)"
     )
+    parser.add_argument(
+        "--strict-mutation", action="store_true",
+        help="Block VERIFY phase if mutation gate finds surviving mutants (default: soft report)"
+    )
     args, remaining = parser.parse_known_args()
 
-    # Propagate strict-nodes to gate functions
+    # Propagate strict flags to gate functions
     if args.strict_nodes:
         global _STRICT_NODES
         _STRICT_NODES = True
+    if args.strict_mutation:
+        global _STRICT_MUTATION
+        _STRICT_MUTATION = True
 
     if args.help_phases:
         print("Techne ./next pipeline phases:\n")

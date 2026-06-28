@@ -11,6 +11,10 @@ from __future__ import annotations
 import argparse, os, sqlite3, subprocess, sys, time
 from pathlib import Path
 
+# Windows cp1252 consoles cannot encode emoji — reconfigure stdout to UTF-8.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = Path(__file__).parent.parent
 DEFAULT_DB = ROOT / ".techne" / "memory" / "tasks.db"
 

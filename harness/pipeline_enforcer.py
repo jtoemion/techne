@@ -86,6 +86,17 @@ def _reset_learning_state() -> None:
 
 # ── Phase definitions ────────────────────────────────────────────────────
 
+# CANONICAL_PHASES is the authoritative 5-phase loop shared by both drivers
+# (Driven mode via next.py/next_state.py and Autopilot mode via OrchestratorLoop).
+# W0 convergence target: OrchestratorLoop will be re-targeted to run these five
+# phases using next.py's _check_*_gates as its gate layer (replacing PHASES below).
+# next_state.PHASE_SEQUENCE mirrors this exactly — both must agree.
+CANONICAL_PHASES = ["RECALL", "IMPLEMENT", "VERIFY", "CONCLUDE", "DONE"]
+
+# PHASES is the legacy detailed pipeline used by OrchestratorLoop today.
+# It expands IMPLEMENT into CONTEXT_GUARD/CRITIQUE/REVIEW and VERIFY into EVAL/RETRO.
+# These sub-steps will be collapsed into the CANONICAL_PHASES gate layer (W0 target).
+# Do not add new phases here — extend CANONICAL_PHASES + gate checks instead.
 PHASES = [
     "RECALL",
     "IMPLEMENT",
