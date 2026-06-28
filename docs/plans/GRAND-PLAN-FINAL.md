@@ -10,9 +10,11 @@
 > [GRAND-PLAN-HERMES](GRAND-PLAN-HERMES.md), [HANDOFF-CC-V0](../../HANDOFF-CC-V0.md),
 > the [scouting report](../../ref/SCOUTING-REPORT.md), and the
 > [harness corpus](../agent-knowledge-dimensions.md).
-> **Research basis:** 5 web research passes (2026) on context engineering, autonomous
-> agent reliability, reward hacking, spec-driven development, and judge reliability —
-> citations inline.
+> **Research basis:** 7 web research passes (2026) across two rounds — context engineering,
+> autonomous agent reliability, reward hacking, spec-driven development, judge reliability,
+> mutation-testing cost, and Goodhart/eval-contamination — citations inline.
+> **Iteration:** round 2 added the Gate Registry, a mutation-gate cost model, and a
+> Goodhart-hardened promotion gate (see §4, §9.1, §9.7).
 
 ---
 
@@ -154,6 +156,27 @@ visibly failing**, at the tool-call layer — not via prompts the model can rati
 - **Audit chain.** SHA-256 hash-chained `.techne/audit/chain.jsonl`, one entry per phase.
   Tamper is detectable; the chain is itself inside the immutable boundary.
 
+**The Gate Registry — what gates exist and why you trust each (provenance ledger).**
+In a zero-HITL system you must be able to ask, at any time, *"what gates is this thing
+actually running, which did it invent itself, and what's the evidence each one works?"*
+`.techne/gates/registry.json` is that living ledger — one entry per gate:
+
+| Field | Meaning |
+|---|---|
+| `id` / `failure_mode` | what it is, which of drift/hallucinate/lie/disobey it defeats |
+| `kind` | **mechanical** (deterministic, model-independent) vs **eval-based** (learned/scored) |
+| `provenance` | human-authored, or **GRPO-promoted** (with the promotion event id) |
+| `status` | `proposed → calibrating → proven → live → retired` |
+| `catch_rate` / `false_block_rate` | measured vs the labeled corpus (W8) |
+| `human_decommissioned_at` | when the calibration human was removed from this gate |
+| `backing_cases` | the eval cases that justify it |
+
+Surfaced via **`techne gates`** (list/show) and summarized in `techne doctor`. Every gate
+creation, calibration, promotion, or retirement is an audit-chained event. This is both a
+product feature (you always see the safety surface) and the audit trail for the
+HITL-removal protocol (§6) — no gate goes `live` without a registry entry showing its
+evidence.
+
 ---
 
 ## 3. The Unified Loop (one pipeline, two drivers — the legacy pipeline is removed)
@@ -199,15 +222,33 @@ ratifier with a **structural promotion gate**:
    `.techne/events/rl.jsonl`.
 2. GRPO computes per-task-type advantage; high-advantage variants become **candidate**
    skill/prompt edits — staged, never live.
-3. **Promotion gate (the new ratifier):** a candidate edit is applied to a *shadow* copy
-   and must **beat the incumbent on a held-out, frozen eval set** (regression cases drawn
-   from real past failures) measured by **pass^k**, with **zero boundary violations**, to
-   be promoted. Lose or tie → discarded.
-4. Promotion is itself an audit-chained, reversible event. No human, but also no
-   self-congratulation: the edit earns its place against frozen evidence or it doesn't ship.
+3. **Promotion gate (the new ratifier) — Goodhart-hardened.** A candidate edit is applied
+   to a *shadow* copy and must clear **multiple independent signals**, not one score:
+   (a) **beat the incumbent on the held-out eval measured by pass^k** (success every run,
+   not best-of-k); (b) **zero boundary violations**; (c) pass the **mechanical gates**
+   (mutation, hashline, secret scan) — which are model-independent and far harder to game;
+   (d) stay within a **divergence bound** from the incumbent (KL-style — prefer
+   conservative edits; a large jump to win the eval is itself a red flag). Lose, tie, or
+   trip any signal → discarded.
+4. **The eval set rotates and is contamination-free.** A *frozen* eval set is
+   self-defeating: Skalse et al. (2022) prove **no non-trivial proxy reward is guaranteed
+   unhackable**, and a fixed target gets Goodharted given enough optimization pressure. So
+   the held-out set (i) lives **inside the immutable boundary** (the policy can never read
+   it — canary discipline), (ii) **continuously ingests new real failures** from the
+   calibration corpus (W8), and (iii) **retires cases that saturate**. It is a moving,
+   blind target, not a static benchmark.
+5. Promotion is an audit-chained, reversible event that **writes a Gate Registry entry**
+   (provenance = GRPO-promoted, with the evidence). No human, no self-congratulation.
 
-This is "self-improving but not self-deceiving" — the Ornith insight (the scaffold is
-learnable) made safe by an immutable held-out evaluator the policy can't reach.
+**The trust hierarchy (the load-bearing correction).** The mechanical gates are the **trust
+floor** — robust because they're deterministic and model-independent. The eval-based
+promotion is only the **improvement signal** — inherently Goodhart-prone, so it is *never*
+the sole anchor of trust, only the thing that decides whether an *evolution* is allowed.
+Per-task safety always rests on the mechanical proof spine, not on a learned score. This is
+"self-improving but not self-deceiving": the scaffold is learnable (the Ornith insight), but
+the floor beneath it is mechanical and unreachable. **Honest residual:** no proxy is
+unhackable, so this is a *ratchet* — it must keep ingesting new real failures forever; there
+is no static "solved." (§9.7)
 
 ---
 
@@ -258,7 +299,8 @@ human did. No leap of faith.
 | **W0** | **Engine convergence** — one gate core, one phase set; Autopilot driver calls `_check_*_gates`; remove the 11-phase pipeline | foundation | — |
 | **W1** | **The Boundary** — make tests/gates/audit/tool-surface immutable to the implementer; deterministic boundary monitor (block + log + negative reward) | Lie, Disobey | W0 |
 | **W2** | **Context Engine** — `constitution.md`, `SPECIFY` phase + frozen hashed `spec.md`, grounding retrieval, context-gap detector, lean-context/compaction discipline, **two-tier memory wiring (GROUND pulls from Honcho→native, SEAL writes back to Honcho)** | Drift, Hallucinate | W0 |
-| **W3** | **Proof Spine** — mutation gate (un-suppressible), separated+isolated test authorship (different model), secret/forbidden scan, separate-model verifier | Lie | W1, W2 |
+| **W3** | **Proof Spine** — mutation gate (un-suppressible; cost model = changed-lines-only + selective operators + weak mutation + cap, full sweep nightly), separated+isolated test authorship (different model), secret/forbidden scan, separate-model verifier | Lie | W1, W2 |
+| **W3b** | **Gate Registry** — `.techne/gates/registry.json` + `techne gates`; every gate's kind/provenance/status/catch-rate; audit-chained | trust transparency | W1 |
 | **W4** | **Enforcement hardening** — no-escape-hatch policy, budgets → structured FAILED artifact, audit coverage of the full surface | Disobey, Drift | W1 |
 | **W5** | **Skill diet** — cut `SKILL.md`/skills to maps (<100 lines), close context gaps with focused cards; CI line-count guard | Disobey, Drift | W2 |
 | **W6** | **Autopilot + sandbox** — real model backends; apply each diff in a throwaway worktree, run tests there, HALT on apply failure | enables zero-HITL | W1–W4 |
@@ -289,8 +331,12 @@ until the machinery the human used to watch is itself unreachable and self-provi
 
 Honesty per the corpus. This plan is v1; here is where it is still soft:
 
-1. **Mutation testing cost.** Re-running the suite per mutation is expensive on large repos.
-   *Mitigation to design:* mutate only changed lines; cap mutation count; cache. Open.
+1. **Mutation testing cost.** ~~Open.~~ **Resolved (round 2).** Cost model from the 2026
+   literature: mutate **changed lines only** (incremental, PR-diff scope) + **selective
+   operators** (a sufficient subset, not every operator) + **weak mutation** (stop once the
+   mutated statement executes) + a hard cap, with a **full mutation sweep nightly** out of
+   band. Mutation-as-a-sensor for agent-written tests is established practice (Thoughtworks,
+   Meta ACH, testdouble). Residual: per-codebase tuning of the operator subset.
 2. **Separate-model verifier still has preference leakage if the same vendor.** Different
    model family reduces but doesn't eliminate collusion. *Mitigation:* the mutation gate is
    mechanical and model-independent — it's the backstop, the verifier is defense-in-depth.
@@ -307,8 +353,19 @@ Honesty per the corpus. This plan is v1; here is where it is still soft:
    real failures. The plan is a ratchet, not a finish line.
 6. **"Remove HITL" is delivered, but the honest scope is:** HITL is removed from the
    *product loop*; it remains, briefly, as a *calibration instrument* (W8) that is
-   decommissioned per gate. If you want it gone even from calibration, that trades evidence
-   for speed — flagged as your call.
+   decommissioned per gate. **Decided (2026-06-28): keep the calibration role** — cheap
+   evidence that each gate works before autonomy rests on it. The Gate Registry surfaces
+   exactly which gates have been calibrated and decommissioned, so the human's removal is
+   always visible and evidence-backed.
+
+7. **No proxy reward is unhackable (Skalse et al. 2022) — the promotion gate is a ratchet,
+   not a solution.** *Resolved-as-managed (round 2).* A self-improving loop optimizing
+   against any fixed eval will eventually Goodhart it. Mitigations now in §4: the eval set
+   rotates, lives inside the immutable boundary (contamination-free), and continuously
+   ingests new real failures; promotion requires multiple independent signals + a
+   divergence bound; and **the mechanical gates, not the eval, are the trust floor.**
+   Residual (unavoidable): there is no static endpoint — the system must keep ingesting new
+   real failures forever. Accept this as a property, not a bug.
 
 ---
 
@@ -357,3 +414,10 @@ Each goes through the loop. The plan is the contract; the Boundary enforces it.
 - [VerifiAgent: a Unified Verification Agent — arXiv 2504.00406](https://arxiv.org/pdf/2504.00406)
 - [ReVeal: Self-Evolving Code Agents via Reliable Self-Verification — arXiv 2506.11442](https://arxiv.org/pdf/2506.11442)
 - [LLM-as-a-Judge in 2026 — DeepEval](https://deepeval.com/blog/llm-as-a-judge)
+- [Mutation Testing Cost Reduction Techniques: A Survey (Offutt/Untch taxonomy)](https://www.researchgate.net/publication/224132836_Mutation_Testing_Cost_Reduction_Techniques_A_Survey)
+- [Keep your coding agent on task with mutation testing — testdouble](https://testdouble.com/insights/keep-your-coding-agent-on-task-with-mutation-testing)
+- [Meta Applies Mutation Testing with LLM (ACH) — InfoQ](https://www.infoq.com/news/2026/01/meta-llm-mutation-testing/)
+- [Maintainability sensors for coding agents — Martin Fowler](https://martinfowler.com/articles/sensors-for-coding-agents.html)
+- [Goodhart's Law in Reinforcement Learning — arXiv 2310.09144](https://arxiv.org/pdf/2310.09144)
+- [Over-Optimization — RLHF Book (Nathan Lambert)](https://rlhfbook.com/c/14-over-optimization)
+- [Beyond Goodhart's Law: Dynamic Benchmark for Compliance — arXiv 2606.07805](https://arxiv.org/html/2606.07805)
