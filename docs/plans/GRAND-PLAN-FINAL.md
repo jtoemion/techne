@@ -67,6 +67,28 @@ Three layers, mirroring the spec-driven convergence (Kiro "steering" / Spec-Kit
    single source of truth the whole loop verifies against. **It is hashed and frozen at
    creation** — the agent cannot rewrite the goalposts (anti-drift, anti-lie).
 
+**Memory substrate — fast working tier vs deep durable tier.** The three layers above are
+*what* is in context; they live on a **two-tier memory substrate** that keeps the working
+window lean (out of the "dumb zone") while preserving full detail durably. On **Hermes**
+this maps directly to the host's native memory + Honcho; other harnesses map to their
+equivalents:
+
+| Tier | Job | Hermes | Claude Code |
+|---|---|---|---|
+| **Fast / working** | the lean, high-signal set the model reasons over *right now*; session-scoped; compacted | **native memory** | session context + `CLAUDE.md` |
+| **Deep / durable** | full detail, cross-session: mistake ledger, decisions, retros, prior task outcomes, conclusions | **Honcho** | `.claude/.../memory/` files + `.techne/memory/` |
+
+The loop uses both tiers explicitly:
+- **GROUND retrieves from the deep tier into the fast tier, just-in-time** — pull only the
+  Honcho/durable detail this SPEC touches into the working window. Never load the whole deep
+  store (that *is* the dumb-zone failure).
+- **SEAL writes durable conclusions back to the deep tier** — the task's decisions, lessons,
+  and outcome are written to Honcho/durable memory so the next task's GROUND can find them.
+  The fast tier is disposable; the deep tier is the source of truth.
+
+This is the research's "intentional compaction" made architectural: native memory is the
+compaction layer, Honcho is the durable detail it compacts *from*.
+
 **Discipline (research-driven), not just files:**
 - **Lean context / intentional compaction.** Keep the working window well under the dumb
   zone (~40%). Prefer restart-with-compaction over long correction chains — "the most
@@ -149,10 +171,10 @@ SPECIFY → GROUND → IMPLEMENT → VERIFY → SEAL → DONE
 | Phase | Renamed from | Produces | Gate (defeats) |
 |-------|--------------|----------|----------------|
 | **SPECIFY** | *(new)* | `spec.md` — frozen EARS contract + acceptance criteria + FILE_SCOPE; tests authored + frozen by a separate model | contract exists, hashed; tests frozen (drift, lie) |
-| **GROUND** | RECALL | `ground.md` — retrieved real code + memory-bank refs + context-gap check | real context present, no unfilled gaps (hallucinate, drift) |
+| **GROUND** | RECALL | `ground.md` — real code + memory-bank refs + **deep-tier (Honcho) retrieval into the lean window** + context-gap check | real context present, no unfilled gaps (hallucinate, drift) |
 | **IMPLEMENT** | IMPLEMENT | `diff.txt` | hashline + scope + forbidden-pattern + boundary monitor (hallucinate, drift, lie, disobey) |
 | **VERIFY** | VERIFY | `test_output.txt` | real SHA-gated tests + **mutation gate** + secret scan + separate-model verifier (lie) |
-| **SEAL** | CONCLUDE | `seal.md` | retro markers + verify ref + commit; fires learning loop (memory) |
+| **SEAL** | CONCLUDE | `seal.md` | retro markers + verify ref + commit; **writes durable conclusions to the deep tier (Honcho)**; fires learning loop |
 | **DONE** | DONE | — | task closed |
 
 **Two drivers, identical gates:**
@@ -235,7 +257,7 @@ human did. No leap of faith.
 |---|---|---|---|
 | **W0** | **Engine convergence** — one gate core, one phase set; Autopilot driver calls `_check_*_gates`; remove the 11-phase pipeline | foundation | — |
 | **W1** | **The Boundary** — make tests/gates/audit/tool-surface immutable to the implementer; deterministic boundary monitor (block + log + negative reward) | Lie, Disobey | W0 |
-| **W2** | **Context Engine** — `constitution.md`, `SPECIFY` phase + frozen hashed `spec.md`, grounding retrieval, context-gap detector, lean-context/compaction discipline | Drift, Hallucinate | W0 |
+| **W2** | **Context Engine** — `constitution.md`, `SPECIFY` phase + frozen hashed `spec.md`, grounding retrieval, context-gap detector, lean-context/compaction discipline, **two-tier memory wiring (GROUND pulls from Honcho→native, SEAL writes back to Honcho)** | Drift, Hallucinate | W0 |
 | **W3** | **Proof Spine** — mutation gate (un-suppressible), separated+isolated test authorship (different model), secret/forbidden scan, separate-model verifier | Lie | W1, W2 |
 | **W4** | **Enforcement hardening** — no-escape-hatch policy, budgets → structured FAILED artifact, audit coverage of the full surface | Disobey, Drift | W1 |
 | **W5** | **Skill diet** — cut `SKILL.md`/skills to maps (<100 lines), close context gaps with focused cards; CI line-count guard | Disobey, Drift | W2 |
