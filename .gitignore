@@ -34,3 +34,4 @@ memory/prompt_proposals.json
 # Audit trail — runtime generated
 .techne/audit/
 memory/
+techne.egg-info/

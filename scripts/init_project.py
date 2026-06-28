@@ -137,6 +137,77 @@ _File role mappings will be documented here._
     return path
 
 
+def run_preflight_checks(project_name: str) -> bool:
+    """
+    Run three pre-flight checks before creating .techne/ directory.
+
+    Returns:
+        True if all checks pass (or are non-blocking).
+        False if the audit chain is broken (blocks project init).
+    """
+    # Add scripts/ and harness/ to sys.path (same pattern as cmd_gate in techne_cli/main.py)
+    script_path = Path(__file__).resolve()
+    techne_root = script_path.parent.parent
+
+    for _p in [str(techne_root / "scripts"), str(techne_root / "harness")]:
+        if _p not in sys.path:
+            sys.path.insert(0, _p)
+
+    # 1. Audit chain integrity — BLOCKING on failure
+    try:
+        from audit_chain import verify_chain
+        ok, msg = verify_chain()
+        if not ok:
+            print(f"⚠️  PRE-FLIGHT CHECK FAILED: Audit chain broken", file=sys.stderr)
+            print(f"   {msg}", file=sys.stderr)
+            print("   Run 'techne gate audit <event>' to repair or initialize the chain.", file=sys.stderr)
+            return False
+    except Exception as e:
+        print(f"⚠️  PRE-FLIGHT WARNING: Could not verify audit chain: {e}")
+
+    # 2. Mistakes pre-flight — never blocks, prints hits if found
+    try:
+        from mistakes import check_relevant
+        hits = check_relevant(project_name)
+        if hits:
+            print("\n📋 Past mistakes relevant to this project:")
+            for hit in hits:
+                print(f"   [{hit.get('gate', '?')}] {hit.get('error', '?')}")
+                print(f"       Lesson: {hit.get('lesson', '?')}")
+    except FileNotFoundError:
+        # New project with no mistakes.md yet — non-blocking
+        pass
+    except Exception as e:
+        print(f"⚠️  PRE-FLIGHT WARNING: Could not check mistakes: {e}")
+
+    # 3. Knowledge graph surface — never blocks, prints top 3 matches
+    try:
+        from knowledge_graph import cmd_search
+        print(f"\n🔍 Knowledge graph matches for '{project_name}':")
+        # Capture cmd_search output (it prints directly)
+        import io
+        from contextlib import redirect_stdout
+        f = io.StringIO()
+        redirect_stdout(f)
+        cmd_search(project_name)
+        output = f.getvalue()
+        if output.strip():
+            lines = output.strip().split('\n')
+            for line in lines[:3]:
+                print(f"   {line}")
+            if len(lines) > 3:
+                print(f"   ... and {len(lines) - 3} more matches")
+        else:
+            print("   (no matching entries found)")
+    except FileNotFoundError:
+        # New project with no kg entries yet — non-blocking
+        print("   (knowledge graph not yet initialized)")
+    except Exception as e:
+        print(f"⚠️  PRE-FLIGHT WARNING: Could not search knowledge graph: {e}")
+
+    return True
+
+
 def create_risk_boundaries_md(context_dir: Path) -> Path:
     """Create risk_boundaries.md with default HITL template."""
     content = """# Risk Boundaries
@@ -144,7 +215,7 @@ def create_risk_boundaries_md(context_dir: Path) -> Path:
 ## Default Human-in-the-Loop Boundaries
 
 | Risk Level | Threshold | Action Required |
-|------------|-----------|------------------|
+|------------|-----------|-----------------|
 | Low        | < 5       | Autonomous execution |
 | Medium     | 5-15      | Review before execution |
 | High       | > 15      | Explicit approval required |
@@ -220,7 +291,11 @@ def main():
         techne_path = script_path.parent.parent
     
     techne_path_str = str(techne_path)
-    
+
+    # Run pre-flight checks before creating .techne/
+    if not run_preflight_checks(project_name):
+        sys.exit(1)
+
     # Check if .techne/ already exists
     techne_dir = base_path / ".techne"
     if techne_dir.exists() and not args.force:

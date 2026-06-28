@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -240,6 +241,54 @@ def cmd_handoff(args):
     print(doc)
 
 
+def cmd_gate(args):
+    """Run a named gate check: hashline, forbidden, or audit."""
+    # Ensure scripts/ and harness/ are on sys.path
+    _gate_repo = _repo_root()
+    for _p in [str(_gate_repo / "scripts"), str(_gate_repo / "harness")]:
+        if _p not in sys.path:
+            sys.path.insert(0, _p)
+    from hash_gate import validate_diff_context
+    from next import _check_no_forbidden_patterns, GateResult
+    from audit_chain import append_entry, AuditEntry
+
+    if args.name == "hashline":
+        diff_text = Path(args.target).read_text(encoding="utf-8")
+        passed, detail = validate_diff_context(diff_text)
+        if passed:
+            print(_ok(f"hashline: {detail}"))
+            sys.exit(0)
+        else:
+            print(_fail(f"hashline: {detail}"))
+            sys.exit(1)
+
+    elif args.name == "forbidden":
+        results = _check_no_forbidden_patterns(Path(args.target))
+        failures = [r for r in results if not r.passed]
+        if not failures:
+            print(_ok("no forbidden patterns detected"))
+            sys.exit(0)
+        for r in failures:
+            print(_fail(f"forbidden: {r.name} — {r.detail}"))
+        sys.exit(1)
+
+    elif args.name == "audit":
+        event = json.loads(args.target)
+        # Build AuditEntry with sensible defaults for required fields
+        entry = AuditEntry(
+            seq=event.get("seq", 0),
+            timestamp=event.get("timestamp", datetime.now(timezone.utc).isoformat()),
+            task_id=event.get("task_id", ""),
+            phase=event.get("phase", ""),
+            gates=event.get("gates", []),
+            summary=event.get("summary", ""),
+            prev_hash=event.get("prev_hash", ""),
+        )
+        entry_hash = append_entry(entry)
+        print(f"entry_hash={entry_hash}")
+        sys.exit(0)
+
+
 def cmd_doctor(args):
     """Run a 6-category health check."""
     from techne_cli.core import read_state, verify_chain
@@ -314,7 +363,82 @@ def cmd_doctor(args):
     if not hook_found:
         print(_warn("PreToolUse hook not wired — see HANDOFF-CC-V0.md §7"))
 
+    # 7 — Hermes checks
+    hermes_dir = Path.home() / ".hermes"
+    print(f"\n{_bold('Hermes')}\n" + "─" * 40)
+
+    config_exists = (hermes_dir / "config.yaml").exists()
+    print(_ok("config.yaml exists") if config_exists else _fail("config.yaml missing — run: hermes setup"))
+
+    plugin_registered = False
+    config_path = hermes_dir / "config.yaml"
+    if config_path.exists():
+        try:
+            import yaml
+            config = yaml.safe_load(config_path.read_text())
+            plugins = config.get("plugins", {}).get("enabled", [])
+            plugin_registered = "techne-plugin" in plugins or "techne" in plugins
+        except Exception:
+            pass
+    print(_ok("techne plugin registered") if plugin_registered else _warn("techne plugin not registered in config.yaml"))
+
+    skill_exists = (hermes_dir / "skills" / "techne" / "SKILL.md").exists()
+    print(_ok("techne SKILL.md found") if skill_exists else _warn("techne SKILL.md not found"))
+
+    gate_works = False
+    try:
+        r = subprocess.run(
+            ["python3", "-m", "techne_cli.main", "gate", "hashline", "/dev/null"],
+            capture_output=True, text=True, timeout=10,
+        )
+        gate_works = r.returncode == 0
+    except Exception:
+        pass
+    print(_ok("techne gate hashline callable") if gate_works else _warn("techne gate hashline failed"))
+
+    chain_ok = False
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+        from audit_chain import verify_chain
+        ok, msg = verify_chain()
+        chain_ok = ok
+    except Exception:
+        pass
+    print(_ok("audit chain intact") if chain_ok else _warn("audit chain not verified"))
+
+    # 8 — Revolver checks
+    revolver_dir = hermes_dir / "plugins" / "revolver"
+    revolver_config = Path.home() / ".revolver.yaml"
+    revolver_installed = revolver_dir.exists()
+    print(_ok("Revolver plugin installed") if revolver_installed else _warn("Revolver plugin not found"))
+    if revolver_config.exists():
+        print(_ok("~/.revolver.yaml configured"))
+    else:
+        print(_warn("~/.revolver.yaml not found — see ref/HANDOFF-HERMES.md"))
+
     print()
+
+
+def cmd_proposals(args):
+    """Review pending GRPO proposals."""
+    cwd = Path.cwd()
+    proposals_path = cwd / ".techne" / "memory" / "retro_proposals.md"
+    if not proposals_path.exists():
+        print("No pending GRPO proposals.")
+        sys.exit(0)
+
+    content = proposals_path.read_text()
+    pending = content.count("PROPOSE ADD")
+    if pending == 0:
+        print("No pending proposals.")
+        sys.exit(0)
+
+    print(f"\n  ⚡  {pending} GRPO proposal(s) ready for review:")
+    print(f"  File: {proposals_path}")
+    print()
+    print(content)
+    print()
+    print(f"Run: python3 harness/apply_retro.py to accept/reject proposals")
 
 
 def cli():
@@ -342,6 +466,16 @@ def cli():
 
     p_handoff = sub.add_parser("handoff", help="Write a handoff doc for session continuity")
     p_handoff.set_defaults(func=cmd_handoff)
+
+    p_gate = sub.add_parser("gate", help="Run a named gate check")
+    p_gate.add_argument("name", choices=["hashline", "forbidden", "audit"])
+    p_gate.add_argument("target", help="diff file path or JSON event string")
+    p_gate.set_defaults(func=cmd_gate)
+
+    p_proposals = sub.add_parser("proposals", help="Review pending GRPO proposals")
+    p_proposals.add_argument("action", nargs="?", default="review",
+                              choices=["review"], help="Action to perform (default: review)")
+    p_proposals.set_defaults(func=cmd_proposals)
 
     args = parser.parse_args()
     args.func(args)

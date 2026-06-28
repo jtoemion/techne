@@ -1,1 +1,0 @@
-honcho-precompaction-checkpoint/SKILL.md

@@ -1,0 +1,11 @@
+name: orchestrator
+version: "1.0.0"
+description: Techne pipeline orchestrator — drives RECALL → IMPLEMENT → VERIFY → CONCLUDE
+hooks:
+  on_session_start: true
+  pre_tool_call: true
+  on_session_end: true
+commands:
+  - name: orchestrator
+    description: Start or resume a Techne pipeline task
+    subcommands: [status, retry, block, unblock, handoff]

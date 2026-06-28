@@ -1,1 +1,0 @@
-karpathy-guidelines/SKILL.md

@@ -1,37 +1,43 @@
 # Techne Domains — Architecture Parts
 
-Techne is the pipeline orchestrator. It is not one thing — it is 10 domains
-that connect through data (task DB), delegation (Hermes subagents), and
-deterministic gates (Python). Each domain can be hardened independently.
+Techne is a disciplined engineering harness built as **two cooperating layers**
+(enforcement + orchestration) over a deterministic Python spine. It is not one
+thing — it is a set of domains that connect through loop state (`.techne/loop/`),
+delegation (host subagents), and deterministic gates (Python). Each domain can be
+hardened independently.
+
+> **Architecture version:** 5-phase `./next` loop + two-layer plugin model (2026-06).
+> The legacy 11-phase `OrchestratorLoop` is retained only for the model-backed RL
+> driver; it is **not** the production path. See [host-integration-guide.md §7](host-integration-guide.md).
 
 ```
 
   ┌─────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-  │  2. Phase Mode  │     │  3. Task Life    │     │  4. Phase Tooling│
-  │  System         │     │  Cycle (DB)      │     │  (scripts/)      │
+  │  2. Phase /     │     │  3. Loop & Task  │     │  4. Phase Gates  │
+  │  Mode System    │     │  State           │     │  + Tooling       │
   └───────┬─────────┘     └────────┬─────────┘     └────────┬─────────┘
           │                        │                        │
           ▼                        ▼                        ▼
   ┌───────────────────────────────────────────────────────────────────┐
-  │                    1. Pipeline Core (harness/)                    │
-  │  orchestrator_loop.py ── driver.py ── gates.py ── next.py     │
+  │                 1. Pipeline Core (scripts/ + harness/)            │
+  │   next.py ── next_state.py ── gates ── hash_gate ── audit_chain   │
   └───────────┬───────────────────────────────────────────┬───────────┘
               │                                           │
               ▼                                           ▼
   ┌──────────────────┐                          ┌──────────────────┐
-  │  5. Skill System │                          │  6. Phase Agent  │
-  │  (skills/)       │                          │  Prompts         │
-  │  + router        │                          │  (agents/*.md)   │
+  │  5. CLI Surface  │                          │  6. Enforcement  │
+  │  (techne_cli/)   │                          │  Layer (plugins/ │
+  │                  │                          │  + hooks/)       │
   └──────────────────┘                          └──────────────────┘
 
   ┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-  │  7. Knowledge    │     │  8. GRPO /       │     │  9. Plugin       │
-  │  Graph           │     │  Learning Loop   │     │  Integration     │
+  │  7. Knowledge    │     │  8. GRPO /       │     │  9. Orchestration│
+  │  Graph + Memory  │     │  Learning Loop   │     │  Layer (plugins) │
   └──────────────────┘     └──────────────────┘     └──────────────────┘
 
   ┌───────────────────────────────────────────────────────────────────┐
-  │                   10. Docs & Workshop                              │
-  │  docs/ ── plans/ ── README ── retro/                              │
+  │                  10. Skills, Docs & Workshop                       │
+  │   skills/ ── docs/ ── plans/ ── README ── retro/                  │
   └───────────────────────────────────────────────────────────────────┘
 
 ```
@@ -40,333 +46,302 @@ deterministic gates (Python). Each domain can be hardened independently.
 
 ## Domain 1: Pipeline Core
 
-**What it is.** The main loop — the thing that decides what phase runs next,
-whether the phase passed or needs retry, and when the task is done. This is
-the innermost heart of Techne.
+**What it is.** The 5-phase loop driver — decides which phase runs next, runs the
+phase's gates against real disk artifacts, advances state only on pass, and fires
+post-run evolution at DONE.
 
 **Key files.**
 
 | File | Role |
 |------|------|
-| `harness/orchestrator_loop.py` | Main loop (1967 lines). Phase sequencing, retry gates, DONE/FAILED/HALT. |
-| `harness/orchestrator_loop.py` | Host-driven loop. Phase transitions, RL reward recording, post_run_evolve(). (Replaces deleted conductor.py) |
-| `harness/gates.py` | Deterministic gate functions that validate phase output. |
-| `harness/driver.py` | CLI entry point. Wires the loop to user input. Wires `summarize_incomplete()`. |
+| `scripts/next.py` | **The production loop.** Phase gates (`_check_recall_gates`, `_check_implement_gates`, `_check_verify_gates`, `_check_conclude_gates`), advance logic, audit append, post-run evolution at CONCLUDE→DONE. |
+| `scripts/next_state.py` | `LoopState` dataclass + `state.json` read/write. `PHASE_SEQUENCE = RECALL → IMPLEMENT → VERIFY → CONCLUDE → DONE`. |
+| `scripts/hash_gate.py` | Hashline gate — validates diff context lines against the real file at IMPLEMENT. |
+| `scripts/audit_chain.py` | SHA-256 hash-chained audit log (`append_entry`, `verify_chain`). |
+| `harness/gates.py` | Deterministic gate function library (stack-specific gates). |
+| `harness/orchestrator_loop.py` | **Legacy** model-backed RL driver. Not the production path. |
+| `harness/driver.py` | CLI entry for the legacy model-backed loop. |
 
 **What hardening means.**
-- Per-phase retry budgets (no phase loops forever)
-- Abort on unrecoverable errors (clear HALT vs INCOMPLETE distinction)
-- Retry leak fix (CONCLUDE getting stuck behind failed RETRO)
-- Phase timeout enforcement
-- Conductor Pipeline class test coverage
+- Gate strictness (RECALL FILE_SCOPE/KG, IMPLEMENT hashline/scope, VERIFY non-empty, CONCLUDE retro markers)
+- Per-phase retry caps (enforced by the orchestration layer, Domain 9)
+- Post-run evolution robustness (wikilink rebuild, context refresh, retro persistence must be best-effort, never block DONE)
 
-**Tests.** `tests/test_orchestrator_driver.py` (52 tests), `tests/test_loop_hardening.py`
+**Tests.** `tests/test_cli.py`, `tests/test_scripts/test_hash_gate.py`, `tests/test_orchestrator_driver.py` (legacy driver).
 
-**Connects to.** Domain 2 (mode determines phase list), Domain 3 (reads/writes tasks),
-Domain 4 (invokes phase scripts via subagent).
+**Connects to.** Domain 4 (gates), Domain 3 (loop state), Domain 6 (enforcement mirrors gate checks), Domain 8 (RL events at DONE).
 
 ---
 
-## Domain 2: Phase Mode System
+## Domain 2: Phase / Mode System
 
-**What it is.** The classifier that picks micro/fast/full/heavy mode based on
-task keywords, diff size, and sensitivity. Controls how many phases a task
-goes through.
+**What it is.** The classifier that picks `full` vs `fast` mode (and, in the legacy
+loop, micro/heavy) based on task shape. Controls whether RECALL and CONCLUDE run.
 
 **Key files.**
 
 | File | Role |
 |------|------|
-| `harness/pipeline_enforcer.py` | `classify_phase_mode()`, `validate_mode_fit()`, `recommend_mode()`, `detect_sensitive_change()`. 1282 lines. |
-| `harness/pipeline_enforcer.py` | `_MODE_COST_ESTIMATES`, `_log_mode_override()`, `analyze_override_patterns()`. |
+| `harness/pipeline_enforcer.py` | `classify_phase_mode()`, `validate_mode_fit()`, `recommend_mode()`, sensitive-change detection, override telemetry. |
 
-**Modes.**
+**Modes (current 5-phase loop).**
 
-| Mode | Phases | Cost | Auto-select |
-|------|--------|------|-------------|
-| micro | IMPLEMENT → CONTEXT_GUARD → VERIFY → EVAL → DONE | 4 | ≤3 lines, 1 file, no logic |
-| fast | 8 phases (skips RECALL/CONCLUDE/REFRESH_CONTEXT) | 7 | Reviews, minor fixes |
-| full | All 11 phases | 11 | Default |
-| heavy | Full + APPROVAL HITL | 12 | Auth/billing/migration/password keywords |
+| Mode | Phases | Use for |
+|------|--------|---------|
+| `full` (default) | RECALL → IMPLEMENT → VERIFY → CONCLUDE → DONE | All code changes |
+| `fast` | IMPLEMENT → VERIFY → DONE | Review-only tasks with zero file modifications |
+
+> The legacy loop also defined `micro` and `heavy` modes; those apply only to the
+> deprecated `OrchestratorLoop`.
 
 **What hardening means.**
-- Auto-classification accuracy (reduce false heavy/fast picks)
-- Edge cases: empty diffs, multi-file but tiny changes, config-only changes
-- Override telemetry accuracy (what gets logged, when does learning loop fire)
-- Mode mismatch → FAILED enforcement (no bypass)
+- Auto-classification accuracy (no false `fast` on real code changes — there is no fast escape for code)
+- Edge cases: empty diffs, doc-only tasks, config-only changes
+- Override telemetry feeding the learning loop (Domain 8)
 
-**Tests.** `tests/test_mode_classifier.py` (80 tests)
-
-**Connects to.** Domain 1 (mode determines which phases the loop runs),
-Domain 3 (mode stored on task).
+**Connects to.** Domain 1 (mode determines phase list), Domain 3 (mode stored on state).
 
 ---
 
-## Domain 3: Task Lifecycle
+## Domain 3: Loop & Task State
 
-**What it is.** The data layer — tasks and events stored in SQLite. Every
-pipeline action reads or writes through this. If the DB is corrupt, the
-pipeline is blind.
+**What it is.** The state layer — what phase the current task is in, plus the
+durable per-project memory and evidence. If state is corrupt, the loop is blind.
 
 **Key files.**
 
 | File | Role |
 |------|------|
-| `harness/task_db.py` | `TaskDB` class. Task CRUD, event logging, status transitions. 612 lines. |
-| `.techne/memory/tasks.db` | Live tasks database. |
-| `.techne/reports/eval/eval_history.json` | Evaluation history (trend analysis). |
-| `.techne/reports/verify/test_output.txt` | Last test run output (SHA-gated). |
-| `.techne/logs/run_log.json` | Run log (SHA hashes, pass/fail). |
-
-**Schema.**
-
-```
-tasks (id, title, description, parent_id, discipline, status,
-       assigned_agent, priority, tags, phase_mode, created_at,
-       updated_at, attempt, max_attempts)
-
-task_events (id, task_id, agent, action, summary, changed_files,
-             diff_summary, findings, verdict, test_output_hash,
-             mistakes_found, timestamp)
-```
+| `.techne/loop/state.json` | Source of truth: `task_id`, `phase`, timestamps, `phase_timeout_min`. Managed by `techne`/`./next` — never hand-edited. |
+| `.techne/loop/{recall,diff,test_output,conclude}.txt` | Per-phase artifacts the gates read. |
+| `.techne/loop/file_scope.json` | Written by the RECALL FILE_SCOPE gate, consumed by the IMPLEMENT file-scope gate. |
+| `.techne/audit/chain.jsonl` | Tamper-evident audit trail (one entry per advanced phase). |
+| `.techne/audit/blocked.log` | Persistent log of blocked writes. |
+| `.techne/events/rl.jsonl` | RL events written by the enforcement layer on every gate outcome. |
+| `.techne/memory/` | Ledger, mistakes, retros, rewards, wikilinks, GRPO proposals. |
+| `techne/tasks.db` | SQLite task DB (used by the legacy model-backed driver). |
 
 **What hardening means.**
-- DB migration support (schema changes without data loss)
-- Index optimization for high-volume queries
-- Data integrity checks (orphaned events, stuck statuses)
-- Concurrent access safety (WAL mode, connection pooling)
-- Query performance at 1000+ tasks
+- State integrity (no skipped phases — cross-checked by the audit chain)
+- Structured-over-narrative (JSON for machine-resumable state)
+- Cold-start resumability (`techne handoff` writes a continuity doc; see Domain 9)
 
-**Tests.** Embedded in each phase's test suite via `TaskDB` instantiation.
-
-**Connects to.** Every other domain — they all read/write tasks and events.
+**Connects to.** Every other domain reads or writes loop/memory state.
 
 ---
 
-## Domain 4: Phase Tooling
+## Domain 4: Phase Gates + Tooling
 
-**What it is.** One companion script per phase. Each script is a standalone
-Python tool that does deterministic work so the LLM subagent focuses on
-reasoning, not data assembly.
+**What it is.** The deterministic checks that validate each phase artifact, plus the
+companion scripts that do data assembly so the model focuses on reasoning.
 
-**Scripts.**
+**Per-phase gates (in `scripts/next.py`).**
 
-| Script | Phase | Job |
-|--------|-------|-----|
-| `scripts/recall_honcho.py` | RECALL | Fetch Honcho context, workshop files, lessons. |
-| `scripts/diff_gate_checker.py` | IMPLEMENT, REVIEW | Validate diff format, SHA presence, changed file list. |
-| `scripts/context_guard_check.py` | CONTEXT_GUARD | Validate punch list (DOCS/CONTEXT/HONCHO lines). |
-| `scripts/critique_preflight.py` | CRITIQUE | Fetch task data, scan anti-patterns, YAGNI, TDD. |
-| `scripts/pipeline_health.py` | VERIFY | Check test status, test count, SHA matches. |
-| `scripts/session_reporter.py` | RETRO | Session summary, learnings extraction. |
-| `scripts/mistakes_logger.py` | RETRO | Log mistakes to mistakes.md with phase attribution. |
-| `scripts/conclude_proof_gen.py` | CONCLUDE | Generate Honcho proof block + close punch list. |
-| `scripts/knowledge_graph.py` | EVAL | Query pipeline graph (321 nodes, 320 edges). |
-| `scripts/project_graph_build.py` | REFRESH_CONTEXT | Build file architecture graph for project. |
-| `scripts/task_gardener.py` | Universal | Clean stale tasks, fix stuck statuses. |
-| `scripts/template_scaffolder.py` | Universal | Scaffold skills from templates. |
+| Phase | Gate function | Checks |
+|-------|---------------|--------|
+| RECALL | `_check_recall_gates` | context-pack reference, `FILE_SCOPE:` declared (writes file_scope.json), knowledge-graph consulted |
+| IMPLEMENT | `_check_implement_gates` | hashline (diff context matches real file), file-scope (only declared files), no forbidden patterns, doc-task mode |
+| VERIFY | `_check_verify_gates` | non-empty suite (not `0 passed`/`ran 0 tests`), explicit `N passed` count |
+| CONCLUDE | `_check_conclude_gates` | retro markers (`DECISION:`/`LESSON:`/`DISCIPLINE:`), verify reference, ≥150 chars, valid `HONCHO:` id |
 
-**What hardening means.**
-- Each script independently testable (no harness import dependency)
-- Clear output contract (stdout format the LLM can parse)
-- Deterministic — same input always same output
-- Error handling (DB missing, file missing, bad data)
-- Companion scripts auto-discovered via `_load_phase_skills()` glob
+**Companion / standalone tooling (`scripts/`).**
 
-**Tests.** Each script should have its own test under `tests/test_scripts/`.
+| Script | Job |
+|--------|-----|
+| `hash_gate.py` | Hashline diff-context validation. |
+| `audit_chain.py` | Hash-chained audit append + verify. |
+| `node_gate.py` / `scan_node_violations.py` / `classify_module.py` / `generate_node_map.py` | Node-discipline gate + analysis (VERIFY soft gate, `--strict-nodes` hard block). |
+| `init_project.py` | Scaffold `.techne/`; runs pre-flight (audit-chain integrity, relevant mistakes, KG hits). |
+| `knowledge_graph.py` | Query the wikilink graph (status/phases/mistakes/skill/file/search/rewards). |
+| `project_graph_build.py` | Build per-project file-architecture graph. |
+| `mistakes_logger.py` / `session_reporter.py` | Mistake logging + session summary. |
+| `watchdog.py` | External stall/tamper/skip/orphan detector (cron). |
+| `task_gardener.py` / `task_reset.py` / `template_scaffolder.py` | Maintenance utilities. |
 
-**Connects to.** Domain 6 (scripts are referenced in agent prompts), Domain 1
-(scripts are injected when phase subagent dispatches).
+> The legacy per-phase scripts for CONTEXT_GUARD / CRITIQUE / REVIEW (`context_guard_check.py`,
+> `critique_preflight.py`, `diff_gate_checker.py`, `conclude_proof_gen.py`, `recall_honcho.py`)
+> remain for the deprecated 11-phase loop and are not invoked by `./next`.
+
+**What hardening means.** Each gate independently testable; deterministic (same input →
+same output); actionable failure messages (tell the agent exactly what to add).
+
+**Tests.** `tests/test_scripts/`.
+
+**Connects to.** Domain 1 (gates run in the loop), Domain 6 (enforcement re-invokes gates via the CLI).
 
 ---
 
-## Domain 5: Skill System
+## Domain 5: CLI Surface
 
-**What it is.** The skill files (SKILL.md) that define discipline for each
-phase, plus the router that matches task descriptions to skills.
+**What it is.** The `techne` console entry point — the primary operating surface for
+any host. Replaces the old hand-assembled filesystem ritual.
 
 **Key files.**
 
 | File | Role |
 |------|------|
-| `skills/skill-router.yaml` | Maps keywords → skill paths. Router for context injection. |
-| `skills/<name>/SKILL.md` | Per-skill discipline (Rationalization Table, Red Flags, Next Steps). |
-| `harness/orchestrator_loop.py` | `_load_phase_skills()` via `phase_skills.py` — loads always-loaded, stack-loaded, routed skills. |
+| `pyproject.toml` | Declares the `techne` console_scripts entry point. |
+| `techne_cli/main.py` | CLI dispatch: `init`, `next`, `status`, `doctor`, `gate`, `handoff`, `proposals`. |
+| `techne_cli/core.py` | Import bridge to `scripts/` + `harness/` internals. |
 
-**Skill structure (DISCIPLINE template).**
+**Commands.**
 
-Each SKILL.md has: YAML frontmatter (name, description, triggers), Lead
-block, Rationalization Table, Red Flags, Next Steps. ≤100 lines.
+| Command | Effect |
+|---------|--------|
+| `techne init <id>` | Scaffold `.techne/loop/`, write `state.json` (RECALL), run pre-flight. |
+| `techne next` | Run current-phase gates, advance on pass. |
+| `techne status` | Phase, blocked-log summary, RL health. |
+| `techne doctor` | CC + Hermes setup, audit-chain integrity, context freshness, pending proposals. |
+| `techne gate <name> <target>` | Run a gate standalone (`hashline` / `forbidden` / `audit`). |
+| `techne handoff` | Write a session-continuity doc. |
+| `techne proposals` | Review pending GRPO proposals. |
 
-**What hardening means.**
-- Routing accuracy — does `route("fix login bug")` return the right skill?
-- Skill freshness — are any skills stale/misaligned with current pipeline?
-- Skill+script pair enforcement — every script needs a paired skill
-- Discipline enforcement — does the Rationalization Table actually stop
-  the agent from skipping the phase?
-- Fallback loading when no skill matches
+**What hardening means.** Zero-dep stdlib CLI; gates callable standalone (so the
+enforcement plugins and any runtime can invoke them without importing Python).
 
-**Tests.** `skills/skill-router.yaml` format validation in
-`scripts/validate_command_files.py`.
+**Tests.** `tests/test_cli.py`.
 
-**Connects to.** Domain 6 (skills loaded into agent prompts), Domain 1
-(router invoked during `_read_skill_files`).
-
----
-
-## Domain 6: Phase Agent Prompts
-
-**What it is.** The system prompts (`agents/*.md`) that define each phase
-subagent's role, execution steps, output format, and hard constraints.
-
-**Agent files.**
-
-| File | Agent | Phase |
-|------|-------|-------|
-| `agents/recaller.md` | RECALL | Search context, Honcho query. |
-| `agents/implementer.md` | IMPLEMENT | Write code, TDD-first. |
-| `agents/critique.md` | CRITIQUE | Predict bugs, find tradeoffs. |
-| `agents/reviewer.md` | REVIEW | Security, compliance, code quality. |
-| `agents/verifier.md` | VERIFY | Run tests, verify SHA. |
-| `agents/retro.md` | RETRO | Extract lessons, write retro markers. |
-| `agents/concluder.md` | CONCLUDE | Honcho proof, punch list close. |
-| `agents/conductor.md` | Conductor | Orchestrator host prompt. |
-
-**Each agent prompt has:**
-1. YAML frontmatter (name, description, model, skills, tools)
-2. Role description
-3. What the agent looks for (categorized)
-4. Execution steps (numbered)
-5. Output format (with template)
-6. Available tools (companion scripts)
-7. Hard constraints
-
-**What hardening means.**
-- Output format consistency (does every agent produce parseable output?)
-- Tool reference accuracy (scripts referenced by name actually exist)
-- Prompt brevity (subagent token budget is limited)
-- Constraint enforcement (do agents actually follow hard constraints?)
-- Phase handoff clarity (does REVIEW output work as VERIFY input?)
-
-**Connects to.** Domain 4 (scripts referenced in Available Tools section),
-Domain 5 (skills listed in frontmatter), Domain 1 (loaded by `_read_agent_prompt()`).
+**Connects to.** Domain 1 (`next` wraps `next.py`), Domain 4 (`gate` runs gates), Domain 6 (plugins shell out to `techne gate`).
 
 ---
 
-## Domain 7: Knowledge Graph
+## Domain 6: Enforcement Layer
 
-**What it is.** Two graphs — pipeline patterns within Techne, and project
-architecture per repo.
+**What it is.** Tool-call-layer write enforcement — blocks writes that violate phase
+discipline, logs the audit chain, and writes RL events. Runs on **every** write, always.
 
 **Key files.**
 
 | File | Role |
 |------|------|
-| `.techne/memory/wikilinks.json` | Existing graph: 321 nodes, 320 edges. |
-| `.techne/memory/wikilinks.md` | Human-readable index. |
-| `scripts/knowledge_graph.py` | Query tool: status, phases, mistakes, skill, file, search. |
-| `scripts/project_graph_build.py` | Build file-architecture graph per project. |
+| `plugins/techne-plugin/__init__.py` + `plugin.yaml` | **Hermes** enforcement adapter. `pre_tool_call` → `techne gate hashline` (IMPLEMENT), `techne gate forbidden` (any write), `techne gate audit`; writes `rl.jsonl`. Commands: `/techne-plugin status`, `/techne-plugin off`. |
+| `hooks/phase_guard_hook.py` | **Claude Code** `PreToolUse` hook — exits 2 to deny a wrong-phase / wrong-artifact write. |
+| `harness/plugins/phase_guard.py` | Shared logic: `check_write_allowed(path, cwd)`. Fails open when no `.techne/` is present. |
+| `plugins/techne/` | Legacy single Hermes plugin (superseded by `techne-plugin` + `orchestrator`). |
 
-**Pipeline graph sources.** wikilinks.json (phase links), tasks.db (outcomes),
-mistakes.md (recurrence).
+**What blocks:** writes outside the current phase's artifact, writes to `.techne/audit/`,
+forbidden patterns (reverse shells, etc.), stale diffs (hashline), and — when active —
+phase-timeout and tool-count limits.
 
-**Project graph.** File scan → classify by type/role → build import edges →
-`.techne/context/project-graph.json`.
+**What hardening means.** Fail-open outside Techne projects; never block the audit trail
+from being written by the loop itself; parity between the CC hook and the Hermes plugin.
 
-**What hardening means.**
-- Node quality (do 321 nodes have useful types?)
-- Edge accuracy (are edges real dependencies or noise?)
-- Query completeness (can you answer "what phase fails most for auth tasks?")
-- Project graph freshness (rebuild on significant changes)
-- GRPO signal accuracy (does the graph feed useful reward signals?)
+**Tests.** `tests/test_scripts/` (synthetic tool payloads), enforcement E2E suite.
 
-**Connects to.** Domain 8 (graph feeds GRPO), Domain 4 (scripts are injected
-into EVAL and REFRESH_CONTEXT phases).
+**Connects to.** Domain 4 (re-invokes gates), Domain 3 (reads state, writes audit/RL), Domain 8 (RL events).
+
+---
+
+## Domain 7: Knowledge Graph + Memory
+
+**What it is.** The wikilink graph connecting mistakes, ledger entries, tasks, files,
+and skills — rebuilt at CONCLUDE→DONE — plus the durable memory stores.
+
+**Key files.**
+
+| File | Role |
+|------|------|
+| `.techne/memory/wikilinks.json` / `.md` | Graph + human-readable index. Rebuilt on every DONE. |
+| `scripts/knowledge_graph.py` | Query tool (status/phases/mistakes/skill/file/search/rewards). |
+| `harness/wikilink.py` | Graph build (`build_graph`, `format_markdown`). |
+| `scripts/project_graph_build.py` | Per-project file-architecture graph. |
+| `.techne/memory/ledger.md`, `mistakes.md`, `retros/` | Wisdom extraction targets (written by `_persist_retro`). |
+
+**RECALL requirement:** the RECALL gate requires evidence the knowledge graph was
+consulted (`techne kg search <term>` or equivalent reference in `recall.txt`).
+
+**What hardening means.** Node/edge quality; query completeness ("what phase fails most
+for auth tasks?"); rebuild robustness (best-effort, never block DONE).
+
+**Connects to.** Domain 8 (graph feeds GRPO), Domain 1 (rebuild at DONE), Domain 4 (KG gate at RECALL).
 
 ---
 
 ## Domain 8: GRPO / Learning Loop
 
-**What it is.** The reward system — phase outcomes logged, override patterns
-analyzed, classifier rules auto-adjusted at threshold.
+**What it is.** The reward system — gate outcomes logged as RL events, advantages
+computed per task-type group, high-advantage variants staged as human-ratified proposals.
 
 **Key files.**
 
 | File | Role |
 |------|------|
-| `.techne/memory/rewards.db` | GRPO reward scores. |
-| `.techne/logs/mode_overrides.log` | Telemetry of mode overrides (auto-rotated). |
-| `.techne/logs/classifier_insights.log` | Learning loop output (at 20-entry threshold). |
-| `harness/reward_log.py` | Reward logging functions. |
+| `.techne/events/rl.jsonl` | RL event log (written by the enforcement layer on every gate outcome). |
+| `.techne/memory/rewards.db` | Composite reward scores. |
+| `.techne/memory/retro_proposals.md` | Staged `PROPOSE ADD` skill-edit proposals. |
+| `harness/grpo.py` | Advantage computation + proposal generation. |
+| `harness/reward.py` / `reward_log.py` | Reward logging. |
+| `harness/apply_retro.py` | The **only** skill-write path — human-ratified application. |
+| `harness/_retro_conclude.py` | `_persist_retro` — wisdom extraction wired at CONCLUDE→DONE. |
 
-**What hardening means.**
-- Reward signal accuracy (do scores reflect actual outcome quality?)
-- Learning loop effectiveness (do classifier adjustments improve accuracy?)
-- Memory rotation (do old logs get archived or pruned?)
-- Threshold tuning (is 20 the right number for analysis trigger?)
-- Feedback loop safety (can bad rewards make the classifier worse?)
+**Proposal surfacing:** at CONCLUDE, `./next` prints pending proposal count; review via
+`techne proposals`. **Proposals never auto-apply** — `apply_retro.py` gates every edit.
 
-**Connects to.** Domain 2 (learning loop adjusts classifier), Domain 7 (graph
-provides pattern data), Domain 4 (`knowledge_graph.py` queries rewards).
+**What hardening means.** Reward-signal accuracy; safe feedback loop (bad rewards must
+not silently degrade behavior); proposal review never bypassed.
+
+**Connects to.** Domain 2 (learning adjusts classifier), Domain 7 (graph data), Domain 6 (RL event source).
 
 ---
 
-## Domain 9: Plugin Integration
+## Domain 9: Orchestration Layer
 
-**What it is.** How Techne connects to Hermes Agent — the slash command,
-metaprompt validation, and revolver delegation fallback.
+**What it is.** The layer that drives the loop, enforces retry caps, surfaces HITL
+blocks, and manages session continuity — what prose alone cannot enforce.
 
 **Key files.**
 
 | File | Role |
 |------|------|
-| `~/.hermes/plugins/techne/__init__.py` | Hermes plugin. `/techne` slash command. |
-| `commands/techne.toml` | 2029-char hardened debug command prompt. |
-| `scripts/validate_command_files.py` | Validator for command file format. |
-| `~/.hermes/plugins/revolver/` | Delegation fallback plugin (6 hyphen commands). |
+| `plugins/orchestrator/__init__.py` + `plugin.yaml` | Hermes orchestration plugin. Hooks: `on_session_start` (surface active phase), `pre_tool_call` (retry-cap block), `on_session_end` (write handoff if incomplete). Commands: `orchestrator status/retry/block/unblock/handoff`. |
+| `techne_cli/main.py` → `cmd_handoff` | `techne handoff` — continuity doc for resuming in a new session. |
+| `harness/pipeline_enforcer.py` | Phase-transition rules + retry budgets. |
 
-**Revolver commands.** `/revolver-next`, `/revolver-status`, `/revolver-graph`,
-`/revolver-reset`, `/revolver-log`, `/revolver-tool`. Managed via cylinder pool
-in `~/.hermes/revolver.yaml`.
+**HITL / retry:** when a phase exceeds its retry cap, the orchestrator blocks with an
+HITL message rather than looping forever. Optional **Revolver** companion plugin rotates
+model/provider on failure (see GRAND-PLAN Task 15).
 
-**What hardening means.**
-- `/techne` command robustness (does it survive bad input?)
-- Revolver fallback reliability (does it actually recover from model failures?)
-- Metaprompt validation (does plugin catch misconfigured prompts?)
-- Cross-profile safety (plugin doesn't modify wrong Hermes profile)
-- Command file format enforcement
+**What hardening means.** Retry-cap correctness; handoff completeness (a fresh agent can
+resume from disk); HITL messages that explain the block in plain language.
 
-**Connects to.** Domain 1 (plugin dispatches pipeline loop), Domain 6
-(plugin validates agent prompts).
+**Connects to.** Domain 1 (drives the loop), Domain 3 (reads/writes state + handoff), Domain 6 (shares the `pre_tool_call` surface).
 
 ---
 
-## Domain 10: Docs & Workshop
+## Domain 10: Skills, Docs & Workshop
 
-**What it is.** All documentation — plans, ADRs, retro logs, README, workshop
-shells. The map and the memory.
+**What it is.** The skill library, the documentation, plans, ADRs, and retro logs —
+the map and the memory.
 
 **Key files.**
 
 | File | Role |
 |------|------|
-| `README.md` | Repo overview, setup, usage. |
-| `docs/adr/ADR-FORMAT.md` | Architecture Decision Record template. |
-| `docs/host-integration-guide.md` | How to integrate Techne with a host. |
-| `docs/plans/techne-worker-metaprompt.md` | 227-line master task document. |
-| `docs/plans/techne-workshop-build-guide.md` | Workshop setup guide. |
-| `docs/plans/techne-workshop-garage.md` | Workshop patterns. |
-| `docs/retro/*.md` | Session retrospectives. |
-| `docs/techne-domains.md` | This file. |
+| `SKILL.md` | Skill router + pipeline contract. First-read entry point. |
+| `skills/` | Skill library (under restructure — Techne skills relocate to `.hermes/skills/` per GRAND-PLAN Task 13). |
+| `docs/host-integration-guide.md` | Host operational contract (5-phase, two-layer). |
+| `docs/agent-knowledge-dimensions.md` | Cross-source harness-engineering knowledge map. |
+| `docs/open-knowledge-format-context.md` | **OKF — the durable building-context standard** (one concept per file, YAML frontmatter, markdown links as edges, `index.md`, `log.md`). |
+| `docs/plans/GRAND-PLAN-FINAL.md` | Zero-HITL framework: Context/Proof/Enforcement replace HITL. |
+| `docs/plans/GRAND-PLAN-HERMES.md` | Live architecture spec for the two-layer model. |
+| `docs/retro/*.md`, `docs/adr/` | Retrospectives + decision records. |
 
-**What hardening means.**
-- Docs completeness (does every domain have documentation?)
-- Plan accuracy (do plans match current code?)
-- ADR coverage (are architectural decisions recorded?)
-- Retro quality (are lessons actionable?)
-- README freshness (does setup section still work?)
+**Durable building context uses OKF.** Shared, cross-session context lives as
+[OKF](open-knowledge-format-context.md) concept files under `.techne/context/`
+(`index.md` + `domains/` + `decisions/` + `runbooks/` + `risks/` + `skills/` + `log.md`) —
+one concept per file, git-versioned, human-readable, agent-parseable. **YAGNI: plain files
+until they demonstrably stop being enough; no new database.** When a concept becomes
+enforceable, promote it into a gate, eval, skill, or policy.
 
-**Connects to.** Every domain (docs should cover them all accurately).
+> **Note:** `agents/*.md` (the old phase-agent prompts) were removed in the restructure;
+> phase roles are now expressed through skills + subagent dispatch, not standalone prompt
+> files. The legacy domain map's "Phase Agent Prompts" domain no longer applies.
+
+**What hardening means.** Root instruction files are **maps, not encyclopedias** (the
+"lost in the middle" lesson — see `agent-knowledge-dimensions.md`); plans match current
+code; docs cover every live domain accurately.
+
+**Connects to.** Every domain (docs should describe them all accurately).
 
 ---
 
@@ -374,25 +349,24 @@ shells. The map and the memory.
 
 | # | Domain | Dir / Prefix | Tests | Hardening Priority |
 |---|--------|-------------|-------|-------------------|
-| 1 | Pipeline Core | `harness/` | `test_orchestrator_driver.py` | 1 — highest impact |
-| 2 | Phase Mode System | `harness/pipeline_enforcer.py` | `test_mode_classifier.py` | 2 |
-| 3 | Task Lifecycle | `harness/task_db.py` | (implicit) | 3 — data integrity |
-| 4 | Phase Tooling | `scripts/` | (per-script) | 4 |
-| 5 | Skill System | `skills/` + `skill-router.yaml` | `validate_command_files.py` | 5 |
-| 6 | Phase Agent Prompts | `agents/*.md` | (none) | 6 |
-| 7 | Knowledge Graph | `scripts/knowledge_graph.py` | (none) | 7 |
-| 8 | GRPO / Learning Loop | `.techne/memory/` | (none) | 8 |
-| 9 | Plugin Integration | `~/.hermes/plugins/` | (none) | 9 |
-| 10 | Docs & Workshop | `docs/`, `plans/`, README | (none) | 10 |
+| 1 | Pipeline Core | `scripts/next.py`, `harness/` | `test_cli.py`, `test_hash_gate.py` | 1 — highest impact |
+| 2 | Phase / Mode System | `harness/pipeline_enforcer.py` | (mode tests) | 2 |
+| 3 | Loop & Task State | `.techne/loop/`, `.techne/memory/` | (implicit) | 3 — integrity |
+| 4 | Phase Gates + Tooling | `scripts/` | `tests/test_scripts/` | 4 |
+| 5 | CLI Surface | `techne_cli/` | `test_cli.py` | 5 |
+| 6 | Enforcement Layer | `plugins/techne-plugin/`, `hooks/` | enforcement E2E | 2 — security |
+| 7 | Knowledge Graph + Memory | `scripts/knowledge_graph.py`, `harness/wikilink.py` | (none) | 7 |
+| 8 | GRPO / Learning Loop | `harness/grpo.py`, `.techne/events/` | (none) | 8 |
+| 9 | Orchestration Layer | `plugins/orchestrator/` | (none) | 6 |
+| 10 | Skills, Docs & Workshop | `skills/`, `docs/` | (none) | 9 |
 
 ## Improvement Protocol — Per Domain
 
 When hardening a domain:
 
-1. Open this file to see what belongs to that domain
-2. Load the companion skill if one exists (pip install discipline)
-3. Read all files listed in that domain's table ✓
-4. Write tests for the behavior you're hardening
-5. If adding a new script, pair it with a skill + router entry
-6. If removing something, update this file
-7. Update retro/ with what changed and why
+1. Open this file to see what belongs to that domain.
+2. Read all files listed in that domain's table.
+3. Write tests for the behavior you're hardening.
+4. If adding a new gate/script, pair it with a CLI subcommand or gate name.
+5. If removing something, update this file.
+6. Record what changed and why in `docs/retro/`.

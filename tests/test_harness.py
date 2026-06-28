@@ -357,8 +357,9 @@ def test_conductor_paths():
     print("\n[conductor path resolution]")
 
     harness_dir = ROOT
+    hermes_dir = Path.home() / ".hermes"
 
-    agents = list((harness_dir / "agents").glob("*.md"))
+    agents = list((hermes_dir / "agents").glob("*.md"))
     if len(agents) >= 5 and any(a.name == "context-preflight.md" for a in agents):
         results.append(("agent files include context-preflight", True, ""))
         print(f"  {PASS} agent files include context-preflight: {[a.name for a in agents]}")
@@ -366,7 +367,7 @@ def test_conductor_paths():
         results.append(("agent files include context-preflight", False, str([a.name for a in agents])))
         print(f"  {FAIL} expected context-preflight agent, found {len(agents)}: {[a.name for a in agents]}")
 
-    skills = list((harness_dir / "skills").glob("*.md"))
+    skills = list((hermes_dir / "skills" / "techne-skills").glob("*.md"))
     if len(skills) >= 2:
         results.append(("skill files found", True, ""))
         print(f"  {PASS} skill files found: {[s.name for s in skills]}")
