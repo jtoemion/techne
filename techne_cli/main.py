@@ -509,6 +509,55 @@ def cmd_doctor(args):
     print()
 
 
+def cmd_promotion(args):
+    """Promotion Gate — W7 structural learning loop (evaluate/ingest/status)."""
+    repo = _repo_root()
+    for p in [str(repo / "scripts")]:
+        if p not in sys.path:
+            sys.path.insert(0, p)
+
+    from promotion_gate import (
+        evaluate_candidate, promote, ingest_from_incident_log,
+        ingest_failure, show_status, load_corpus,
+    )
+
+    if args.promo_cmd == "evaluate":
+        candidate_text = Path(args.candidate).read_text(encoding="utf-8")
+        incumbent_text = Path(args.incumbent).read_text(encoding="utf-8")
+        signal = evaluate_candidate(candidate_text, incumbent_text,
+                                    k=args.k, divergence_bound=args.divergence_bound)
+        print(f"  Verdict:    {signal.verdict}")
+        print(f"  Reason:     {signal.reason}")
+        print(f"  pass^k:     candidate={signal.pass_k_score:.2%} incumbent={signal.incumbent_score:.2%}")
+        print(f"  Delta:      {signal.delta:+.2%}")
+        print(f"  Divergence: {signal.divergence:.2f}")
+        if signal.verdict == "PROMOTE" and args.promote_on_win:
+            if promote(args.gate_name, args.candidate, signal, candidate_text):
+                print(f"  Promoted:   {args.gate_name}")
+        sys.exit(0 if signal.verdict == "PROMOTE" else 1)
+
+    if args.promo_cmd == "ingest":
+        inc_path = Path(args.incidents) if args.incidents else None
+        new_cases = ingest_from_incident_log(inc_path)
+        print(f"  Ingested {len(new_cases)} new eval case(s)")
+        return
+
+    if args.promo_cmd == "add-case":
+        case = ingest_failure(
+            source="human_label",
+            description=args.description,
+            skill_target=args.skill_target,
+            required_patterns=args.require or [],
+            forbidden_patterns=args.forbid or [],
+        )
+        print(f"  Added: {case.id}")
+        return
+
+    if args.promo_cmd == "status":
+        show_status()
+        return
+
+
 def cmd_ring(args):
     """Runtime Ring — snapshot, monitor, rollback, status."""
     repo = _repo_root()
@@ -609,6 +658,29 @@ def cli():
     p_proposals.add_argument("action", nargs="?", default="review",
                               choices=["review"], help="Action to perform (default: review)")
     p_proposals.set_defaults(func=cmd_proposals)
+
+    p_promo = sub.add_parser("promotion", help="Promotion Gate — W7 structural learning loop")
+    promo_sub = p_promo.add_subparsers(dest="promo_cmd", required=True)
+
+    pr_eval = promo_sub.add_parser("evaluate", help="Evaluate a candidate vs incumbent")
+    pr_eval.add_argument("--candidate", required=True, help="Candidate skill file")
+    pr_eval.add_argument("--incumbent", required=True, help="Incumbent skill file")
+    pr_eval.add_argument("--gate-name", default="unnamed")
+    pr_eval.add_argument("--k", type=int, default=5)
+    pr_eval.add_argument("--divergence-bound", type=float, default=0.6)
+    pr_eval.add_argument("--promote-on-win", action="store_true")
+
+    pr_ing = promo_sub.add_parser("ingest", help="Ingest Runtime Ring incidents into eval corpus")
+    pr_ing.add_argument("--incidents", help="Path to incidents.jsonl")
+
+    pr_add = promo_sub.add_parser("add-case", help="Add a manual eval case")
+    pr_add.add_argument("--description", required=True)
+    pr_add.add_argument("--skill-target", default="skills/implementer.md")
+    pr_add.add_argument("--require", action="append", default=[], metavar="PATTERN")
+    pr_add.add_argument("--forbid", action="append", default=[], metavar="PATTERN")
+
+    promo_sub.add_parser("status", help="Show promotion gate status")
+    p_promo.set_defaults(func=cmd_promotion)
 
     p_ring = sub.add_parser("ring", help="Runtime Ring — post-merge behavioral monitor (W6)")
     ring_sub = p_ring.add_subparsers(dest="ring_cmd", required=True)

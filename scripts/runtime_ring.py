@@ -268,6 +268,18 @@ def log_incident(reason: str, current_pass_rate: float, baseline_pass_rate: floa
         encoding="utf-8",
     )
 
+    # Auto-ingest this incident into the promotion gate eval corpus (W7)
+    try:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from promotion_gate import ingest_failure
+        ingest_failure(
+            source="runtime_ring",
+            description=f"Runtime Ring rollback: {reason[:120]}",
+            skill_target="skills/implementer.md",
+        )
+    except Exception:
+        pass
+
     # JSONL incident log
     entry = {
         "ts": time.time(),
