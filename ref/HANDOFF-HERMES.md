@@ -4,6 +4,13 @@
 > Equivalent to the Claude Code `PreToolUse` hook + `techne gate` CLI.
 > Date: 2026-06-26
 
+> ⚠️ **Superseded — use [docs/INSTALL-HERMES.md](../docs/INSTALL-HERMES.md).** This file
+> predates verification against the real Hermes hooks API and contains two errors: the hook
+> event is **`pre_tool_call`** (not `pre_tool_use`), and blocking returns
+> **`{"action": "block", "message": str}`** (not `{"blocked": True, "reason": str}`).
+> Registration is `def register(ctx): ctx.register_hook("pre_tool_call", cb)`, not a
+> `PLUGIN_MANIFEST` dict. The corrected, complete guide is INSTALL-HERMES.md.
+
 ---
 
 ## What Techne Enforcement Does
