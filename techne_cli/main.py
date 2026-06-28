@@ -430,6 +430,29 @@ def cmd_doctor(args):
     else:
         print(_warn("No genesis.json — run: python scripts/genesis.py"))
 
+    # W6 Runtime Ring status
+    print(f"\n{_bold('W6 Runtime Ring')}\n" + "─" * 40)
+    for _rp in [str(_repo_root() / "scripts")]:
+        if _rp not in sys.path:
+            sys.path.insert(0, _rp)
+    try:
+        from runtime_ring import load_last_snapshot, _INCIDENTS_FILE
+        snap = load_last_snapshot()
+        if snap is None:
+            print(_warn("No baseline snapshot — run: techne ring snapshot"))
+        else:
+            print(_ok(f"Baseline: tag={snap.tag} pass_rate={snap.pass_rate:.1%} ({snap.pass_count}/{snap.test_count})"))
+        if _INCIDENTS_FILE.exists():
+            n_inc = len([l for l in _INCIDENTS_FILE.read_text(encoding="utf-8").splitlines() if l.strip()])
+            if n_inc:
+                print(_warn(f"{n_inc} incident(s) logged — check .techne/runtime_ring/incidents.jsonl"))
+            else:
+                print(_ok("No incidents logged"))
+        else:
+            print(_ok("No incidents logged"))
+    except Exception as e:
+        print(_warn(f"Runtime Ring unreadable: {e}"))
+
     # 8 — Hermes checks
     hermes_dir = Path.home() / ".hermes"
     print(f"\n{_bold('Hermes')}\n" + "─" * 40)
@@ -484,6 +507,47 @@ def cmd_doctor(args):
         print(_warn("~/.revolver.yaml not found — see ref/HANDOFF-HERMES.md"))
 
     print()
+
+
+def cmd_ring(args):
+    """Runtime Ring — snapshot, monitor, rollback, status."""
+    repo = _repo_root()
+    for p in [str(repo / "scripts")]:
+        if p not in sys.path:
+            sys.path.insert(0, p)
+
+    from runtime_ring import take_snapshot, save_snapshot, monitor, rollback, show_status, log_incident, load_last_snapshot
+
+    if args.ring_cmd == "snapshot":
+        snap = take_snapshot(args.test_cmd, args.tag)
+        save_snapshot(snap)
+        return
+
+    if args.ring_cmd == "monitor":
+        result = monitor(args.test_cmd, args.threshold)
+        print(f"  [ring] {result.reason}")
+        if result.requires_rollback:
+            baseline = load_last_snapshot()
+            rollback_target = args.rollback_to or (baseline.tag if baseline else "HEAD~1")
+            risk_note = log_incident(
+                result.reason, result.current_pass_rate, result.baseline_pass_rate,
+                baseline.tag if baseline else "unknown", rollback_target,
+            )
+            print(f"  [ring] Incident logged: {risk_note}")
+            if not args.dry_run:
+                ok, msg = rollback(rollback_target)
+                print(f"  [ring] {'ROLLBACK' if ok else 'ROLLBACK FAILED'}: {msg}")
+                sys.exit(0 if ok else 1)
+        sys.exit(0 if result.passed else 1)
+
+    if args.ring_cmd == "rollback":
+        ok, msg = rollback(args.to_tag, args.dry_run)
+        print(f"  [ring] {'OK' if ok else 'FAIL'}: {msg}")
+        sys.exit(0 if ok else 1)
+
+    if args.ring_cmd == "status":
+        show_status()
+        return
 
 
 def cmd_proposals(args):
@@ -545,6 +609,27 @@ def cli():
     p_proposals.add_argument("action", nargs="?", default="review",
                               choices=["review"], help="Action to perform (default: review)")
     p_proposals.set_defaults(func=cmd_proposals)
+
+    p_ring = sub.add_parser("ring", help="Runtime Ring — post-merge behavioral monitor (W6)")
+    ring_sub = p_ring.add_subparsers(dest="ring_cmd", required=True)
+
+    r_snap = ring_sub.add_parser("snapshot", help="Capture a health baseline")
+    r_snap.add_argument("--test-cmd", default="pytest -q", help="Test command to run")
+    r_snap.add_argument("--tag", help="Tag for this snapshot (default: auto timestamp)")
+
+    r_mon = ring_sub.add_parser("monitor", help="Compare current health to baseline")
+    r_mon.add_argument("--test-cmd", default="pytest -q", help="Test command to run")
+    r_mon.add_argument("--threshold", type=float, default=0.05,
+                       help="Max allowed pass_rate drop (default: 0.05 = 5%%)")
+    r_mon.add_argument("--rollback-to", help="Git ref to rollback to on regression")
+    r_mon.add_argument("--dry-run", action="store_true")
+
+    r_rb = ring_sub.add_parser("rollback", help="Rollback to a git tag or commit")
+    r_rb.add_argument("--to-tag", required=True, help="Git tag or commit SHA")
+    r_rb.add_argument("--dry-run", action="store_true")
+
+    ring_sub.add_parser("status", help="Show current Runtime Ring status")
+    p_ring.set_defaults(func=cmd_ring)
 
     p_gates = sub.add_parser("gates", help="Show Gate Registry (per-gate status + catch-rate)")
     p_gates.add_argument("--json", action="store_true", help="JSON output")

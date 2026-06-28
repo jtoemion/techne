@@ -977,6 +977,21 @@ def main() -> int:
                 # best-effort — never block DONE on retro failure
                 pass
 
+            # Runtime Ring: auto-snapshot on CONCLUDE→DONE
+            try:
+                sys.path.insert(0, str(Path(__file__).parent))
+                from runtime_ring import take_snapshot, save_snapshot
+                import yaml as _yaml
+                _cfg_path = cwd / ".techne" / "config.yaml"
+                _test_cmd = "pytest -q"
+                if _cfg_path.exists():
+                    _cfg = _yaml.safe_load(_cfg_path.read_text()) or {}
+                    _test_cmd = _cfg.get("test_cmd", _test_cmd)
+                _snap = take_snapshot(_test_cmd, tag=f"done-{state.task_id}")
+                save_snapshot(_snap)
+            except Exception:
+                pass
+
             # Check for unreviewed GRPO proposals
             proposals_path = cwd / ".techne" / "memory" / "retro_proposals.md"
             if proposals_path.exists():
