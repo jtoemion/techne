@@ -231,6 +231,31 @@ def _check_recall_gates(path: Path) -> list[GateResult]:
             else "no knowledge graph reference — run: techne kg search <term>",
         ))
 
+    # ── Context-gap check (soft — reports gaps, never blocks RECALL) ──────────
+    try:
+        context_gap_script = _HERE / "context_gap.py"
+        scope_file = loop_dir() / "file_scope.json"
+        if context_gap_script.exists() and scope_file.exists():
+            import subprocess
+            gap_result = subprocess.run(
+                [sys.executable, str(context_gap_script),
+                 "--scope-file", str(scope_file), "--json"],
+                capture_output=True, text=True, encoding="utf-8", timeout=30,
+            )
+            try:
+                import json as _json
+                report = _json.loads(gap_result.stdout)
+                n_gaps = report.get("gap_count", 0)
+                n_covered = report.get("covered_count", 0)
+                msg = f"{n_covered} covered, {n_gaps} gap(s)"
+                if n_gaps:
+                    msg += f" — {report.get('recommendation', '')[:120]}"
+                results.append(GateResult("context coverage", True, msg))
+            except Exception:
+                results.append(GateResult("context coverage", True, "scan complete"))
+    except Exception as exc:
+        results.append(GateResult("context coverage", True, f"skipped ({exc})"))
+
     return results
 
 

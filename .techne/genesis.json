@@ -1,0 +1,21 @@
+{
+  "generated_at": "2026-06-28T21:31:29.810038+00:00",
+  "root": "C:\\Users\\jtoem\\Repo\\techne\\.claude\\worktrees\\vigorous-noyce-522718",
+  "modules_scanned": 85,
+  "files_written": [
+    ".techne\\context\\genesis-api-surface.md",
+    ".techne\\context\\genesis-conventions.md",
+    ".techne\\context\\genesis-structure.md"
+  ],
+  "shas": {
+    "genesis-api-surface.md": "13108fd8fa8f5efd2c76096511ec12a7553855063074131f51547a1f49ab69a8",
+    "genesis-conventions.md": "dc5ee6dc97e2f57774cdc184b580dcf184be5abd1824791c2956c902647f51a4",
+    "genesis-structure.md": "4f7046b934f912dfbc78694f57000f178ba94079d73ba2d87d85124c83a63a72"
+  },
+  "conventions": {
+    "test_runner": "pytest",
+    "package_root": "harness/",
+    "vcs": "git"
+  },
+  "contract_sha": "4db40da226a83b4c6c3595d9645aefc9976c853f692a34683d74b48ab6b4d57d"
+}
