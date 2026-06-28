@@ -10,11 +10,15 @@
 > [GRAND-PLAN-HERMES](GRAND-PLAN-HERMES.md), [HANDOFF-CC-V0](../../HANDOFF-CC-V0.md),
 > the [scouting report](../../ref/SCOUTING-REPORT.md), and the
 > [harness corpus](../agent-knowledge-dimensions.md).
-> **Research basis:** 7 web research passes (2026) across two rounds — context engineering,
+> **Research basis:** 9 web research passes (2026) across three rounds — context engineering,
 > autonomous agent reliability, reward hacking, spec-driven development, judge reliability,
-> mutation-testing cost, and Goodhart/eval-contamination — citations inline.
-> **Iteration:** round 2 added the Gate Registry, a mutation-gate cost model, and a
-> Goodhart-hardened promotion gate (see §4, §9.1, §9.7).
+> mutation-testing cost, Goodhart/eval-contamination, mechanical convention extraction, and
+> property-based/model-independent verification — citations inline.
+> **Iteration:** R2 added the Gate Registry, a mutation-gate cost model, and a
+> Goodhart-hardened promotion gate. R3 added the **model-independent proof floor**
+> (property-based invariants + static analysis over LLM judges), a **mechanical context-gap
+> detector**, a **spec-soundness gate**, and named the **irreducible spec-intent residual**
+> (§9.2, §9.3, §9.8).
 
 ---
 
@@ -41,7 +45,7 @@ proposed feature doesn't map to this table, it doesn't ship (YAGNI).
 |---|---|---|---|---|
 | **Drift** | wanders off the task; scope-creeps; recycles past actions | Frozen **SPEC** contract · **SCOPE** gate · **lean context** (stay out of the "dumb zone") · step/token **budget** · plan-alignment gate | Context + Enforcement | "dumb zone" ~40% window; asymmetric goal drift (arXiv 2603.03456) |
 | **Hallucinate** | invents APIs, files, parameters | **Grounding retrieval** (real code in context) · **Hashline** (edits must match real file bytes) · **context-gap detector** | Context + Proof | grounding cuts hallucination; context-gap fabrication taxonomy |
-| **Lie** | claims success without proof; games the test | **Immutable trust boundary** (tests/verifier/tool-surface outside the model's reach) · **deterministic boundary monitor** (zero-reward + block on any reach for verification machinery) · **mutation gate** · SHA-gated **real** tests · secret/forbidden scan · **separate-model verifier** | Proof | Ornith two-layer defense; reward-hacking benchmark (arXiv 2605.02964); preference leakage |
+| **Lie** | claims success without proof; games the test | **Model-independent invariants (PBT)** · **immutable trust boundary** (tests/verifier/tool-surface outside the model's reach) · **deterministic boundary monitor** (zero-reward + block on any reach for verification machinery) · **mutation gate** · SHA-gated **real** tests · secret scan · separate-model verifier (last resort) | Proof | Ornith two-layer defense; reward-hacking benchmark (arXiv 2605.02964); PBT breaks the "cycle of self-deception" |
 | **Disobey** | ignores rules/skills/constraints | **Tool-call enforcement** (phase_guard) · immutable test isolation · **no escape hatches** (no inline-disable) · **small focused skills** (defeat lost-in-the-middle) | Enforcement + Context | escape-hatch ban; skill-bloat 77%→97% (Nick Nisi) |
 
 **Read this table top-to-bottom: it is the product.** Everything below is how we build each cell.
@@ -68,6 +72,11 @@ Three layers, mirroring the spec-driven convergence (Kiro "steering" / Spec-Kit
    *this* task (EARS-style requirements + acceptance criteria + FILE_SCOPE). This is the
    single source of truth the whole loop verifies against. **It is hashed and frozen at
    creation** — the agent cannot rewrite the goalposts (anti-drift, anti-lie).
+   SPECIFY also **extracts model-independent properties/invariants** the solution must
+   satisfy (the PBT contract — see Proof Spine) and runs a **spec-soundness gate**: a spec
+   that is internally contradictory, or that yields *no checkable property*, is
+   underspecified → BLOCK. (PBT-on-spec mechanically catches underspecification; this is the
+   automated answer to "who validates the spec" — bounded, see §9.8.)
 
 **Memory substrate — fast working tier vs deep durable tier.** The three layers above are
 *what* is in context; they live on a **two-tier memory substrate** that keeps the working
@@ -98,10 +107,17 @@ compaction layer, Honcho is the durable detail it compacts *from*.
 - **Grounding over memory.** Before IMPLEMENT, retrieve the *actual* file contents and
   symbols the SPEC touches into context. The agent edits what it can see, not what it
   recalls. (Hashline then proves it saw the real bytes.)
-- **Context-gap detector.** A gate that flags when the codebase uses a stack/pattern with
-  no corresponding guidance in the memory bank (e.g. React code, no React card). Gaps are
-  invisible by definition and are a primary drift source — surface them and require a card
-  before IMPLEMENT.
+- **Context-gap detector (mechanical, not heuristic).** Derive the codebase's actual
+  conventions by **static analysis / AST traversal** (naming, structure, stack mix, test
+  patterns, lint configs) and **diff them against the documented constitution + memory
+  bank**. Where the code uses a stack/pattern with no corresponding card (e.g. 60% React,
+  no React guidance; hundreds of tests, no testing card) → flag the gap and require a card
+  before IMPLEMENT. (This is the Packmind `context-evaluator` pattern — comparing
+  documentation coverage to the real tree.)
+- **Don't narrate what the agent can already see.** A good context engine reads the
+  codebase so you don't have to describe it. Reserve the lean window for what the agent
+  *can't* derive from tools; let it probe live (read the file, run the linter) rather than
+  pre-loading static dumps that burn attention budget.
 
 ### Pillar II — The Proof Spine (replaces *checking the work*)
 
@@ -122,21 +138,38 @@ Ornith-1.0's layered defense:
   `phase_guard` + audit chain, extended to cover the full verification surface.
 
 **On top of the boundary, defense-in-depth (no single check is trusted):**
-- **Real tests, SHA-gated.** VERIFY runs the actual suite; output is hashed so faked stdout
-  is rejected. Non-empty + explicit count (an empty suite is a lie).
-- **Mutation gate.** Mutate the changed source; the frozen tests must catch it. A suite
-  that survives mutation is a weak/accommodating test → BLOCK. This is the *only* HITL-free
-  mechanism that catches a test that was weak **from the start**, and it must be
-  un-suppressible.
-- **Test authorship is separated and isolated.** Tests are authored against the SPEC by a
-  **different model** than the implementer (preference-leakage avoidance), in a context
-  that never sees the implementation. Frozen + hashed before IMPLEMENT begins.
-- **Semantic + safety gates beyond test-pass.** The documented dark-factory failure —
-  tests passed, diff clean, yet the agent shipped a plaintext secret and a token-audience
-  mismatch — proves test-pass is *necessary, not sufficient*. Add: secret/forbidden-pattern
-  scan, and a **separate-model verifier** (VerifiAgent-style: meta-check completeness +
-  tool-based correctness) that reads the diff against the SPEC and flags scope creep and
-  unstated behavior.
+**The proof hierarchy — most-trusted (model-independent) to least (gameable):**
+
+1. **Model-independent invariants (the trust floor).** The strongest proof doesn't involve
+   an LLM at all. This breaks the **"cycle of self-deception"** — LLM-written tests share
+   the blind spots of LLM-written code, so example-based tests can pass on both being wrong
+   the same way. Defenses that escape it:
+   - **Property-Based Testing (PBT).** Invariants that hold regardless of which model wrote
+     the code (round-trip, idempotence, conservation: "factors multiply back to the input").
+     PGS-style approaches show large gains over example TDD, and PBT *also validates the
+     spec* — it mechanically catches underspecification. These properties are derived at
+     SPECIFY (§ Context Engine) and are ground truth the implementer can't game.
+   - **Static analysis + type checks + the compiler.** Deterministic, model-free: types,
+     lints-as-errors, architecture-boundary checks, dead-code/complexity sensors.
+2. **Mechanical execution proof.**
+   - **Real tests, SHA-gated.** VERIFY runs the actual suite; output is hashed so faked
+     stdout is rejected. Non-empty + explicit count (an empty suite is a lie).
+   - **Mutation gate.** Mutate the changed source; the frozen tests must catch it. A suite
+     that survives mutation is weak/accommodating → BLOCK. The only HITL-free mechanism that
+     catches a test that was weak **from the start**; must be un-suppressible.
+   - **Secret / forbidden-pattern scan.** The documented dark-factory failure (tests passed,
+     diff clean, yet a plaintext secret and a token-audience mismatch shipped) proves
+     test-pass is *necessary, not sufficient*. Deterministic scan, not a judge.
+3. **LLM judgment — last resort, defense-in-depth only.**
+   - **Test authorship separated + isolated.** Tests authored against the SPEC by a
+     **different model family** than the implementer (preference-leakage avoidance), in a
+     context that never sees the implementation. Frozen + hashed before IMPLEMENT.
+   - **Separate-model verifier** (VerifiAgent-style: meta-check completeness + tool-based
+     correctness) reads the diff against the SPEC for scope creep / unstated behavior.
+
+> **The rule:** trust flows *up* this list. An LLM judge never overrides a mechanical
+> result, and is never the sole basis for "done." Falsification (testing/PBT) disproves;
+> only formal methods prove — so where a domain has cheap invariants, prefer them.
 
 ### Pillar III — The Enforcement Layer (replaces *stopping bad actions*)
 
@@ -193,10 +226,10 @@ SPECIFY → GROUND → IMPLEMENT → VERIFY → SEAL → DONE
 
 | Phase | Renamed from | Produces | Gate (defeats) |
 |-------|--------------|----------|----------------|
-| **SPECIFY** | *(new)* | `spec.md` — frozen EARS contract + acceptance criteria + FILE_SCOPE; tests authored + frozen by a separate model | contract exists, hashed; tests frozen (drift, lie) |
+| **SPECIFY** | *(new)* | `spec.md` — frozen EARS contract + acceptance criteria + FILE_SCOPE + **extracted invariants/properties**; tests authored + frozen by a separate model | contract exists, hashed; **spec-soundness gate** (no checkable property → BLOCK); tests frozen (drift, lie) |
 | **GROUND** | RECALL | `ground.md` — real code + memory-bank refs + **deep-tier (Honcho) retrieval into the lean window** + context-gap check | real context present, no unfilled gaps (hallucinate, drift) |
 | **IMPLEMENT** | IMPLEMENT | `diff.txt` | hashline + scope + forbidden-pattern + boundary monitor (hallucinate, drift, lie, disobey) |
-| **VERIFY** | VERIFY | `test_output.txt` | real SHA-gated tests + **mutation gate** + secret scan + separate-model verifier (lie) |
+| **VERIFY** | VERIFY | `test_output.txt` | **property-based invariants** + static analysis/types + real SHA-gated tests + **mutation gate** + secret scan + (last-resort) separate-model verifier (lie) |
 | **SEAL** | CONCLUDE | `seal.md` | retro markers + verify ref + commit; **writes durable conclusions to the deep tier (Honcho)**; fires learning loop |
 | **DONE** | DONE | — | task closed |
 
@@ -299,7 +332,7 @@ human did. No leap of faith.
 | **W0** | **Engine convergence** — one gate core, one phase set; Autopilot driver calls `_check_*_gates`; remove the 11-phase pipeline | foundation | — |
 | **W1** | **The Boundary** — make tests/gates/audit/tool-surface immutable to the implementer; deterministic boundary monitor (block + log + negative reward) | Lie, Disobey | W0 |
 | **W2** | **Context Engine** — `constitution.md`, `SPECIFY` phase + frozen hashed `spec.md`, grounding retrieval, context-gap detector, lean-context/compaction discipline, **two-tier memory wiring (GROUND pulls from Honcho→native, SEAL writes back to Honcho)** | Drift, Hallucinate | W0 |
-| **W3** | **Proof Spine** — mutation gate (un-suppressible; cost model = changed-lines-only + selective operators + weak mutation + cap, full sweep nightly), separated+isolated test authorship (different model), secret/forbidden scan, separate-model verifier | Lie | W1, W2 |
+| **W3** | **Proof Spine** — **property-based invariants + static analysis/types (model-independent trust floor)**; mutation gate (un-suppressible; cost = changed-lines-only + selective operators + weak mutation + cap, full sweep nightly); separated+isolated test authorship (different model family); secret/forbidden scan; separate-model verifier (last resort) | Lie | W1, W2 |
 | **W3b** | **Gate Registry** — `.techne/gates/registry.json` + `techne gates`; every gate's kind/provenance/status/catch-rate; audit-chained | trust transparency | W1 |
 | **W4** | **Enforcement hardening** — no-escape-hatch policy, budgets → structured FAILED artifact, audit coverage of the full surface | Disobey, Drift | W1 |
 | **W5** | **Skill diet** — cut `SKILL.md`/skills to maps (<100 lines), close context gaps with focused cards; CI line-count guard | Disobey, Drift | W2 |
@@ -337,12 +370,16 @@ Honesty per the corpus. This plan is v1; here is where it is still soft:
    mutated statement executes) + a hard cap, with a **full mutation sweep nightly** out of
    band. Mutation-as-a-sensor for agent-written tests is established practice (Thoughtworks,
    Meta ACH, testdouble). Residual: per-codebase tuning of the operator subset.
-2. **Separate-model verifier still has preference leakage if the same vendor.** Different
-   model family reduces but doesn't eliminate collusion. *Mitigation:* the mutation gate is
-   mechanical and model-independent — it's the backstop, the verifier is defense-in-depth.
-3. **Context-gap detector is heuristic.** "Invisible by definition" cuts both ways — it can
-   miss gaps. *Mitigation:* treat it as best-effort + grow the constitution from real misses
-   via the learning loop.
+2. **Separate-model verifier preference leakage.** ~~Open.~~ **Largely resolved (round 3).**
+   The fix isn't a better judge — it's *needing the judge less*. **Property-based invariants
+   + static analysis + types** are model-independent ground truth (they break the "cycle of
+   self-deception" where LLM tests share LLM-code blind spots). The LLM verifier is demoted
+   to last-resort defense-in-depth; trust rests on the model-independent floor. Residual:
+   domains with no cheap invariants still lean on the judge — flagged per-task.
+3. **Context-gap detector is heuristic.** ~~Open.~~ **Resolved (round 3).** Now mechanical:
+   AST/static-analysis-derived conventions diffed against the documented constitution
+   (Packmind `context-evaluator` pattern), not a guess. Residual: novel patterns with no
+   linter/AST signature can still hide — grown from real misses via the learning loop.
 4. **CoT/intent monitoring is deliberately omitted.** Research shows strong optimization
    pressure produces *obfuscated* hacking that hides intent. We rely on **outcome + boundary
    + mutation** (mechanical) over reasoning-trace inspection (gameable). Revisit if a class
@@ -366,6 +403,22 @@ Honesty per the corpus. This plan is v1; here is where it is still soft:
    divergence bound; and **the mechanical gates, not the eval, are the trust floor.**
    Residual (unavoidable): there is no static endpoint — the system must keep ingesting new
    real failures forever. Accept this as a property, not a bug.
+
+8. **The irreducible core — the spec-intent gap (the deepest residual, named honestly).**
+   The whole framework can prove **code ⊨ spec** (the proof spine) and can *largely*
+   validate **spec is internally sound** (PBT-on-spec catches underspecification — 2026
+   work found ~10%). What no harness can guarantee without a human is **spec ⊨ the user's
+   true, unstated intent.** A perfectly-built solution to a subtly-wrong spec passes every
+   gate. This is exactly the job the human reviewer did last and best.
+   *What we do about it:* (a) shrink the gap with the Context Engine (ground the spec in the
+   real ticket + real code so there's less room to misinterpret); (b) force testable EARS
+   criteria + extracted invariants (less vagueness to hide in); (c) this is precisely where
+   the **calibration human stays longest** (§6) and where context investment has the highest
+   return. *Honest bottom line:* zero-HITL makes the agent **trustworthy about what it
+   claims** (no drift, no hallucination, no lying, no disobedience) — it does **not** make
+   the *specification* infallible. That last gap closes with better context, not with more
+   gates, which is exactly your thesis ("building context is the real issue") proven from
+   the other direction.
 
 ---
 
@@ -421,3 +474,9 @@ Each goes through the loop. The plan is the contract; the Boundary enforces it.
 - [Goodhart's Law in Reinforcement Learning — arXiv 2310.09144](https://arxiv.org/pdf/2310.09144)
 - [Over-Optimization — RLHF Book (Nathan Lambert)](https://rlhfbook.com/c/14-over-optimization)
 - [Beyond Goodhart's Law: Dynamic Benchmark for Compliance — arXiv 2606.07805](https://arxiv.org/html/2606.07805)
+- [Use Property-Based Testing to Bridge LLM Code Generation and Validation (PGS) — arXiv 2506.18315](https://arxiv.org/pdf/2506.18315)
+- [PBT for Validating LLM-Synthesised Specifications — Proofs and Intuitions (2026)](https://proofsandintuitions.net/2026/05/18/property-based-testing-specifications/)
+- [VeriScale: Adversarial Test-Suite Scaling for Verifiable Code Generation — arXiv 2605.22368](https://arxiv.org/html/2605.22368)
+- [Writing AI coding agent context files is easy. Keeping them accurate isn't (context-evaluator) — Packmind](https://packmind.com/evaluate-context-ai-coding-agent/)
+- [Agent READMEs: An Empirical Study of Context Files for Agentic Coding — arXiv 2511.12884](https://arxiv.org/pdf/2511.12884)
+- [Mutation Testing Cost Reduction (changed-lines/selective/weak) — academia survey](https://www.academia.edu/10784640/Mutation_testing_cost_reduction_techniques_a_survey)
