@@ -60,8 +60,42 @@ def cmd_next(args):
     sys.argv = ["next.py"]
     if getattr(args, "strict_nodes", False):
         sys.argv.append("--strict-nodes")
+    if getattr(args, "strict_mutation", False):
+        sys.argv.append("--strict-mutation")
     spec.loader.exec_module(mod)
     sys.exit(mod.main())
+
+
+def cmd_gates(args):
+    """Show the Gate Registry — per-gate kind, provenance, status, catch-rate."""
+    repo = _repo_root()
+    gate_status_py = repo / "scripts" / "gate_status.py"
+    for p in [str(repo / "scripts"), str(repo / "harness")]:
+        if p not in sys.path:
+            sys.path.insert(0, p)
+
+    from gate_status import get_registry, format_registry, register_gate, record_outcome
+
+    if args.record:
+        name, outcome = args.record
+        if outcome not in ("caught", "passed"):
+            print(f"outcome must be 'caught' or 'passed', got: {outcome}")
+            sys.exit(1)
+        record_outcome(name, caught=(outcome == "caught"))
+        print(f"  Recorded: {name} -> {outcome}")
+        return
+
+    if args.register:
+        register_gate(args.register, args.kind, args.provenance,
+                      args.phase, args.description)
+        print(f"  Registered: {args.register} ({args.kind})")
+        return
+
+    registry = get_registry()
+    if args.json:
+        print(json.dumps(registry, indent=2, ensure_ascii=False))
+    else:
+        print(format_registry(registry))
 
 
 def cmd_status(args):
@@ -363,7 +397,40 @@ def cmd_doctor(args):
     if not hook_found:
         print(_warn("PreToolUse hook not wired — see HANDOFF-CC-V0.md §7"))
 
-    # 7 — Hermes checks
+    # 7 — W1 Boundary self-test
+    print(f"\n{_bold('W1 Boundary')}\n" + "─" * 40)
+    boundary_script = _repo_root() / "scripts" / "boundary.py"
+    if boundary_script.exists():
+        try:
+            r = subprocess.run(
+                [sys.executable, str(boundary_script), "--self-test"],
+                capture_output=True, text=True, encoding="utf-8", timeout=15,
+            )
+            if r.returncode == 0:
+                print(_ok("Boundary self-test: ALL PASS"))
+            else:
+                failed_lines = [l for l in r.stdout.splitlines() if "[FAIL]" in l]
+                print(_fail(f"Boundary self-test FAILED: {len(failed_lines)} check(s)"))
+                for l in failed_lines[:3]:
+                    print(f"    {l.strip()}")
+        except Exception as e:
+            print(_warn(f"Boundary self-test error: {e}"))
+    else:
+        print(_warn("boundary.py not found — W1 not deployed"))
+
+    # Gate Registry summary
+    genesis_contract = cwd / ".techne" / "genesis.json"
+    if genesis_contract.exists():
+        try:
+            c = json.loads(genesis_contract.read_text(encoding="utf-8"))
+            n = c.get("modules_scanned", "?")
+            print(_ok(f"GENESIS bootstrap: {n} modules scanned, contract present"))
+        except Exception:
+            print(_warn("genesis.json unreadable"))
+    else:
+        print(_warn("No genesis.json — run: python scripts/genesis.py"))
+
+    # 8 — Hermes checks
     hermes_dir = Path.home() / ".hermes"
     print(f"\n{_bold('Hermes')}\n" + "─" * 40)
 
@@ -456,6 +523,8 @@ def cli():
     p_next = sub.add_parser("next", help="Advance the pipeline to the next phase")
     p_next.add_argument("--strict-nodes", action="store_true",
                         help="Block VERIFY if node-discipline violations found")
+    p_next.add_argument("--strict-mutation", action="store_true",
+                        help="Block VERIFY if mutation gate finds surviving mutants")
     p_next.set_defaults(func=cmd_next)
 
     p_status = sub.add_parser("status", help="Show current pipeline state and RL health")
@@ -476,6 +545,18 @@ def cli():
     p_proposals.add_argument("action", nargs="?", default="review",
                               choices=["review"], help="Action to perform (default: review)")
     p_proposals.set_defaults(func=cmd_proposals)
+
+    p_gates = sub.add_parser("gates", help="Show Gate Registry (per-gate status + catch-rate)")
+    p_gates.add_argument("--json", action="store_true", help="JSON output")
+    p_gates.add_argument("--record", nargs=2, metavar=("NAME", "OUTCOME"),
+                         help="Record a gate outcome: caught|passed")
+    p_gates.add_argument("--register", metavar="NAME", help="Register a new gate")
+    p_gates.add_argument("--kind", default="mechanical",
+                         choices=["pbt", "mechanical", "llm_judge"])
+    p_gates.add_argument("--provenance", default="custom")
+    p_gates.add_argument("--phase", default="unknown")
+    p_gates.add_argument("--description", default="")
+    p_gates.set_defaults(func=cmd_gates)
 
     args = parser.parse_args()
     args.func(args)
