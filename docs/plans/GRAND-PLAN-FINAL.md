@@ -179,6 +179,13 @@ Ornith-1.0's layered defense:
     *actions* (apply + run tests) execute in a real sandbox — gVisor/Firecracker-class, **not
     a standard container** (shared kernel / Docker-socket = escape). "The orchestration layer
     is the firewall between thinking and acting." (Wired in W6.)
+  - **Network egress allowlist (the exfiltration layer).** The sandbox denies outbound
+    network by default; only an allowlist (package registry, the model endpoint) is
+    permitted. This closes the data-exfiltration vector — code that calls an attacker
+    endpoint, or the dark-factory case of a harvested secret leaving in a log/request — which
+    the filesystem/config layers don't touch. Egress + filesystem + secrets-scoping + config
+    protection are the **four mandatory layers** that vendor guidance (Microsoft/NVIDIA)
+    converges on as the completeness checklist.
 - **Action provenance (anti-injection).** Retrieved context — code, Honcho, web, tool
   output — is a **prompt-injection surface**: an attacker payload can ride inside a JSON
   response or a source comment. Rule: **retrieved content is DATA, never INSTRUCTIONS.**
