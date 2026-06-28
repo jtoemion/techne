@@ -321,8 +321,17 @@ the map and the memory.
 | `skills/` | Skill library (under restructure — Techne skills relocate to `.hermes/skills/` per GRAND-PLAN Task 13). |
 | `docs/host-integration-guide.md` | Host operational contract (5-phase, two-layer). |
 | `docs/agent-knowledge-dimensions.md` | Cross-source harness-engineering knowledge map. |
+| `docs/open-knowledge-format-context.md` | **OKF — the durable building-context standard** (one concept per file, YAML frontmatter, markdown links as edges, `index.md`, `log.md`). |
+| `docs/plans/GRAND-PLAN-FINAL.md` | Zero-HITL framework: Context/Proof/Enforcement replace HITL. |
 | `docs/plans/GRAND-PLAN-HERMES.md` | Live architecture spec for the two-layer model. |
 | `docs/retro/*.md`, `docs/adr/` | Retrospectives + decision records. |
+
+**Durable building context uses OKF.** Shared, cross-session context lives as
+[OKF](open-knowledge-format-context.md) concept files under `.techne/context/`
+(`index.md` + `domains/` + `decisions/` + `runbooks/` + `risks/` + `skills/` + `log.md`) —
+one concept per file, git-versioned, human-readable, agent-parseable. **YAGNI: plain files
+until they demonstrably stop being enough; no new database.** When a concept becomes
+enforceable, promote it into a gate, eval, skill, or policy.
 
 > **Note:** `agents/*.md` (the old phase-agent prompts) were removed in the restructure;
 > phase roles are now expressed through skills + subagent dispatch, not standalone prompt

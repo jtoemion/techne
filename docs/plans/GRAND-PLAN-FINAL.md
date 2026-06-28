@@ -64,10 +64,21 @@ Three layers, mirroring the spec-driven convergence (Kiro "steering" / Spec-Kit
 
 1. **Constitution** (`.techne/constitution.md`) — immutable, cross-session principles:
    architecture boundaries, security invariants, "never do X." Loaded every task. < 100 lines.
-2. **Memory bank** (`.techne/context/`) — the amortized, deterministic project map
-   (`project_digest`, `file_roles`, `commands`, `risk_boundaries`) + the wikilink graph +
-   the mistake ledger. Already built (`context_build.py`); extended here with a
-   **context-gap detector**.
+2. **Memory bank** (`.techne/context/`) — durable, cross-session building context, stored
+   in the **Open Knowledge Format (OKF)** — Techne's adopted standard
+   ([docs/open-knowledge-format-context.md](../open-knowledge-format-context.md)):
+   **one concept per markdown file** + YAML frontmatter + **markdown links as graph edges**
+   + `index.md` for progressive disclosure + `log.md` for chronology. Concept types map
+   1:1 to the harness's artifact kinds: `domain` / `decision` / `runbook` / `risk` /
+   `skill-note` / `eval-note` / `policy-note` / `source-note`. This subsumes the old
+   "memory bank + wikilink graph" into one git-versioned, human-readable, agent-parseable
+   file standard — no database until plain files demonstrably stop being enough (YAGNI).
+   Still includes the amortized deterministic map (`project_digest`, `file_roles`,
+   `commands`) from `context_build.py`, now emitted as OKF concept files; extended with the
+   **context-gap detector**. **OKF's promotion rule is the on-ramp to the rest of the
+   harness:** when a concept becomes enforceable, it is promoted into a **gate** (→ Gate
+   Registry), eval, skill, or policy — this is how durable context graduates into mechanical
+   enforcement.
 3. **Per-task SPEC** (`.techne/loop/spec.md`) — the frozen, authoritative contract for
    *this* task (EARS-style requirements + acceptance criteria + FILE_SCOPE). This is the
    single source of truth the whole loop verifies against. **It is hashed and frozen at
@@ -98,7 +109,10 @@ The loop uses both tiers explicitly:
   The fast tier is disposable; the deep tier is the source of truth.
 
 This is the research's "intentional compaction" made architectural: native memory is the
-compaction layer, Honcho is the durable detail it compacts *from*.
+compaction layer, Honcho is the durable detail it compacts *from*. **On disk, the durable
+tier is OKF** (`.techne/context/`): GROUND starts at `index.md` and **follows only the links
+the SPEC needs** — progressive disclosure *is* the lean-retrieval mechanism, so the working
+window never loads the whole store.
 
 **Discipline (research-driven), not just files:**
 - **Lean context / intentional compaction.** Keep the working window well under the dumb
@@ -331,7 +345,7 @@ human did. No leap of faith.
 |---|---|---|---|
 | **W0** | **Engine convergence** — one gate core, one phase set; Autopilot driver calls `_check_*_gates`; remove the 11-phase pipeline | foundation | — |
 | **W1** | **The Boundary** — make tests/gates/audit/tool-surface immutable to the implementer; deterministic boundary monitor (block + log + negative reward) | Lie, Disobey | W0 |
-| **W2** | **Context Engine** — `constitution.md`, `SPECIFY` phase + frozen hashed `spec.md`, grounding retrieval, context-gap detector, lean-context/compaction discipline, **two-tier memory wiring (GROUND pulls from Honcho→native, SEAL writes back to Honcho)** | Drift, Hallucinate | W0 |
+| **W2** | **Context Engine** — `constitution.md`, **OKF durable store in `.techne/context/` (index.md + one-concept-per-file + log.md)**, `SPECIFY` phase + frozen hashed `spec.md`, grounding retrieval, context-gap detector, lean-context/compaction discipline, **two-tier memory wiring (GROUND pulls from Honcho→native, SEAL writes back to Honcho)** | Drift, Hallucinate | W0 |
 | **W3** | **Proof Spine** — **property-based invariants + static analysis/types (model-independent trust floor)**; mutation gate (un-suppressible; cost = changed-lines-only + selective operators + weak mutation + cap, full sweep nightly); separated+isolated test authorship (different model family); secret/forbidden scan; separate-model verifier (last resort) | Lie | W1, W2 |
 | **W3b** | **Gate Registry** — `.techne/gates/registry.json` + `techne gates`; every gate's kind/provenance/status/catch-rate; audit-chained | trust transparency | W1 |
 | **W4** | **Enforcement hardening** — no-escape-hatch policy, budgets → structured FAILED artifact, audit coverage of the full surface | Disobey, Drift | W1 |
@@ -431,7 +445,7 @@ Honesty per the corpus. This plan is v1; here is where it is still soft:
 | Boundary monitor | extend `harness/plugins/phase_guard.py` + audit chain | ⚠️ partial (write-block; add verification-surface coverage + negative reward) |
 | Mutation gate | new `scripts/mutation_gate.py`, wired into VERIFY like `node_gate` | ❌ new (W3) |
 | SPECIFY phase + frozen spec | `next_state.PHASE_SEQUENCE` + new RECALL→GROUND rename | ❌ new (W2) |
-| Context Engine | `harness/context_build.py` + new `constitution.md` + gap detector | ⚠️ partial |
+| Context Engine | `harness/context_build.py` + `constitution.md` + **OKF `.techne/context/`** + gap detector | ⚠️ partial (OKF standard adopted; emit context_build output as OKF files) |
 | Separate-model verifier | `harness/driver.py` model adapters (role-tagged) | ⚠️ partial (model injected per role already) |
 | Structural learning loop | `harness/grpo.py` + new shadow-eval promotion gate | ⚠️ machinery exists; promotion gate new (W7) |
 | Autopilot + sandbox | `harness/driver.py` + new throwaway-worktree runner | ⚠️ driver exists; sandbox new (W6) |
