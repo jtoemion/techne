@@ -10,15 +10,17 @@
 > [GRAND-PLAN-HERMES](GRAND-PLAN-HERMES.md), [HANDOFF-CC-V0](../../HANDOFF-CC-V0.md),
 > the [scouting report](../../ref/SCOUTING-REPORT.md), and the
 > [harness corpus](../agent-knowledge-dimensions.md).
-> **Research basis:** 9 web research passes (2026) across three rounds — context engineering,
+> **Research basis:** 11 web research passes (2026) across four rounds — context engineering,
 > autonomous agent reliability, reward hacking, spec-driven development, judge reliability,
-> mutation-testing cost, Goodhart/eval-contamination, mechanical convention extraction, and
-> property-based/model-independent verification — citations inline.
+> mutation-testing cost, Goodhart/eval-contamination, mechanical convention extraction,
+> property-based/model-independent verification, sandbox-escape/boundary completeness, and
+> cold-start bootstrapping — citations inline.
 > **Iteration:** R2 added the Gate Registry, a mutation-gate cost model, and a
-> Goodhart-hardened promotion gate. R3 added the **model-independent proof floor**
-> (property-based invariants + static analysis over LLM judges), a **mechanical context-gap
-> detector**, a **spec-soundness gate**, and named the **irreducible spec-intent residual**
-> (§9.2, §9.3, §9.8).
+> Goodhart-hardened promotion gate. R3 added the **model-independent proof floor** + a
+> **spec-soundness gate** + named the spec-intent residual. R4 added **boundary completeness**
+> (deny-by-default incl. non-existent paths, boundary self-test, OS-isolation), an
+> **anti-injection action-provenance** mechanism (new failure mode), and a **cold-start
+> BOOTSTRAP** pass (§9.2, §9.3, §9.8, §9.9, §9.10).
 
 ---
 
@@ -47,6 +49,7 @@ proposed feature doesn't map to this table, it doesn't ship (YAGNI).
 | **Hallucinate** | invents APIs, files, parameters | **Grounding retrieval** (real code in context) · **Hashline** (edits must match real file bytes) · **context-gap detector** | Context + Proof | grounding cuts hallucination; context-gap fabrication taxonomy |
 | **Lie** | claims success without proof; games the test | **Model-independent invariants (PBT)** · **immutable trust boundary** (tests/verifier/tool-surface outside the model's reach) · **deterministic boundary monitor** (zero-reward + block on any reach for verification machinery) · **mutation gate** · SHA-gated **real** tests · secret scan · separate-model verifier (last resort) | Proof | Ornith two-layer defense; reward-hacking benchmark (arXiv 2605.02964); PBT breaks the "cycle of self-deception" |
 | **Disobey** | ignores rules/skills/constraints | **Tool-call enforcement** (phase_guard) · immutable test isolation · **no escape hatches** (no inline-disable) · **small focused skills** (defeat lost-in-the-middle) | Enforcement + Context | escape-hatch ban; skill-bloat 77%→97% (Nick Nisi) |
+| **Injected-disobey** *(R4)* | obeys instructions smuggled into retrieved context / tool output instead of the SPEC | **Action-provenance check** (every action must trace to the frozen SPEC) · **retrieved content is DATA, never INSTRUCTIONS** · OS-level isolation of the acting layer | Enforcement + Proof | "tool output is a prompt-injection surface" — 2026 sandbox-escape research |
 
 **Read this table top-to-bottom: it is the product.** Everything below is how we build each cell.
 
@@ -133,6 +136,18 @@ window never loads the whole store.
   *can't* derive from tools; let it probe live (read the file, run the linter) rather than
   pre-loading static dumps that burn attention budget.
 
+**Cold-start bootstrap (R4).** On a fresh repo the OKF store and Honcho are empty — the
+Context Engine has nothing to ground on. A one-time **BOOTSTRAP pass** seeds it: mechanically
+derive the initial context from the codebase itself (AST/static-analysis conventions, detected
+stack, `context_build.py`'s deterministic map, test patterns) into verified OKF concept files +
+a `constitution.md`. Critically, the seed is **execution-verified, not LLM-asserted** — a
+bootstrapped contract whose build/test doesn't actually pass is rejected (the BootstrapAgent
+pattern: extract → plan → deterministically verify → repair). Thereafter every SEAL writes
+durable OKF/Honcho concepts, so cold-start is a one-time amortized cost that the learning loop
+compounds. *Irreducible residual:* a **greenfield** repo (no code yet) has nothing to extract
+from — there the conventions must come from the SPEC and the constitution, which is exactly
+where richer initial context pays off most (ties to §9.8).
+
 ### Pillar II — The Proof Spine (replaces *checking the work*)
 
 The human checked the work. The Proof Spine makes **"done" mean something** without a human,
@@ -150,6 +165,27 @@ Ornith-1.0's layered defense:
   outside the sanctioned surface is **blocked at the tool-call layer, logged to the audit
   chain, and assigned negative reward (excluded from advantage).** This is the existing
   `phase_guard` + audit chain, extended to cover the full verification surface.
+- **Layer 3 — boundary completeness (R4).** The 2026 evidence is that escapes come from
+  *partial* boundaries drawn in the wrong place, not absent ones. Three hardenings:
+  - **Deny-by-default, including paths that don't exist yet.** The boundary is an
+    *allowlist* of what the implementer may write (the current phase artifact + source
+    inside FILE_SCOPE); everything else is denied — **even if the path is absent now**
+    (`tests/`, `.techne/gates/`, `.techne/audit/`, gate scripts, config dirs). (The Codex-CLI
+    escape was exactly this: a config dir didn't exist, so `apply_patch` created it ungated.)
+  - **Boundary self-test.** A startup gate that *probes* the surface the way attackers do —
+    attempt-to-write to verification paths, check subprocess inheritance, check per-task
+    secrets scoping — and fails closed if any probe succeeds. Enumeration is itself a gate.
+  - **OS-level isolation for the acting layer.** Reasoning may run on normal infra, but the
+    *actions* (apply + run tests) execute in a real sandbox — gVisor/Firecracker-class, **not
+    a standard container** (shared kernel / Docker-socket = escape). "The orchestration layer
+    is the firewall between thinking and acting." (Wired in W6.)
+- **Action provenance (anti-injection).** Retrieved context — code, Honcho, web, tool
+  output — is a **prompt-injection surface**: an attacker payload can ride inside a JSON
+  response or a source comment. Rule: **retrieved content is DATA, never INSTRUCTIONS.**
+  Every IMPLEMENT action must trace to the **frozen SPEC**, not to text the agent read while
+  grounding. The boundary monitor flags actions with no SPEC provenance. (This is the cost
+  of a context-heavy design — the bigger the Context Engine, the larger this surface — so it
+  is defended explicitly, not assumed away.)
 
 **On top of the boundary, defense-in-depth (no single check is trusted):**
 **The proof hierarchy — most-trusted (model-independent) to least (gameable):**
@@ -348,6 +384,8 @@ human did. No leap of faith.
 | **W2** | **Context Engine** — `constitution.md`, **OKF durable store in `.techne/context/` (index.md + one-concept-per-file + log.md)**, `SPECIFY` phase + frozen hashed `spec.md`, grounding retrieval, context-gap detector, lean-context/compaction discipline, **two-tier memory wiring (GROUND pulls from Honcho→native, SEAL writes back to Honcho)** | Drift, Hallucinate | W0 |
 | **W3** | **Proof Spine** — **property-based invariants + static analysis/types (model-independent trust floor)**; mutation gate (un-suppressible; cost = changed-lines-only + selective operators + weak mutation + cap, full sweep nightly); separated+isolated test authorship (different model family); secret/forbidden scan; separate-model verifier (last resort) | Lie | W1, W2 |
 | **W3b** | **Gate Registry** — `.techne/gates/registry.json` + `techne gates`; every gate's kind/provenance/status/catch-rate; audit-chained | trust transparency | W1 |
+| **W1b** | **Boundary completeness** — deny-by-default allowlist incl. non-existent paths; boundary self-test (attempt-to-write/subprocess/secrets probes); action-provenance (retrieved content = data, not instructions) | Lie, Injected-disobey | W1 |
+| **W2b** | **Cold-start BOOTSTRAP** — one-time pass: derive + **execution-verify** initial OKF store + constitution from the codebase (BootstrapAgent pattern) | Drift, Hallucinate (fresh repos) | W2 |
 | **W4** | **Enforcement hardening** — no-escape-hatch policy, budgets → structured FAILED artifact, audit coverage of the full surface | Disobey, Drift | W1 |
 | **W5** | **Skill diet** — cut `SKILL.md`/skills to maps (<100 lines), close context gaps with focused cards; CI line-count guard | Disobey, Drift | W2 |
 | **W6** | **Autopilot + sandbox** — real model backends; apply each diff in a throwaway worktree, run tests there, HALT on apply failure | enables zero-HITL | W1–W4 |
@@ -434,6 +472,24 @@ Honesty per the corpus. This plan is v1; here is where it is still soft:
    gates, which is exactly your thesis ("building context is the real issue") proven from
    the other direction.
 
+9. **Boundary completeness — the boundary is only as good as its enumeration (R4).**
+   *Addressed, with a standing duty.* Partial boundaries are the real escape vector (2026
+   sandbox-escape wave). Mitigations now in Pillar II Layer 3: deny-by-default incl.
+   non-existent paths, a boundary self-test that probes the surface, OS-level isolation
+   (gVisor/Firecracker) for the acting layer, and action-provenance against injection.
+   Residual: enumerating *every* verification surface is an ongoing duty — new tools/paths
+   must be added to the allowlist denominator, and the self-test must grow with them. This
+   is the same ratchet as §9.7: a living deny-list, never "done."
+
+10. **Prompt injection via retrieved context (R4) — the cost of a context-heavy design.**
+   The Context Engine is the plan's strength *and* its largest injection surface: grounding
+   retrieval (code, Honcho, web, tool output) can carry an attacker's instructions.
+   *Mitigation:* retrieved content is treated as **data, not instructions**, and actions must
+   trace to the frozen SPEC (provenance check). *Residual:* provenance checking is heuristic
+   at the margin — a sufficiently SPEC-shaped injection could pass. The mechanical proof
+   spine (tests/mutation/secret-scan) is the backstop, since an injected action still has to
+   survive verification it can't reach.
+
 ---
 
 ## 10. Migration From Current Code
@@ -494,3 +550,8 @@ Each goes through the loop. The plan is the contract; the Boundary enforces it.
 - [Writing AI coding agent context files is easy. Keeping them accurate isn't (context-evaluator) — Packmind](https://packmind.com/evaluate-context-ai-coding-agent/)
 - [Agent READMEs: An Empirical Study of Context Files for Agentic Coding — arXiv 2511.12884](https://arxiv.org/pdf/2511.12884)
 - [Mutation Testing Cost Reduction (changed-lines/selective/weak) — academia survey](https://www.academia.edu/10784640/Mutation_testing_cost_reduction_techniques_a_survey)
+- [The Race to Ship AI Tools Left Security Behind, Part 1: Sandbox Escape — Cymulate](https://cymulate.com/blog/the-race-to-ship-ai-tools-left-security-behind-part-1-sandbox-escape/)
+- [How to sandbox AI agents in 2026: MicroVMs, gVisor & isolation — Northflank](https://northflank.com/blog/how-to-sandbox-ai-agents)
+- [AI Agent Sandboxing: Enterprise Security Guide 2026 — BeyondScale](https://beyondscale.tech/blog/ai-agent-sandboxing-enterprise-security-guide)
+- [BootstrapAgent: Distilling Repository Setup into Reusable Agent Knowledge — arXiv 2605.15815](https://arxiv.org/abs/2605.15815)
+- [Context Bootstrapping: Solving the AI Agent Cold Start Problem — Atlan](https://atlan.com/know/context-bootsrapping/)
