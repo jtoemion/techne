@@ -10,17 +10,21 @@
 > [GRAND-PLAN-HERMES](GRAND-PLAN-HERMES.md), [HANDOFF-CC-V0](../../HANDOFF-CC-V0.md),
 > the [scouting report](../../ref/SCOUTING-REPORT.md), and the
 > [harness corpus](../agent-knowledge-dimensions.md).
-> **Research basis:** 11 web research passes (2026) across four rounds — context engineering,
+> **Research basis:** 13 web research passes (2026) across five rounds — context engineering,
 > autonomous agent reliability, reward hacking, spec-driven development, judge reliability,
 > mutation-testing cost, Goodhart/eval-contamination, mechanical convention extraction,
-> property-based/model-independent verification, sandbox-escape/boundary completeness, and
-> cold-start bootstrapping — citations inline.
+> property-based/model-independent verification, sandbox-escape/boundary completeness,
+> cold-start bootstrapping, post-deployment runtime safety, and autonomous failure
+> disposition — citations inline.
 > **Iteration:** R2 added the Gate Registry, a mutation-gate cost model, and a
 > Goodhart-hardened promotion gate. R3 added the **model-independent proof floor** + a
 > **spec-soundness gate** + named the spec-intent residual. R4 added **boundary completeness**
 > (deny-by-default incl. non-existent paths, boundary self-test, OS-isolation), an
 > **anti-injection action-provenance** mechanism (new failure mode), and a **cold-start
-> BOOTSTRAP** pass (§9.2, §9.3, §9.8, §9.9, §9.10).
+> BOOTSTRAP** pass. R5 extended the framework **past the merge**: the **Runtime Ring** (§3a —
+> canary + behavioral monitoring + metric-gated auto-rollback, the downstream catch for the
+> spec-intent residual) and an autonomous **Failure Disposition** policy (§3b), plus the
+> mechanical-floor-is-model-authored and cost-viability critiques (§9.8, §9.11–§9.13).
 
 ---
 
@@ -301,6 +305,67 @@ The driver is the *only* thing that differs. Same `_check_*_gates`, same boundar
 audit chain, same memory. (`driver.py` already calls itself "the autonomous counterpart to
 the host-driven loop" — this makes it literally one spine.)
 
+### 3a. The Runtime Ring — proof past the merge (R5)
+
+**The loop ends at SEAL/DONE. The framework does not.** The 2026 evidence is blunt: *static,
+pre-merge evaluation is inadequate for long-horizon work — continuous behavioral oversight is
+required* (and the EU AI Act, Aug 2026, plus CISA/NSA agentic guidance now **mandate** a
+post-deployment monitoring plan). The riskiest moment is *after* deploy, not before (Meta's
+deleted inbox; Amazon's agent that tore down an environment for 13h).
+
+Crucially, **this is where the irreducible residual (§9.8) gets caught.** A subtly-wrong
+spec passes every pre-merge gate — code ⊨ spec, spec internally sound — yet still violates
+the user's true intent. No pre-merge gate can see that. A **runtime metric** can. So the
+proof spine extends past the merge into a ring:
+
+```
+SEAL/DONE → canary/shadow deploy → continuous monitoring → (auto-rollback | promote)
+```
+
+- **Canary / shadow deploy.** Route a small fraction (or shadow traffic) to the change.
+  Never flip 100% on an autonomous merge.
+- **Metric-gated promotion/rollback.** Error rate, latency, cost, and **behavioral drift**
+  are the gates — the same promotion-vs-rollback logic as §4, now on live signals. Any metric
+  past threshold → **automatic rollback to last-good** (blue-green / revert), no human.
+- **Immutable record + reversibility.** Every deploy and rollback is audit-chained and
+  reversible to a known-good version (self-modifying-agent discipline). A rollback is not a
+  failure to hide — it is a **labeled signal** fed to the learning loop (§4) and the
+  calibration corpus (§6): the gate set that *missed* this is now improved.
+- **Observability is a precondition, not an add-on.** Action tracing, drift detection, and
+  audit logging must exist *before* Autopilot ships — deploying without them is a named
+  failure mode.
+
+**The honest owner nuance.** Even fully-autonomous production teams keep a *named owner* with
+budget authority and a kill-switch (and regulation now requires it). This does **not**
+reintroduce HITL into the loop: the owner makes **no per-task decisions** — they set the
+runtime thresholds and hold the rollback/kill authority *as policy, once*. Zero-HITL means no
+human *judgment in the per-task loop*; it does not mean *no accountable human exists*. That is
+the precise, honest boundary.
+
+### 3b. Failure Disposition — when a task can't pass (R5)
+
+Failure is the **common case**, not the edge: SOTA agents still fail >20% of SWE-bench
+Verified, and multi-agent systems fail 41–87% without deliberate fault-tolerance. A zero-HITL
+system therefore needs a **first-class, autonomous disposition policy** — because there is no
+human to unblock a stuck task. When a task exhausts its budget or can't clear the gates:
+
+1. **Loop/stall detection + hard budgets** (step/token/time/cost). No invisible doom loop —
+   the boundary already caps phase attempts; add explicit loop detection.
+2. **Layered fallback before giving up** — retry with more grounding → simpler model/prompt →
+   a deterministic stub path — *then* stop. (Escalating fidelity-down, not crashing.)
+3. **Checkpoint, then dispose.** "Graceful degradation without checkpoints is theater." Save
+   `{completed, pending, fallback_status, next_safe_action}` (this is `techne handoff`), then
+   pick a disposition:
+   - **Partial completion** — commit the subtasks that *did* pass their gates; re-spec the rest.
+   - **Decompose-and-retry** — split the SPEC into smaller verifiable units (the long-horizon
+     answer: big features fail as one task, succeed as a decomposed plan).
+   - **Incident** — a safety/reliability boundary was crossed: **the failed task becomes
+     structured data, not a human ticket** — an OKF `risk` note + a new held-out eval case +
+     a candidate gate. This is the zero-HITL move: *failure feeds the ratchet (§4, §6)*
+     instead of waiting on a person.
+4. **Never fake success.** The one thing disposition must never do is weaken a gate to pass —
+   that is reward-hacking, blocked by the Boundary (§ Proof Spine).
+
 ---
 
 ## 4. The Learning Loop Without a Human (replaces GRPO ratification)
@@ -398,10 +463,14 @@ human did. No leap of faith.
 | **W6** | **Autopilot + sandbox** — real model backends; apply each diff in a throwaway worktree, run tests there, HALT on apply failure | enables zero-HITL | W1–W4 |
 | **W7** | **Structural learning loop** — RL events → shadow promotion gate vs frozen held-out eval (pass^k, zero violations) | replaces ratification | W3, W6 |
 | **W8** | **HITL-removal calibration** — per-gate catch-rate vs labeled corpus; decommission human per gate | honors the mandate | W3, W6 |
+| **W8b** | **Failure disposition (R5)** — loop/stall detection, layered fallback, checkpoint, autonomous disposition (partial / decompose / incident→OKF-risk+eval-case); never weaken a gate | enables zero-HITL (failure is common) | W1, W6 |
 | **W9** | **Editions + distribution** — CC / Hermes / Codex adapters on one spine; no-telemetry posture; published evals | GA | all |
+| **W10** | **The Runtime Ring (R5)** — canary/shadow deploy + behavioral monitoring + metric-gated auto-rollback to last-good; observability (tracing/drift/audit) precondition; owner sets thresholds/kill-switch as policy | catches the spec-intent residual (§9.8) post-merge | W6, W7 |
 
-Sequencing rule: **the Boundary (W1) before Autopilot (W6).** You do not remove the human
-until the machinery the human used to watch is itself unreachable and self-proving.
+Sequencing rule: **the Boundary (W1) before Autopilot (W6); observability (W10) before
+Autopilot ever touches production.** You do not remove the human until the machinery the human
+used to watch is itself unreachable and self-proving — and you do not ship autonomous changes
+to prod without the runtime ring that catches what no pre-merge gate can.
 
 ---
 
@@ -416,6 +485,9 @@ until the machinery the human used to watch is itself unreachable and self-provi
 | **Context size at IMPLEMENT** | tokens in working window | below the ~40% "dumb zone" |
 | **Drift rate** | diffs touching files outside frozen FILE_SCOPE | → 0 (gate-enforced) |
 | **Ratified-edit win-rate** | promoted skill edits that beat incumbent on held-out eval | only winners promote |
+| **Auto-rollback rate** (R5) | fraction of merged changes the Runtime Ring reverts on a degraded metric | low + *falling* (rising = pre-merge gates are missing intent failures) |
+| **Mean-time-to-rollback** (R5) | how fast a bad change is caught + reverted in prod | minutes, not days (the dark-factory secret sat for *days*) |
+| **Disposition mix** (R5) | share of failed tasks → partial / decompose / incident | most tasks dispose cleanly; incidents trend down as the corpus grows |
 
 ---
 
@@ -477,7 +549,9 @@ Honesty per the corpus. This plan is v1; here is where it is still soft:
    claims** (no drift, no hallucination, no lying, no disobedience) — it does **not** make
    the *specification* infallible. That last gap closes with better context, not with more
    gates, which is exactly your thesis ("building context is the real issue") proven from
-   the other direction.
+   the other direction. **(R5 update: partially closed downstream — the Runtime Ring (§3a)
+   catches intent-violations that move a production metric and feeds them back as labeled
+   failures. See §9.12 for what still slips through.)**
 
 9. **Boundary completeness — the boundary is only as good as its enumeration (R4).**
    *Addressed, with a standing duty.* Partial boundaries are the real escape vector (2026
@@ -496,6 +570,33 @@ Honesty per the corpus. This plan is v1; here is where it is still soft:
    at the margin — a sufficiently SPEC-shaped injection could pass. The mechanical proof
    spine (tests/mutation/secret-scan) is the backstop, since an injected action still has to
    survive verification it can't reach.
+
+11. **The "mechanical floor" is model-independent at *check* time, model-authored at *create*
+   time (R5).** PBT properties and static-analysis configs are checked deterministically, but
+   the *invariants themselves* are written by an LLM — so the self-deception risk moves up one
+   level rather than vanishing. *Mitigation:* validate the properties (PBT-on-spec; mutate the
+   *property* — if deleting it lets a known bug through, it was load-bearing; if not, it was
+   theater), author them in a different model lineage, and — the real backstop — the **Runtime
+   Ring (§3a)** catches what every authored check missed. *Residual:* the LLM's reach is
+   reduced, not eliminated; honesty requires saying the floor is "very hard to game," not
+   "unbreakable" (Skalse again, §9.7).
+
+12. **The spec-intent residual now has a downstream catch (R5) — §9.8 partially closed.** The
+   irreducible gap (a perfect solution to a subtly-wrong spec) cannot be closed *pre-merge* by
+   any gate. The **Runtime Ring (§3a)** is the answer: behavioral metrics + canary +
+   auto-rollback catch intent-violations *in production* and feed them back as labeled failures
+   (§4/§6). *Residual:* this catches intent failures that **move a metric**; a wrong-but-quiet
+   change (no metric signal, no user complaint) can still persist. That last sliver is why a
+   *named owner* (not in the loop, §3a) and the ever-growing calibration corpus exist. There is
+   no point at which the system is "finished" — only "ratcheting."
+
+13. **Economic viability (R5, open).** The full stack per task — SPECIFY + separate-model test
+   authoring + grounded IMPLEMENT + VERIFY (PBT + mutation + static + real tests + verifier) +
+   promotion eval + canary — is *many* model calls and real compute. If cost-per-task is
+   prohibitive the framework is academically sound but unshippable. *Mitigation to design:*
+   tier the rigor by task risk (the `phase_mode` mechanism — a typo fix does not need the
+   mutation gate + canary), cache aggressively, run the expensive model-independent gates
+   first (cheap to fail fast). *Status: genuinely open — needs a measured cost model before GA.*
 
 ---
 
@@ -562,3 +663,9 @@ Each goes through the loop. The plan is the contract; the Boundary enforces it.
 - [AI Agent Sandboxing: Enterprise Security Guide 2026 — BeyondScale](https://beyondscale.tech/blog/ai-agent-sandboxing-enterprise-security-guide)
 - [BootstrapAgent: Distilling Repository Setup into Reusable Agent Knowledge — arXiv 2605.15815](https://arxiv.org/abs/2605.15815)
 - [Context Bootstrapping: Solving the AI Agent Cold Start Problem — Atlan](https://atlan.com/know/context-bootsrapping/)
+- [Runtime: The new frontier of AI agent security — CSO Online](https://www.csoonline.com/article/4145127/runtime-the-new-frontier-of-ai-agent-security.html)
+- [Introducing the Agent Governance Toolkit (runtime security) — Microsoft Open Source](https://opensource.microsoft.com/blog/2026/04/02/introducing-the-agent-governance-toolkit-open-source-runtime-security-for-ai-agents/)
+- [Your Agent May Misevolve: Emergent Risks in Self-evolving LLM Agents — arXiv 2509.26354](https://arxiv.org/pdf/2509.26354)
+- [Graceful Degradation Patterns in AI Agent Systems — Zylos Research](https://zylos.ai/research/2026-02-20-graceful-degradation-ai-agent-systems/)
+- [Building AI Coding Agents for the Terminal (progressive degradation, budgets) — arXiv 2603.05344](https://arxiv.org/html/2603.05344v1)
+- [Beyond Resolution Rates: Behavioral Drivers of Coding Agent Success and Failure — arXiv 2604.02547](https://arxiv.org/pdf/2604.02547)
