@@ -712,6 +712,41 @@ def cmd_proposals(args):
     print(f"Run: python3 harness/apply_retro.py to accept/reject proposals")
 
 
+def cmd_sandbox(args):
+    """W6 throwaway-worktree sandbox — apply diff and run tests in isolation."""
+    sys.path.insert(0, str(_repo_root() / "harness"))
+    from sandbox_runner import SandboxHaltError, git_diff_head, run_in_microsandbox, run_in_worktree
+
+    cwd = Path.cwd()
+    patch = ""
+    if args.patch:
+        patch = Path(args.patch).read_text(encoding="utf-8")
+    else:
+        patch = git_diff_head(cwd=cwd)
+
+    print(f"  strategy : {args.strategy}")
+    print(f"  base-ref : {args.base_ref}")
+    print(f"  test-cmd : {args.test_cmd!r}")
+    print(f"  patch    : {len(patch)} chars {'(from git diff HEAD)' if not args.patch else ''}")
+    print()
+
+    try:
+        if args.strategy == "microsandbox":
+            result = run_in_microsandbox(patch, args.test_cmd, base_ref=args.base_ref, cwd=cwd)
+        else:
+            result = run_in_worktree(patch, args.test_cmd, base_ref=args.base_ref, cwd=cwd)
+    except SandboxHaltError as e:
+        print(f"HALT: patch cannot be applied: {e}")
+        sys.exit(3)
+
+    print(result.stdout)
+    if result.passed:
+        print(_ok(f"sandbox passed (exit {result.exit_code})"))
+    else:
+        print(_fail(f"sandbox FAILED (exit {result.exit_code})"))
+    sys.exit(0 if result.passed else 1)
+
+
 def cli():
     parser = argparse.ArgumentParser(
         prog="techne",
@@ -816,6 +851,14 @@ def cli():
 
     ring_sub.add_parser("status", help="Show current Runtime Ring status")
     p_ring.set_defaults(func=cmd_ring)
+
+    p_sandbox = sub.add_parser("sandbox", help="W6 throwaway-worktree sandbox — run tests in isolation")
+    p_sandbox.add_argument("--test-cmd", default="pytest -q", help="Test command to run")
+    p_sandbox.add_argument("--patch", default=None, help="Path to .patch file (default: git diff HEAD)")
+    p_sandbox.add_argument("--strategy", choices=["worktree", "microsandbox"], default="worktree",
+                           help="Isolation strategy (default: worktree; microsandbox requires WSL2+KVM)")
+    p_sandbox.add_argument("--base-ref", default="HEAD", help="Git ref for the clean base (default: HEAD)")
+    p_sandbox.set_defaults(func=cmd_sandbox)
 
     p_gates = sub.add_parser("gates", help="Show Gate Registry (per-gate status + catch-rate)")
     p_gates.add_argument("--json", action="store_true", help="JSON output")
