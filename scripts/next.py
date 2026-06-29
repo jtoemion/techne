@@ -48,10 +48,11 @@ _SCOPE_LIMIT = 10
 _STRICT_NODES = False  # Set via --strict-nodes flag
 _STRICT_MUTATION = False  # Set via --strict-mutation flag
 _MUTATION_TEST_CMD: str | None = None  # Read from .techne/config.yaml mutation_test_cmd:
+_PHASE_MODE: str = "STANDARD"  # W9 Edition tier: FULL | STANDARD | LITE
 
 def _load_config() -> None:
-    """Read scope_limit and mutation_test_cmd from .techne/config.yaml if present."""
-    global _SCOPE_LIMIT, _MUTATION_TEST_CMD
+    """Read scope_limit, mutation_test_cmd, phase_mode from .techne/config.yaml if present."""
+    global _SCOPE_LIMIT, _MUTATION_TEST_CMD, _PHASE_MODE
     try:
         cfg_path = Path.cwd() / ".techne" / "config.yaml"
         if cfg_path.exists():
@@ -61,8 +62,20 @@ def _load_config() -> None:
                     _SCOPE_LIMIT = int(line.split(":", 1)[1].strip())
                 elif line.startswith("mutation_test_cmd:"):
                     _MUTATION_TEST_CMD = line.split(":", 1)[1].strip().strip("\"'")
+                elif line.startswith("phase_mode:"):
+                    _PHASE_MODE = line.split(":", 1)[1].strip().upper()
     except Exception:
         pass
+
+
+def _gate_enabled(gate_name: str) -> bool:
+    """Return True if a gate should run in the current _PHASE_MODE (W9 edition tier)."""
+    try:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from phase_mode import gate_enabled, PhaseMode
+        return gate_enabled(gate_name, PhaseMode(_PHASE_MODE))
+    except Exception:
+        return True  # fail-closed: unknown mode = run the gate
 
 
 # ── Coloured terminal output ─────────────────────────────────────────────────
@@ -468,12 +481,18 @@ def _check_verify_gates(path: Path) -> list[GateResult]:
     # ── Mutation gate (soft by default; hard block with --strict-mutation) ──────
     # Reads file_scope.json (written in RECALL) + mutation_test_cmd from config.
     # If either is missing, soft-skip — the gate is only enforced when configured.
+    # W9: skipped entirely in LITE mode (too expensive for typo fixes).
     try:
         mutation_gate_script = _HERE / "mutation_gate.py"
         loop = loop_dir()
         scope_file = loop / "file_scope.json"
         test_cmd = _MUTATION_TEST_CMD
-        if mutation_gate_script.exists() and scope_file.exists() and test_cmd:
+        if not _gate_enabled("mutation_strength"):
+            results.append(GateResult(
+                "mutation strength", True,
+                f"skipped (phase_mode={_PHASE_MODE}: not required in this tier)"
+            ))
+        elif mutation_gate_script.exists() and scope_file.exists() and test_cmd:
             import json as _json
             import subprocess
             py_files = [
@@ -848,6 +867,10 @@ def main() -> int:
         "--strict-mutation", action="store_true",
         help="Block VERIFY phase if mutation gate finds surviving mutants (default: soft report)"
     )
+    parser.add_argument(
+        "--phase-mode", choices=["FULL", "STANDARD", "LITE"], default=None,
+        help="Edition tier (W9): FULL=all gates, STANDARD=no mutation, LITE=minimal (default: from config)"
+    )
     args, remaining = parser.parse_known_args()
 
     # Propagate strict flags to gate functions
@@ -857,6 +880,9 @@ def main() -> int:
     if args.strict_mutation:
         global _STRICT_MUTATION
         _STRICT_MUTATION = True
+    if args.phase_mode:
+        global _PHASE_MODE
+        _PHASE_MODE = args.phase_mode
 
     if args.help_phases:
         print("Techne ./next pipeline phases:\n")

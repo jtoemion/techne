@@ -62,6 +62,8 @@ def cmd_next(args):
         sys.argv.append("--strict-nodes")
     if getattr(args, "strict_mutation", False):
         sys.argv.append("--strict-mutation")
+    if getattr(args, "phase_mode", None):
+        sys.argv += ["--phase-mode", args.phase_mode]
     spec.loader.exec_module(mod)
     sys.exit(mod.main())
 
@@ -558,6 +560,25 @@ def cmd_promotion(args):
         return
 
 
+def cmd_editions(args):
+    """W9 — Show edition tiers (FULL/STANDARD/LITE) and current phase_mode."""
+    repo = _repo_root()
+    for p in [str(repo / "scripts")]:
+        if p not in sys.path:
+            sys.path.insert(0, p)
+    from phase_mode import format_edition_table, get_phase_mode, skipped_gates, PhaseMode
+
+    if args.current:
+        mode = get_phase_mode()
+        print(f"\n  Current phase mode: {mode.value}")
+        skipped = skipped_gates(mode)
+        if skipped:
+            print(f"  Skipped gates: {', '.join(sorted(skipped))}")
+        return
+
+    print(format_edition_table())
+
+
 def cmd_calibration(args):
     """W8 HITL-removal calibration — per-gate catch-rate + decommission."""
     repo = _repo_root()
@@ -708,6 +729,8 @@ def cli():
                         help="Block VERIFY if node-discipline violations found")
     p_next.add_argument("--strict-mutation", action="store_true",
                         help="Block VERIFY if mutation gate finds surviving mutants")
+    p_next.add_argument("--phase-mode", choices=["FULL", "STANDARD", "LITE"], default=None,
+                        help="Edition tier (W9): FULL=all gates, STANDARD=no mutation, LITE=minimal")
     p_next.set_defaults(func=cmd_next)
 
     p_status = sub.add_parser("status", help="Show current pipeline state and RL health")
@@ -728,6 +751,10 @@ def cli():
     p_proposals.add_argument("action", nargs="?", default="review",
                               choices=["review"], help="Action to perform (default: review)")
     p_proposals.set_defaults(func=cmd_proposals)
+
+    p_editions = sub.add_parser("editions", help="W9 edition tiers — show gate rigor matrix")
+    p_editions.add_argument("--current", action="store_true", help="Show current configured mode only")
+    p_editions.set_defaults(func=cmd_editions)
 
     p_calib = sub.add_parser("calibration", help="W8 HITL-removal calibration — per-gate catch-rate")
     calib_sub = p_calib.add_subparsers(dest="calib_cmd", required=True)
