@@ -1,4 +1,5 @@
 project_name: techne
+no_telemetry: true
 context_glob: '*.CONTEXT.md'
 generated_dir: .techne/generated
 memory_dir: .techne/memory

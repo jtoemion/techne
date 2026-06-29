@@ -10,12 +10,19 @@ Providers (all lazy-import their SDK, so every dependency is optional):
                 key: MINIMAX_API_KEY
   claude-cli  — headless Claude Code CLI (`claude -p`, prompt via stdin). Reuses the
                 existing Claude Code auth; no API key, no extra dependency.
+  cc          — alias for claude-cli (CC = Claude Code).
   anthropic   — Anthropic Python SDK.                       key: ANTHROPIC_API_KEY
   openai      — OpenAI SDK chat-completions. With `base_url` this also speaks to ANY
                 OpenAI-COMPATIBLE endpoint — OpenRouter (→ Claude/Gemini/Llama/…), Groq,
                 Together, Fireworks, vLLM, Ollama/LM Studio (local). key: OPENAI_API_KEY
                 (or pass api_key_env=...).
   gemini      — Google Generative AI SDK.                    key: GEMINI_API_KEY
+  hermes      — Memory-injected Claude Code adapter. Reads .techne/memory/ preamble into
+                every system prompt (fast-tier memory) then delegates to claude-cli.
+                Writes CONCLUDE-phase conclusions back to .techne/memory/run_log.json.
+  codex       — OpenAI o4-mini (the modern Codex successor). Same contract as openai;
+                defaults tuned for code tasks (reasoning model, low temperature, high
+                max_tokens). key: OPENAI_API_KEY
 
 Pick one with `make_model(provider, model=..., base_url=...)`, or call an adapter
 directly. `command_test_runner(cmd)` runs the project's REAL tests for VERIFY (the SHA
@@ -208,12 +215,100 @@ class PhaseRouter:
 
 # ── registry / factory ───────────────────────────────────────────────────────
 
+def hermes_model(*, binary: str = "claude", timeout: int = 600,
+                 memory_dir: Optional[str] = None,
+                 inner: Optional[ModelFn] = None) -> ModelFn:
+    """Memory-injected Claude Code adapter (Hermes integration).
+
+    Reads fast-tier memory from .techne/memory/ (mistakes.md, run_log.json summary)
+    and prepends it to every system prompt so the model has session-scoped context
+    without burning tokens on full Honcho retrieval.
+
+    On CONCLUDE phase, writes a brief conclusion line to run_log.json so the
+    deep-tier (Honcho / .claude/projects/.../memory/) can be updated by the host.
+
+    Delegates to `inner` model (default: claude-cli / CC).
+    """
+    from pathlib import Path as _Path
+    import json as _json
+
+    _mem_dir = _Path(memory_dir) if memory_dir else _Path(__file__).resolve().parents[1] / ".techne" / "memory"
+    _inner = inner or claude_cli_model(binary=binary, timeout=timeout)
+
+    def _read_fast_memory() -> str:
+        parts = []
+        mistakes = _mem_dir / "mistakes.md"
+        if mistakes.exists():
+            txt = mistakes.read_text(encoding="utf-8", errors="replace")
+            if txt.strip():
+                parts.append(f"# Mistake Ledger (fast memory)\n{txt.strip()[:1200]}")
+        run_log = _mem_dir / "run_log.json"
+        if run_log.exists():
+            try:
+                entries = _json.loads(run_log.read_text(encoding="utf-8")) or []
+                if isinstance(entries, list) and entries:
+                    last = entries[-1]
+                    summary = last.get("summary", "")
+                    if summary:
+                        parts.append(f"# Last Run (fast memory)\n{summary[:600]}")
+            except Exception:
+                pass
+        return "\n\n".join(parts)
+
+    def _append_run_log(conclusion: str) -> None:
+        run_log = _mem_dir / "run_log.json"
+        try:
+            _mem_dir.mkdir(parents=True, exist_ok=True)
+            entries = []
+            if run_log.exists():
+                entries = _json.loads(run_log.read_text(encoding="utf-8")) or []
+            from datetime import datetime, timezone
+            entries.append({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "summary": conclusion[:500],
+            })
+            # Keep last 50 entries (fast tier is short-term)
+            run_log.write_text(_json.dumps(entries[-50:], indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    def _model(system: str, user: str, phase: str) -> str:
+        memory_preamble = _read_fast_memory()
+        enriched_system = f"{memory_preamble}\n\n---\n\n{system}" if memory_preamble else system
+        result = _inner(enriched_system, user, phase)
+        if phase.lower() == "conclude":
+            _append_run_log(result[:500])
+        return result
+
+    return _model
+
+
+def codex_model(*, model: str = "o4-mini", max_tokens: int = 16000,
+                temperature: float = 1.0,
+                api_key_env: str = "OPENAI_API_KEY") -> ModelFn:
+    """OpenAI o4-mini — the modern Codex successor for code tasks.
+
+    Uses the o-series reasoning models which excel at step-by-step code generation.
+    `temperature=1.0` is the required value for o-series (they ignore lower settings).
+    Delegates to openai_model so the OpenAI SDK contract is identical.
+    """
+    return openai_model(
+        model=model,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        api_key_env=api_key_env,
+    )
+
+
 _BACKENDS: dict[str, Callable[..., ModelFn]] = {
     "claude-cli": claude_cli_model,
+    "cc": claude_cli_model,          # CC = Claude Code alias
     "anthropic": anthropic_model,
     "openai": openai_model,
     "gemini": gemini_model,
     "minimax": minimax_model,
+    "hermes": hermes_model,          # memory-injected CC adapter
+    "codex": codex_model,            # OpenAI o4-mini (Codex successor)
 }
 
 

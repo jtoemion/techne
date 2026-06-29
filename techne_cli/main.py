@@ -712,6 +712,42 @@ def cmd_proposals(args):
     print(f"Run: python3 harness/apply_retro.py to accept/reject proposals")
 
 
+def cmd_no_telemetry(args):
+    """W9 no-telemetry posture — check artifacts or import published evals."""
+    sys.path.insert(0, str(_repo_root() / "scripts"))
+    import no_telemetry
+
+    if args.nt_cmd == "posture":
+        active = no_telemetry.get_posture()
+        print(f"  no_telemetry posture: {'ACTIVE (default)' if active else 'inactive'}")
+        print(f"  Override: TECHNE_NO_TELEMETRY=1 or set no_telemetry: true in .techne/config.yaml")
+        return
+
+    if args.nt_cmd == "check":
+        path = Path(args.file)
+        if not path.exists():
+            print(f"Error: {path} not found")
+            sys.exit(1)
+        text = path.read_text(encoding="utf-8", errors="replace")
+        result = no_telemetry.gate_check(text)
+        if result["passed"]:
+            print(f"  CLEAN — {result['reason']}")
+        else:
+            print(f"  BLOCKED — {result['reason']}")
+            for v in result["violations"]:
+                print(f"    * {v}")
+        sys.exit(0 if result["passed"] else 1)
+
+    if args.nt_cmd == "import-evals":
+        from import_published_evals import import_published_evals as _import
+        stats = _import(dry_run=args.dry_run)
+        prefix = "[dry-run] " if args.dry_run else ""
+        print(f"  {prefix}added  : {stats['added']} new case(s)")
+        print(f"  {prefix}skipped: {stats['skipped']} already present")
+        print(f"  {prefix}corpus : {stats.get('corpus_size', '?')} total")
+        return
+
+
 def cmd_sandbox(args):
     """W6 throwaway-worktree sandbox — apply diff and run tests in isolation."""
     sys.path.insert(0, str(_repo_root() / "harness"))
@@ -851,6 +887,15 @@ def cli():
 
     ring_sub.add_parser("status", help="Show current Runtime Ring status")
     p_ring.set_defaults(func=cmd_ring)
+
+    p_nt = sub.add_parser("no-telemetry", help="W9 no-telemetry posture — gate check + published eval import")
+    nt_sub = p_nt.add_subparsers(dest="nt_cmd", required=True)
+    nt_sub.add_parser("posture", help="Show current no-telemetry posture flag")
+    nt_check = nt_sub.add_parser("check", help="Check a file for telemetry patterns")
+    nt_check.add_argument("file", help="File to check")
+    nt_imp = nt_sub.add_parser("import-evals", help="Import published evals into runtime corpus")
+    nt_imp.add_argument("--dry-run", action="store_true")
+    p_nt.set_defaults(func=cmd_no_telemetry)
 
     p_sandbox = sub.add_parser("sandbox", help="W6 throwaway-worktree sandbox — run tests in isolation")
     p_sandbox.add_argument("--test-cmd", default="pytest -q", help="Test command to run")
