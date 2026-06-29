@@ -262,5 +262,17 @@
     "runs": 0,
     "catches": 0,
     "last_seen": null
+  },
+  {
+    "name": "test-gate",
+    "kind": "mechanical",
+    "provenance": "grpo-promoted:abc123",
+    "phase": "VERIFY",
+    "description": "GRPO-promoted gate: pass_k=90.00%",
+    "status": "decommission_candidate",
+    "catch_rate": 0.95,
+    "runs": 200,
+    "catches": 95,
+    "last_seen": "2026-06-29T01:57:21.702954+00:00"
   }
 ]
